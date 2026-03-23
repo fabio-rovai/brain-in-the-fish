@@ -83,6 +83,14 @@ async fn run_evaluate(
     // Enrich: extract claims, evidence, and paragraph-level subsections from text
     enrich_document(&mut doc);
 
+    // LLM-powered enrichment when API key is available
+    if llm::ClaudeClient::available() {
+        println!("   Enriching with Claude API...");
+        if let Err(e) = enrich_with_llm(&mut doc, &intent).await {
+            eprintln!("   Warning: LLM enrichment failed, using regex fallback: {}", e);
+        }
+    }
+
     let triples = ingest::load_document_ontology(&graph, &doc)?;
     println!("   Loaded {} triples, {} sections", triples, doc.sections.len());
 
@@ -536,6 +544,60 @@ fn enrich_document(doc: &mut EvalDocument) {
             section.subsections.push(subsection);
         }
     }
+}
+
+/// Enrich document using Claude API for claim/evidence extraction.
+/// Called after basic enrichment when ANTHROPIC_API_KEY is set.
+async fn enrich_with_llm(doc: &mut EvalDocument, intent: &str) -> anyhow::Result<()> {
+    let claude = llm::ClaudeClient::from_env()?;
+
+    for section in &mut doc.sections {
+        match claude.extract_content(&section.text, intent).await {
+            Ok(extraction) => {
+                section.claims = extraction.claims.iter().map(|c| types::Claim {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    text: c.text.clone(),
+                    specificity: c.specificity,
+                    verifiable: c.verifiable,
+                }).collect();
+
+                section.evidence = extraction.evidence.iter().map(|e| types::Evidence {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    source: e.source.clone(),
+                    evidence_type: e.evidence_type.clone(),
+                    text: e.text.clone(),
+                    has_quantified_outcome: e.quantified,
+                }).collect();
+            }
+            Err(e) => {
+                eprintln!("   Warning: LLM extraction failed for '{}': {}", section.title, e);
+            }
+        }
+
+        // Also enrich subsections
+        for sub in &mut section.subsections {
+            match claude.extract_content(&sub.text, intent).await {
+                Ok(extraction) => {
+                    sub.claims = extraction.claims.iter().map(|c| types::Claim {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        text: c.text.clone(),
+                        specificity: c.specificity,
+                        verifiable: c.verifiable,
+                    }).collect();
+                    sub.evidence = extraction.evidence.iter().map(|e| types::Evidence {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        source: e.source.clone(),
+                        evidence_type: e.evidence_type.clone(),
+                        text: e.text.clone(),
+                        has_quantified_outcome: e.quantified,
+                    }).collect();
+                }
+                Err(_) => {} // Keep regex extraction
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn extract_claims_and_evidence(section: &mut Section) {
