@@ -1385,26 +1385,36 @@ body {
 }
 
 .node-label {
-    font-size: 11px;
+    font-size: 12px;
     fill: var(--text-primary);
     pointer-events: none;
-    text-anchor: middle;
-    dominant-baseline: central;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-weight: 500;
 }
 
-.edge-label {
-    font-size: 8px;
-    fill: var(--text-dim);
-    pointer-events: none;
-    font-family: 'JetBrains Mono', 'SF Mono', monospace;
-    opacity: 0;
-    transition: opacity 0.2s;
+.tree-link {
+    transition: stroke-opacity 0.2s;
 }
 
-.link-group:hover .edge-label {
-    opacity: 1;
+.tree-node:hover circle {
+    stroke: #cdd6f4;
+    stroke-width: 3;
+}
+
+.cross-link {
+    pointer-events: none;
+}
+
+.tree-node.collapsed circle {
+    stroke-dasharray: 3,2;
+}
+
+.tree-node .collapse-indicator {
+    font-size: 10px;
+    fill: var(--text-dim);
+    pointer-events: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 700;
 }
 
 /* ---- Detail Panel (right) ---- */
@@ -1671,19 +1681,10 @@ const nodeColors = {
 };
 
 const nodeSizes = {
-    'Document': 24, 'Framework': 20, 'Agent': 16, 'Criterion': 14,
-    'Section': 12, 'Score': 12, 'Moderated': 14, 'Challenge': 10,
-    'Claim': 8, 'Evidence': 8, 'RubricLevel': 6, 'Need': 6, 'Trust': 5,
-    'default': 8,
-};
-
-const edgeStyleMap = {
-    'structural': { dash: 'none',   width: 1.2 },
-    'trust':      { dash: '6,3',    width: 1.0 },
-    'challenge':  { dash: '2,3',    width: 1.5 },
-    'scores':     { dash: 'none',   width: 1.5 },
-    'evaluates':  { dash: '8,4',    width: 1.2 },
-    'relation':   { dash: 'none',   width: 1.0 },
+    'Document': 14, 'Framework': 12, 'Agent': 10, 'Criterion': 9,
+    'Section': 8, 'Score': 8, 'Moderated': 9, 'Challenge': 7,
+    'Claim': 6, 'Evidence': 6, 'RubricLevel': 5, 'Need': 5, 'Trust': 4,
+    'default': 6,
 };
 
 function getColor(type) { return nodeColors[type] || nodeColors['default']; }
@@ -1725,22 +1726,171 @@ function toggleType(type, btn) {
         hiddenTypes.add(type);
         btn.classList.add('hidden');
     }
-    updateVisibility();
+    renderTree();
 }
 
-function updateVisibility() {
-    nodeGroup.style('display', d => hiddenTypes.has(d.node_type) ? 'none' : null);
-    labelGroup.style('display', d => hiddenTypes.has(d.node_type) ? 'none' : null);
-    linkGroups.style('display', d => {
-        const sType = typeof d.source === 'object' ? d.source.node_type : null;
-        const tType = typeof d.target === 'object' ? d.target.node_type : null;
-        if (sType && hiddenTypes.has(sType)) return 'none';
-        if (tType && hiddenTypes.has(tType)) return 'none';
-        return null;
-    });
+// ---- Build Tree Hierarchy from Flat Graph Data ----
+function buildTree(data) {
+    const root = { id: 'root', label: 'Evaluation', node_type: 'Framework', children: [] };
+
+    // Branch 1: Document
+    const docNode = data.nodes.find(n => n.node_type === 'Document');
+    if (docNode) {
+        const docBranch = { ...docNode, children: [] };
+        const sectionNodes = data.nodes.filter(n => n.node_type === 'Section');
+        for (const section of sectionNodes) {
+            const sectionChild = { ...section, children: [] };
+            // Add claims and evidence as children of section
+            const sectionEdges = data.edges.filter(e =>
+                e.source === section.id && e.edge_type === 'structural'
+            );
+            for (const edge of sectionEdges) {
+                const child = data.nodes.find(n => n.id === edge.target);
+                if (child && (child.node_type === 'Claim' || child.node_type === 'Evidence')) {
+                    sectionChild.children.push({ ...child, children: [] });
+                }
+            }
+            // Also find claims/evidence linked TO this section
+            const inEdges = data.edges.filter(e =>
+                e.target === section.id && e.edge_type === 'structural'
+            );
+            for (const edge of inEdges) {
+                const child = data.nodes.find(n => n.id === edge.source);
+                if (child && (child.node_type === 'Claim' || child.node_type === 'Evidence')
+                    && !sectionChild.children.some(c => c.id === child.id)) {
+                    sectionChild.children.push({ ...child, children: [] });
+                }
+            }
+            docBranch.children.push(sectionChild);
+        }
+        root.children.push(docBranch);
+    }
+
+    // Branch 2: Framework + Criteria
+    const fwNode = data.nodes.find(n => n.node_type === 'Framework');
+    if (fwNode) {
+        const fwBranch = { ...fwNode, children: [] };
+        const criterionNodes = data.nodes.filter(n => n.node_type === 'Criterion');
+        for (const crit of criterionNodes) {
+            const critChild = { ...crit, children: [] };
+            // Add score nodes as children (scores ON this criterion)
+            const scoreNodes = data.nodes.filter(n =>
+                n.node_type === 'Score' &&
+                data.edges.some(e =>
+                    (e.source === n.id && e.target === crit.id && e.label === 'on') ||
+                    (e.source === n.id && e.target === crit.id)
+                )
+            );
+            for (const score of scoreNodes) {
+                critChild.children.push({ ...score, children: [] });
+            }
+            // Add rubric levels as children
+            const rubricNodes = data.nodes.filter(n =>
+                n.node_type === 'RubricLevel' &&
+                data.edges.some(e =>
+                    (e.source === crit.id && e.target === n.id) ||
+                    (e.target === crit.id && e.source === n.id)
+                )
+            );
+            for (const rubric of rubricNodes) {
+                critChild.children.push({ ...rubric, children: [] });
+            }
+            // Add challenge nodes
+            const challengeNodes = data.nodes.filter(n =>
+                n.node_type === 'Challenge' &&
+                data.edges.some(e =>
+                    (e.source === n.id && e.target === crit.id) ||
+                    (e.target === n.id && e.source === crit.id)
+                )
+            );
+            for (const ch of challengeNodes) {
+                if (!critChild.children.some(c => c.id === ch.id)) {
+                    critChild.children.push({ ...ch, children: [] });
+                }
+            }
+            fwBranch.children.push(critChild);
+        }
+        root.children.push(fwBranch);
+    }
+
+    // Branch 3: Agents
+    const agentNodes = data.nodes.filter(n => n.node_type === 'Agent');
+    if (agentNodes.length > 0) {
+        const agentBranch = { id: 'agents', label: 'Evaluation Panel', node_type: 'Agent', children: [] };
+        for (const agent of agentNodes) {
+            const agentChild = { ...agent, children: [] };
+            // Add needs
+            const needNodes = data.nodes.filter(n =>
+                n.node_type === 'Need' &&
+                (n.connected && n.connected.includes(agent.id) ||
+                 data.edges.some(e =>
+                    (e.source === agent.id && e.target === n.id) ||
+                    (e.source === n.id && e.target === agent.id)
+                 ))
+            );
+            for (const need of needNodes) {
+                agentChild.children.push({ ...need, children: [] });
+            }
+            // Add trust relations
+            const trustNodes = data.nodes.filter(n =>
+                n.node_type === 'Trust' &&
+                data.edges.some(e =>
+                    (e.source === agent.id && e.target === n.id) ||
+                    (e.source === n.id && e.target === agent.id)
+                )
+            );
+            for (const trust of trustNodes) {
+                if (!agentChild.children.some(c => c.id === trust.id)) {
+                    agentChild.children.push({ ...trust, children: [] });
+                }
+            }
+            agentBranch.children.push(agentChild);
+        }
+        root.children.push(agentBranch);
+    }
+
+    // Branch 4: Guidelines (nodes of type 'default' or 'Guideline')
+    const guideNodes = data.nodes.filter(n => n.node_type === 'Guideline' || n.node_type === 'default');
+    if (guideNodes.length > 0) {
+        const guideBranch = { id: 'guidelines', label: 'Sector Guidelines', node_type: 'default', children: [] };
+        for (const g of guideNodes) {
+            guideBranch.children.push({ ...g, children: [] });
+        }
+        root.children.push(guideBranch);
+    }
+
+    // Branch 5: Moderated scores
+    const modNodes = data.nodes.filter(n => n.node_type === 'Moderated');
+    if (modNodes.length > 0) {
+        const modBranch = { id: 'consensus', label: 'Consensus Scores', node_type: 'Moderated', children: [] };
+        for (const m of modNodes) {
+            modBranch.children.push({ ...m, children: [] });
+        }
+        root.children.push(modBranch);
+    }
+
+    // Collect IDs of all nodes placed in the tree
+    const placedIds = new Set();
+    function collectIds(node) {
+        placedIds.add(node.id);
+        if (node.children) node.children.forEach(collectIds);
+    }
+    collectIds(root);
+
+    // Orphan nodes — anything not placed in the tree
+    const orphans = data.nodes.filter(n => !placedIds.has(n.id));
+    if (orphans.length > 0) {
+        const orphanBranch = { id: 'orphans', label: 'Other Nodes', node_type: 'default', children: [] };
+        for (const o of orphans) {
+            orphanBranch.children.push({ ...o, children: [] });
+        }
+        root.children.push(orphanBranch);
+    }
+
+    return root;
 }
 
-// ---- D3 Graph ----
+// ---- D3 Tree Layout ----
 const container = document.getElementById('graph-container');
 const rect = container.getBoundingClientRect();
 const width = rect.width;
@@ -1759,160 +1909,207 @@ const zoom = d3.zoom()
     .on('zoom', (event) => g.attr('transform', event.transform));
 svg.call(zoom);
 
-// Arrow markers for each edge type
-const defs = svg.append('defs');
-Object.keys(edgeStyleMap).forEach(etype => {
-    defs.append('marker')
-        .attr('id', `arrow-${etype}`)
-        .attr('viewBox', '0 -5 10 10')
-        .attr('refX', 20)
-        .attr('refY', 0)
-        .attr('markerWidth', 5)
-        .attr('markerHeight', 5)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('d', 'M0,-4L10,0L0,4')
-        .attr('fill', '#585b70');
-});
+// Build the tree
+const treeData = buildTree(graphData);
+let hierarchyRoot = d3.hierarchy(treeData);
 
-// Build index for multi-edge offset
-const edgePairCount = {};
-graphData.edges.forEach(e => {
-    const key = [e.source, e.target].sort().join('|');
-    edgePairCount[key] = (edgePairCount[key] || 0) + 1;
-    e._pairIndex = edgePairCount[key] - 1;
-    e._pairKey = key;
-});
-// Store total counts
-graphData.edges.forEach(e => {
-    e._pairTotal = edgePairCount[e._pairKey];
-});
+// Track collapsed state on the original data
+const collapsedIds = new Set();
 
-// Force simulation
-const simulation = d3.forceSimulation(graphData.nodes)
-    .force('link', d3.forceLink(graphData.edges).id(d => d.id).distance(60).strength(0.8))
-    .force('charge', d3.forceManyBody().strength(-300))
-    .force('center', d3.forceCenter(width / 2, height / 2).strength(0.1))
-    .force('collision', d3.forceCollide().radius(d => getSize(d.node_type) + 8));
+function countDescendants(node) {
+    if (!node.children || node.children.length === 0) return 0;
+    let count = node.children.length;
+    for (const c of node.children) count += countDescendants(c);
+    return count;
+}
 
-// Edges (as groups with path + label)
-const linkGroups = g.append('g').attr('class', 'links')
-    .selectAll('g')
-    .data(graphData.edges)
-    .enter().append('g')
-    .attr('class', 'link-group');
+function toggleCollapse(d) {
+    const dataNode = d.data;
+    if (collapsedIds.has(dataNode.id)) {
+        collapsedIds.delete(dataNode.id);
+    } else {
+        collapsedIds.add(dataNode.id);
+    }
+    renderTree();
+}
 
-const linkPaths = linkGroups.append('path')
-    .attr('fill', 'none')
-    .attr('stroke', d => {
-        // Color from source node type
-        const srcNode = graphData.nodes.find(n => n.id === (typeof d.source === 'object' ? d.source.id : d.source));
-        return srcNode ? getColor(srcNode.node_type) : '#585b70';
-    })
-    .attr('stroke-opacity', 0.3)
-    .attr('stroke-width', d => (edgeStyleMap[d.edge_type] || edgeStyleMap['relation']).width)
-    .attr('stroke-dasharray', d => (edgeStyleMap[d.edge_type] || edgeStyleMap['relation']).dash)
-    .attr('marker-end', d => `url(#arrow-${d.edge_type})`);
+// Filter tree data based on collapsed state
+function filterTree(node) {
+    const copy = { ...node };
+    if (collapsedIds.has(node.id)) {
+        copy._childCount = countDescendants(node);
+        copy.children = [];
+    } else if (node.children) {
+        copy.children = node.children.map(filterTree);
+    }
+    return copy;
+}
 
-const edgeLabels = linkGroups.append('text')
-    .attr('class', 'edge-label')
-    .text(d => d.label);
+function renderTree() {
+    // Clear previous render
+    g.selectAll('*').remove();
 
-// Nodes
-const nodeGroup = g.append('g').attr('class', 'nodes')
-    .selectAll('circle')
-    .data(graphData.nodes)
-    .enter().append('circle')
-    .attr('r', d => getSize(d.node_type))
-    .attr('fill', d => getColor(d.node_type))
-    .attr('stroke', 'var(--bg-primary)')
-    .attr('stroke-width', 2)
-    .style('cursor', 'pointer')
-    .style('filter', 'drop-shadow(0 0 4px rgba(0,0,0,0.4))')
-    .on('click', (event, d) => { event.stopPropagation(); selectNode(d); })
-    .on('mouseover', function(event, d) {
-        d3.select(this).attr('stroke', '#cdd6f4').attr('stroke-width', 3);
-        // Highlight connected edges
-        linkPaths.attr('stroke-opacity', e => {
-            const sid = typeof e.source === 'object' ? e.source.id : e.source;
-            const tid = typeof e.target === 'object' ? e.target.id : e.target;
-            return (sid === d.id || tid === d.id) ? 0.8 : 0.15;
-        });
-    })
-    .on('mouseout', function() {
-        d3.select(this).attr('stroke', 'var(--bg-primary)').attr('stroke-width', 2);
-        linkPaths.attr('stroke-opacity', 0.3);
-    })
-    .call(d3.drag()
-        .on('start', dragstarted)
-        .on('drag', dragged)
-        .on('end', dragended));
+    const filteredData = filterTree(treeData);
+    const hierarchy = d3.hierarchy(filteredData);
 
-// Labels
-const labelGroup = g.append('g').attr('class', 'labels')
-    .selectAll('text')
-    .data(graphData.nodes)
-    .enter().append('text')
-    .attr('class', 'node-label')
-    .attr('dy', d => getSize(d.node_type) + 12)
-    .text(d => d.label.length > 16 ? d.label.substring(0, 16) + '...' : d.label);
+    // Count visible leaves to size the tree properly
+    const leafCount = hierarchy.leaves().length;
+    const treeHeight = Math.max(height - 100, leafCount * 28);
+    const treeWidth = Math.max(width - 400, hierarchy.height * 220);
 
-// Tick
-simulation.on('tick', () => {
-    linkPaths.attr('d', d => {
-        const sx = d.source.x, sy = d.source.y;
-        const tx = d.target.x, ty = d.target.y;
-        if (d._pairTotal <= 1) {
-            return `M${sx},${sy}L${tx},${ty}`;
-        }
-        // Curved for multi-edges
-        const dx = tx - sx, dy = ty - sy;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const offset = (d._pairIndex - (d._pairTotal - 1) / 2) * 20;
-        const mx = (sx + tx) / 2 + (-dy / dist) * offset;
-        const my = (sy + ty) / 2 + (dx / dist) * offset;
-        return `M${sx},${sy}Q${mx},${my},${tx},${ty}`;
+    const treeLayout = d3.tree()
+        .size([treeHeight, treeWidth])
+        .separation((a, b) => (a.parent === b.parent ? 1 : 1.5));
+
+    treeLayout(hierarchy);
+
+    // Offset so tree doesn't clip at edges
+    const xOff = 200;
+    const yOff = 50;
+
+    // Draw tree links as curved paths
+    g.selectAll('.tree-link')
+        .data(hierarchy.links())
+        .enter().append('path')
+        .attr('class', 'tree-link')
+        .attr('fill', 'none')
+        .attr('stroke', d => getColor(d.target.data.node_type))
+        .attr('stroke-opacity', 0.3)
+        .attr('stroke-width', 1.5)
+        .attr('d', d3.linkHorizontal()
+            .x(d => d.y + xOff)
+            .y(d => d.x + yOff));
+
+    // Draw cross-links (edges not in the tree hierarchy)
+    const treeNodeMap = {};
+    hierarchy.descendants().forEach(d => { treeNodeMap[d.data.id] = d; });
+
+    const treeLinkSet = new Set();
+    hierarchy.links().forEach(l => {
+        treeLinkSet.add(l.source.data.id + '|' + l.target.data.id);
     });
 
-    edgeLabels
-        .attr('x', d => {
-            const sx = d.source.x, sy = d.source.y;
-            const tx = d.target.x, ty = d.target.y;
-            if (d._pairTotal <= 1) return (sx + tx) / 2;
-            const dx = tx - sx, dy = ty - sy;
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const offset = (d._pairIndex - (d._pairTotal - 1) / 2) * 20;
-            return (sx + tx) / 2 + (-dy / dist) * offset;
-        })
-        .attr('y', d => {
-            const sx = d.source.x, sy = d.source.y;
-            const tx = d.target.x, ty = d.target.y;
-            if (d._pairTotal <= 1) return (sy + ty) / 2;
-            const dx = tx - sx, dy = ty - sy;
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const offset = (d._pairIndex - (d._pairTotal - 1) / 2) * 20;
-            return (sy + ty) / 2 + (dx / dist) * offset;
+    const crossLinks = graphData.edges.filter(e => {
+        const sid = e.source;
+        const tid = e.target;
+        return treeNodeMap[sid] && treeNodeMap[tid] &&
+               !treeLinkSet.has(sid + '|' + tid) &&
+               !treeLinkSet.has(tid + '|' + sid);
+    });
+
+    // Filter cross-links by hidden types
+    const visibleCrossLinks = crossLinks.filter(e => {
+        const sNode = graphData.nodes.find(n => n.id === e.source);
+        const tNode = graphData.nodes.find(n => n.id === e.target);
+        if (sNode && hiddenTypes.has(sNode.node_type)) return false;
+        if (tNode && hiddenTypes.has(tNode.node_type)) return false;
+        return true;
+    });
+
+    g.selectAll('.cross-link')
+        .data(visibleCrossLinks)
+        .enter().append('path')
+        .attr('class', 'cross-link')
+        .attr('fill', 'none')
+        .attr('stroke', '#585b70')
+        .attr('stroke-opacity', 0.15)
+        .attr('stroke-width', 1)
+        .attr('stroke-dasharray', '4,4')
+        .attr('d', d => {
+            const s = treeNodeMap[d.source];
+            const t = treeNodeMap[d.target];
+            if (!s || !t) return '';
+            const sx = s.y + xOff, sy = s.x + yOff;
+            const tx = t.y + xOff, ty = t.x + yOff;
+            const mx = (sx + tx) / 2;
+            return 'M' + sx + ',' + sy + 'C' + mx + ',' + sy + ',' + mx + ',' + ty + ',' + tx + ',' + ty;
         });
 
-    nodeGroup.attr('cx', d => d.x).attr('cy', d => d.y);
-    labelGroup.attr('x', d => d.x).attr('y', d => d.y);
-});
+    // Draw nodes
+    const nodes = g.selectAll('.tree-node')
+        .data(hierarchy.descendants())
+        .enter().append('g')
+        .attr('class', d => {
+            let cls = 'tree-node';
+            if (hiddenTypes.has(d.data.node_type)) cls += ' hidden-type';
+            if (collapsedIds.has(d.data.id)) cls += ' collapsed';
+            return cls;
+        })
+        .attr('transform', d => 'translate(' + (d.y + xOff) + ',' + (d.x + yOff) + ')')
+        .style('cursor', 'pointer')
+        .style('display', d => hiddenTypes.has(d.data.node_type) ? 'none' : null)
+        .on('click', (event, d) => {
+            event.stopPropagation();
+            if (event.shiftKey || event.metaKey) {
+                // Shift/Cmd+click to collapse/expand
+                toggleCollapse(d);
+            } else {
+                selectNode(d.data);
+            }
+        })
+        .on('dblclick', (event, d) => {
+            event.stopPropagation();
+            toggleCollapse(d);
+        })
+        .on('mouseover', function(event, d) {
+            d3.select(this).select('circle')
+                .attr('stroke', '#cdd6f4').attr('stroke-width', 3);
+            // Highlight connected cross-links
+            g.selectAll('.cross-link')
+                .attr('stroke-opacity', e => {
+                    return (e.source === d.data.id || e.target === d.data.id) ? 0.5 : 0.08;
+                });
+        })
+        .on('mouseout', function() {
+            d3.select(this).select('circle')
+                .attr('stroke', 'var(--bg-primary)').attr('stroke-width', 2);
+            g.selectAll('.cross-link').attr('stroke-opacity', 0.15);
+        });
 
-// ---- Drag ----
-function dragstarted(event) {
-    if (!event.active) simulation.alphaTarget(0.3).restart();
-    event.subject.fx = event.subject.x;
-    event.subject.fy = event.subject.y;
+    nodes.append('circle')
+        .attr('r', d => getSize(d.data.node_type))
+        .attr('fill', d => getColor(d.data.node_type))
+        .attr('stroke', 'var(--bg-primary)')
+        .attr('stroke-width', 2)
+        .style('filter', 'drop-shadow(0 0 3px rgba(0,0,0,0.3))');
+
+    // Collapse indicator (+/- badge)
+    nodes.filter(d => (d.data.children && d.data.children.length > 0) || d.data._childCount > 0)
+        .append('text')
+        .attr('class', 'collapse-indicator')
+        .attr('x', 0)
+        .attr('y', 1)
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'central')
+        .style('font-size', d => (getSize(d.data.node_type) * 1.2) + 'px')
+        .style('fill', 'var(--bg-primary)')
+        .style('font-weight', '700')
+        .text(d => collapsedIds.has(d.data.id) ? '+' : '');
+
+    // Collapsed child count badge
+    nodes.filter(d => d.data._childCount > 0)
+        .append('text')
+        .attr('x', d => getSize(d.data.node_type) + 4)
+        .attr('y', -6)
+        .attr('text-anchor', 'start')
+        .style('font-size', '9px')
+        .style('fill', 'var(--text-dim)')
+        .text(d => '(' + d.data._childCount + ')');
+
+    // Labels to the right of nodes
+    nodes.append('text')
+        .attr('x', d => getSize(d.data.node_type) + 8)
+        .attr('y', 4)
+        .attr('class', 'node-label')
+        .attr('text-anchor', 'start')
+        .text(d => {
+            const lbl = d.data.label || '';
+            return lbl.length > 35 ? lbl.substring(0, 35) + '...' : lbl;
+        });
 }
-function dragged(event) {
-    event.subject.fx = event.x;
-    event.subject.fy = event.y;
-}
-function dragended(event) {
-    if (!event.active) simulation.alphaTarget(0);
-    event.subject.fx = null;
-    event.subject.fy = null;
-}
+
+// Initial render
+renderTree();
 
 // ---- Detail Panel ----
 let selectedNode = null;
@@ -2109,21 +2306,17 @@ document.addEventListener('keydown', e => {
 });
 
 function fitGraph() {
-    const nodes = graphData.nodes;
-    if (nodes.length === 0) return;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    nodes.forEach(n => {
-        if (n.x < minX) minX = n.x;
-        if (n.y < minY) minY = n.y;
-        if (n.x > maxX) maxX = n.x;
-        if (n.y > maxY) maxY = n.y;
-    });
-    const pad = 60;
-    const bw = (maxX - minX) + pad * 2;
-    const bh = (maxY - minY) + pad * 2;
-    const scale = Math.min(width / bw, height / bh, 2);
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
+    // Get bounding box of the rendered tree
+    const gNode = g.node();
+    if (!gNode) return;
+    const bbox = gNode.getBBox();
+    if (bbox.width === 0 || bbox.height === 0) return;
+    const pad = 40;
+    const bw = bbox.width + pad * 2;
+    const bh = bbox.height + pad * 2;
+    const scale = Math.min(width / bw, height / bh, 1.5);
+    const cx = bbox.x + bbox.width / 2;
+    const cy = bbox.y + bbox.height / 2;
     const transform = d3.zoomIdentity
         .translate(width / 2, height / 2)
         .scale(scale)
@@ -2131,8 +2324,8 @@ function fitGraph() {
     svg.transition().duration(500).call(zoom.transform, transform);
 }
 
-// Initial fit after simulation settles
-setTimeout(fitGraph, 2000);
+// Initial fit after render
+setTimeout(fitGraph, 300);
 </script>
 </body>
 </html>"##;
@@ -2249,7 +2442,7 @@ mod tests {
         let html = generate_graph_html(&data, &lineage, "Test Doc", "test intent");
         assert!(html.contains("d3.v7.min.js"));
         assert!(html.contains("Brain in the Fish"));
-        assert!(html.contains("forceSimulation"));
+        assert!(html.contains("d3.tree"));
         assert!(html.contains("Test Doc"));
         assert!(html.contains("Agent One"));
     }
