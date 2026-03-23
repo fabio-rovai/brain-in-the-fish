@@ -1245,7 +1245,7 @@ body {
 #app {
     display: grid;
     grid-template-columns: 280px 1fr 360px;
-    grid-template-rows: 56px 1fr 48px;
+    grid-template-rows: 56px 1fr;
     height: 100vh;
     width: 100vw;
 }
@@ -1532,27 +1532,15 @@ body {
 }
 
 /* ---- Legend Bar (bottom) ---- */
-#legend-bar {
-    grid-column: 1 / -1;
-    grid-row: 3;
-    background: var(--bg-secondary);
-    border-top: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    padding: 4px 20px;
-    gap: 6px;
-    overflow-x: auto;
-    z-index: 20;
-    min-height: 52px;
-}
+/* Legend bar removed — moved to lineage panel */
 
 .legend-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 14px;
+    gap: 8px;
+    padding: 6px 10px;
     border-radius: 6px;
-    font-size: 12px;
+    font-size: 11px;
     border: 1px solid var(--border);
     background: var(--bg-primary);
     color: var(--text-primary);
@@ -1560,6 +1548,8 @@ body {
     white-space: nowrap;
     transition: all 0.15s;
     font-family: inherit;
+    width: 100%;
+    text-align: left;
 }
 
 .legend-btn:hover {
@@ -1630,6 +1620,15 @@ body {
 <div id="lineage-panel">
     <h2>Pipeline Lineage</h2>
     <div id="lineage-events"></div>
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
+        <h2>Node Types</h2>
+        <div id="legend-buttons" style="display:flex;flex-direction:column;gap:4px;margin-top:12px"></div>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);font-size:10px;color:var(--text-dim)">
+        <span class="key">Esc</span> deselect &nbsp;
+        <span class="key">F</span> fit &nbsp;
+        <span class="key">R</span> reset
+    </div>
 </div>
 
 <!-- Graph Canvas -->
@@ -1645,16 +1644,7 @@ body {
     </div>
 </div>
 
-<!-- Legend Bar -->
-<div id="legend-bar">
-    <div id="legend-buttons"></div>
-    <div class="legend-spacer"></div>
-    <div class="legend-shortcut">
-        <span><span class="key">Esc</span> deselect</span>
-        <span><span class="key">F</span> fit</span>
-        <span><span class="key">R</span> reset</span>
-    </div>
-</div>
+<!-- Bottom bar removed — legend moved to lineage panel -->
 
 </div><!-- /app -->
 
