@@ -10,6 +10,7 @@ use brain_in_the_fish::types::*;
 use brain_in_the_fish::alignment;
 use brain_in_the_fish::snn;
 use brain_in_the_fish::memory;
+use brain_in_the_fish::semantic;
 
 #[derive(Parser)]
 #[command(name = "brain-in-the-fish", version, about = "Universal document evaluation engine")]
@@ -72,6 +73,16 @@ async fn run_evaluate(
     criteria_path: Option<PathBuf>,
     output: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    // Resolve output_dir early (needed for state DB)
+    let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
+    std::fs::create_dir_all(&output_dir)?;
+
+    // Initialize ontology lifecycle (versioning, lineage, drift)
+    let state_db_path = output_dir.join(".brain-state.db");
+    let state_db = open_ontologies::state::StateDb::open(&state_db_path)?;
+    let onto_lineage = open_ontologies::lineage::LineageLog::new(state_db.clone());
+    let session_id = onto_lineage.new_session();
+
     // 1. Ingest document
     println!("1. Ingesting document: {}", document.display());
     let graph = Arc::new(open_ontologies::graph::GraphStore::new());
@@ -83,6 +94,21 @@ async fn run_evaluate(
 
     let triples = ingest::load_document_ontology(&graph, &doc)?;
     println!("   Loaded {} triples, {} sections", triples, doc.sections.len());
+    onto_lineage.record(&session_id, "I", "ingest", &format!("{} sections, {} triples", doc.sections.len(), triples));
+
+    // 2.5 Run OWL-RL reasoning to infer new triples
+    println!("   Running OWL-RL reasoning...");
+    match open_ontologies::reason::Reasoner::run(&graph, "owl-rl", true) {
+        Ok(reason_result) => {
+            let reason_json: serde_json::Value = serde_json::from_str(&reason_result).unwrap_or_default();
+            let inferred = reason_json.get("inferred_triples").and_then(|v| v.as_u64()).unwrap_or(0);
+            println!("   Inferred {} new triples via OWL-RL", inferred);
+            onto_lineage.record(&session_id, "A", "reason", &format!("{} triples inferred", inferred));
+        }
+        Err(e) => {
+            println!("   Warning: reasoning failed: {}", e);
+        }
+    }
 
     // 3. Load evaluation criteria
     println!("3. Loading evaluation criteria...");
@@ -94,6 +120,7 @@ async fn run_evaluate(
     };
     let crit_triples = criteria::load_criteria_ontology(&graph, &framework)?;
     println!("   {} criteria, {} triples", framework.criteria.len(), crit_triples);
+    onto_lineage.record(&session_id, "I", "criteria", &format!("{} criteria loaded", framework.criteria.len()));
 
     // 4. Discover sector guidelines with provenance
     println!("4. Discovering sector guidelines...");
@@ -103,6 +130,7 @@ async fn run_evaluate(
     for g in &guidelines {
         println!("   - {} ({})", g.title, g.sector);
     }
+    onto_lineage.record(&session_id, "I", "guidelines", &format!("{} guidelines discovered", guidelines.len()));
 
     // 5. Align sections to criteria (ontology alignment with 7 signals)
     println!("5. Aligning document to criteria...");
@@ -121,6 +149,7 @@ async fn run_evaluate(
     for gap in &gaps {
         println!("   GAP: No content for '{}'", gap.criterion_title);
     }
+    onto_lineage.record(&session_id, "A", "align", &format!("{} alignments, {} gaps", alignments.len(), gaps.len()));
 
     // 6. Spawn agent panel
     println!("6. Spawning evaluator panel...");
@@ -128,6 +157,23 @@ async fn run_evaluate(
     for a in &agents {
         let agent_triples = agent::load_agent_ontology(&graph, a)?;
         println!("   {} ({}) — {} triples", a.name, a.role, agent_triples);
+    }
+    onto_lineage.record(&session_id, "A", "spawn", &format!("{} agents spawned", agents.len()));
+
+    // 6.5 Semantic embeddings (optional — requires models)
+    if semantic::models_available() {
+        println!("   Generating semantic embeddings...");
+        match semantic::embed_graph(&graph, &output_dir) {
+            Ok(count) => {
+                println!("   Embedded {} entities", count);
+                onto_lineage.record(&session_id, "A", "embed", &format!("{} entities embedded", count));
+            }
+            Err(e) => {
+                println!("   Embeddings skipped: {}", e);
+            }
+        }
+    } else {
+        println!("   Embeddings skipped (run 'open-ontologies init' to enable)");
     }
 
     // 7. SNN scoring (deterministic — no LLM needed)
@@ -139,6 +185,32 @@ async fn run_evaluate(
         let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
         network.feed_evidence(&doc, &alignments, &snn_config);
         snn_networks.push(network);
+    }
+
+    // Boost SNN with semantic similarity signals
+    if semantic::models_available() {
+        for network in &mut snn_networks {
+            for neuron in &mut network.neurons {
+                for alignment in &alignments {
+                    if alignment.criterion_id == neuron.criterion_id {
+                        if let Ok(sim) = semantic::semantic_similarity(
+                            &alignment.section_id,
+                            &alignment.criterion_id,
+                            &output_dir,
+                        ) {
+                            if sim > 0.3 {
+                                neuron.receive_spike(snn::Spike {
+                                    source_id: format!("semantic_{}", alignment.section_id),
+                                    strength: sim.min(1.0),
+                                    spike_type: snn::SpikeType::Alignment,
+                                    timestep: 0,
+                                }, &snn_config);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // SNN scores ARE the actual scores
@@ -182,6 +254,17 @@ async fn run_evaluate(
             round1_scores.push(score);
         }
     }
+
+    onto_lineage.record(&session_id, "A", "snn_score", &format!("{} scores computed", round1_scores.len()));
+
+    // Version snapshot before debate (for drift detection after)
+    let pre_debate_turtle = match graph.serialize("turtle") {
+        Ok(t) => Some(t),
+        Err(e) => {
+            println!("   Warning: could not snapshot pre-debate graph: {}", e);
+            None
+        }
+    };
 
     // 8. Build debate rounds from SNN score disagreements
     println!("8. Debate (deterministic convergence)...");
@@ -273,6 +356,25 @@ async fn run_evaluate(
         }
     }
 
+    // Ontology drift detection: compare graph before and after debate
+    if let Some(ref pre_turtle) = pre_debate_turtle {
+        match graph.serialize("turtle") {
+            Ok(post_debate_turtle) => {
+                let drift_detector = open_ontologies::drift::DriftDetector::new(state_db.clone());
+                match drift_detector.detect(pre_turtle, &post_debate_turtle) {
+                    Ok(drift_result) => {
+                        let drift_json: serde_json::Value = serde_json::from_str(&drift_result).unwrap_or_default();
+                        let drift_velocity = drift_json.get("drift_velocity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        println!("   Ontology drift: velocity={:.3}", drift_velocity);
+                        onto_lineage.record(&session_id, "D", "drift", &format!("velocity={:.3}", drift_velocity));
+                    }
+                    Err(e) => println!("   Warning: drift detection failed: {}", e),
+                }
+            }
+            Err(e) => println!("   Warning: could not snapshot post-debate graph: {}", e),
+        }
+    }
+
     // 9. Moderate: trust-weighted consensus
     println!("9. Calculating consensus scores...");
     let moderated = moderation::calculate_moderated_scores(&current_scores, &agents);
@@ -298,9 +400,6 @@ async fn run_evaluate(
     };
 
     let report = report::generate_report(&session, &overall);
-
-    let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
-    std::fs::create_dir_all(&output_dir)?;
 
     let report_path = output_dir.join("evaluation-report.md");
     std::fs::write(&report_path, &report)?;
@@ -349,6 +448,39 @@ async fn run_evaluate(
     let orch_path = output_dir.join("orchestration.json");
     std::fs::write(&orch_path, serde_json::to_string_pretty(&orchestration)?)?;
     println!("   Orchestration tasks: {}", orch_path.display());
+
+    // 14. Quality gate: enforce evaluation patterns
+    println!("14. Enforcing evaluation quality rules...");
+    let enforcer = open_ontologies::enforce::Enforcer::new(state_db.clone(), graph.clone());
+    enforcer.add_custom_rule(
+        "eval_every_criterion_scored",
+        "eval",
+        "PREFIX eval: <http://brain-in-the-fish.dev/eval/> SELECT ?c WHERE { ?c a eval:EvaluationCriterion . FILTER NOT EXISTS { ?s eval:criterion ?c . ?s a eval:Score } }",
+        "error",
+        "Criterion has no scores",
+    );
+    enforcer.add_custom_rule(
+        "eval_agent_has_needs",
+        "eval",
+        "PREFIX eval: <http://brain-in-the-fish.dev/eval/> PREFIX cog: <http://brain-in-the-fish.dev/cognition/> SELECT ?a WHERE { ?a a eval:EvaluatorAgent . FILTER NOT EXISTS { ?n cog:agentRef ?a } }",
+        "warning",
+        "Agent has no cognitive needs defined",
+    );
+    match enforcer.enforce("eval") {
+        Ok(enforce_result) => {
+            let enforce_json: serde_json::Value = serde_json::from_str(&enforce_result).unwrap_or_default();
+            let violations = enforce_json.get("violations").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            println!("   Enforce: {} violations", violations);
+            onto_lineage.record(&session_id, "E", "enforce", &format!("{} violations", violations));
+        }
+        Err(e) => {
+            println!("   Warning: enforce failed: {}", e);
+        }
+    }
+
+    // Print lineage trail
+    let compact_lineage = onto_lineage.get_compact(&session_id);
+    println!("\nLineage trail (onto_lineage):\n{}", compact_lineage);
 
     println!("\nTo enhance with LLM scoring:");
     println!("   1. Start MCP server: brain-in-the-fish serve");

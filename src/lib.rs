@@ -15,3 +15,4 @@ pub mod server;
 pub mod snn;
 pub mod memory;
 pub mod batch;
+pub mod semantic;
