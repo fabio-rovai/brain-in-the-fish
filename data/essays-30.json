@@ -1,0 +1,242 @@
+[
+  {
+    "id": "weak_01",
+    "text": "Technology is very important in our lives today. Everyone uses phones and computers. Technology makes things easier and faster. Some people think technology is bad but I disagree. Technology helps us communicate with friends and family. It also helps doctors save lives. In conclusion technology is good and we should use more of it. The world would be worse without technology.",
+    "expert_score": 2.0,
+    "max_score": 10.0,
+    "domain": "technology",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "weak_02",
+    "text": "Climate change is happening because of pollution. Cars and factories make the air dirty. The ice is melting at the poles. Animals are dying because of this. We need to stop using so much oil and gas. Everyone should recycle more. If we don't do something the planet will be destroyed. Climate change is very bad and we need to fix it now.",
+    "expert_score": 2.5,
+    "max_score": 10.0,
+    "domain": "environment",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "weak_03",
+    "text": "Education is important because it helps people get jobs. Without education people can't earn money. Schools teach children reading and math. College helps people learn more advanced things. Some people drop out of school and this is bad. The government should spend more money on education. Teachers should be paid more. Education is the key to success in life.",
+    "expert_score": 2.5,
+    "max_score": 10.0,
+    "domain": "education",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "weak_04",
+    "text": "Healthcare should be free for everyone. In America many people can't afford to see a doctor. This is unfair because everyone gets sick sometimes. Other countries like Canada and England have free healthcare. People shouldn't have to choose between paying rent and going to the hospital. The government has enough money to pay for it. Rich people should pay more taxes to help. Free healthcare would make everyone healthier and happier.",
+    "expert_score": 3.0,
+    "max_score": 10.0,
+    "domain": "health",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "weak_05",
+    "text": "Social media has changed how people interact. Platforms like Instagram and TikTok are used by millions. Some researchers say social media causes depression in teenagers. Other studies say it helps people stay connected. There are pros and cons to social media. Parents should monitor their children's usage. Companies should do more to protect users. Overall social media is probably more harmful than helpful but it depends on how you use it.",
+    "expert_score": 3.5,
+    "max_score": 10.0,
+    "domain": "technology",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "weak_06",
+    "text": "The economy is not doing well right now. Prices are going up for food and housing. Many people are struggling to pay their bills. The government needs to do something about inflation. Some experts say we should raise interest rates. Others think we should lower taxes. There are different opinions about what to do. I think the government should help ordinary people more and stop giving money to big corporations.",
+    "expert_score": 3.0,
+    "max_score": 10.0,
+    "domain": "economics",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "weak_07",
+    "text": "Exercise is good for your health. People who exercise regularly live longer. Running swimming and cycling are good forms of exercise. You should try to exercise at least 30 minutes a day. Many people don't exercise enough because they are too busy with work. Gyms can be expensive which is another barrier. The government should build more parks and free sports facilities. Being healthy is the most important thing in life.",
+    "expert_score": 3.5,
+    "max_score": 10.0,
+    "domain": "health",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "weak_08",
+    "text": "Renewable energy is the future. Solar panels and wind turbines can produce electricity without pollution. Many countries are investing in renewable energy. China is the biggest producer of solar panels. The cost of renewable energy has decreased significantly in recent years. However some people argue that renewable energy is unreliable because the sun doesn't always shine and wind doesn't always blow. Batteries can solve this problem. We should transition to 100% renewable energy as soon as possible.",
+    "expert_score": 4.0,
+    "max_score": 10.0,
+    "domain": "environment",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "weak_09",
+    "text": "Artificial intelligence will replace many jobs in the coming years. Robots can already do many tasks faster and cheaper than humans. Self-driving cars will replace taxi and truck drivers. AI can diagnose diseases better than some doctors. This is scary for many workers. However new technologies have always created new types of jobs. People need to learn new skills to adapt. Governments should provide training programs for workers who lose their jobs to AI.",
+    "expert_score": 4.0,
+    "max_score": 10.0,
+    "domain": "technology",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "weak_10",
+    "text": "University tuition fees have been rising dramatically over the past two decades. In the United States, average tuition at public four-year institutions has nearly tripled since 2000 after adjusting for inflation. Student loan debt now exceeds $1.7 trillion nationally. Some argue that higher education should be free, pointing to countries like Germany and Norway. However, critics contend that free tuition would shift costs to taxpayers and potentially reduce educational quality. The debate continues with valid points on both sides. A compromise might involve income-based repayment plans.",
+    "expert_score": 4.5,
+    "max_score": 10.0,
+    "domain": "education",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_01",
+    "text": "The gig economy has fundamentally altered traditional employment relationships, raising important questions about worker protections. Companies like Uber and Deliveroo classify workers as independent contractors rather than employees, exempting them from minimum wage requirements, sick pay, and pension contributions. A 2021 report by the TUC estimated that 4.4 million UK workers now operate in the gig economy. While proponents argue this model offers flexibility and entrepreneurial opportunity, critics point to the precarity it creates. The Supreme Court's ruling in Uber BV v Aslam (2021) established that Uber drivers are 'workers' entitled to basic protections, but enforcement remains inconsistent. A balanced regulatory framework is needed that preserves flexibility while ensuring basic economic security.",
+    "expert_score": 5.5,
+    "max_score": 10.0,
+    "domain": "economics",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_02",
+    "text": "Mental health services in schools deserve greater investment, both for humanitarian and economic reasons. According to NHS Digital (2022), one in six children aged 5-16 has a probable mental health disorder, a significant increase from one in nine in 2017. Early intervention is cost-effective: the Centre for Mental Health estimates that every pound spent on school-based mental health programmes yields a return of approximately £6 in reduced healthcare costs and improved productivity. Countries like Finland have integrated counselling into every school, contributing to better academic outcomes. However, simply placing counsellors in schools is insufficient without adequate training and culturally sensitive approaches. Implementation must be evidence-based, drawing on programmes with demonstrated efficacy such as the Penn Resiliency Programme.",
+    "expert_score": 6.0,
+    "max_score": 10.0,
+    "domain": "health",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_03",
+    "text": "Urban green spaces provide measurable benefits that justify their cost in increasingly dense cities. Research by White et al. (2019) published in Scientific Reports found that people who spend at least 120 minutes per week in nature report significantly better health and wellbeing than those who do not. The economic benefits are also substantial: a study by the Trust for Public Land found that urban parks generate approximately $10 in economic value for every $1 invested, through reduced healthcare costs, increased property values, and stormwater management. However, green space access is inequitably distributed. Communities with lower average incomes have 44% less park space than affluent areas, according to the National Recreation and Park Association. Urban planning must prioritise equitable green space distribution to avoid reinforcing existing health disparities.",
+    "expert_score": 6.5,
+    "max_score": 10.0,
+    "domain": "environment",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_04",
+    "text": "The digital divide remains a significant barrier to educational equity despite increasing internet penetration globally. UNESCO data shows that approximately 2.9 billion people worldwide still lack internet access, with the gap most pronounced in sub-Saharan Africa where only 33% of the population is connected. The COVID-19 pandemic exposed this divide starkly: students with reliable broadband and devices continued learning remotely, while others fell behind. Research by Andrew et al. (2020) found that children from the poorest families in the UK spent 30% less time on schoolwork during lockdowns compared to their affluent peers. Solutions require multi-stakeholder collaboration. Community Wi-Fi initiatives, device loan programmes, and digital literacy training are necessary but insufficient without addressing the underlying infrastructure gaps that disproportionately affect rural and low-income communities.",
+    "expert_score": 6.0,
+    "max_score": 10.0,
+    "domain": "education",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_05",
+    "text": "Data privacy regulation faces a fundamental tension between protecting individual rights and enabling innovation. The EU's General Data Protection Regulation (GDPR), implemented in 2018, established comprehensive data protection standards including the right to erasure and data portability. While laudable in principle, compliance costs have been substantial: the International Association of Privacy Professionals estimated that GDPR compliance cost European businesses approximately €200 billion in its first two years. Small and medium enterprises are disproportionately affected, potentially consolidating market power among large technology firms that can absorb regulatory costs. Alternative approaches such as data trusts and cooperative data governance models offer promising middle ground. These frameworks could enable beneficial data use while maintaining meaningful consent, though they remain largely untested at scale.",
+    "expert_score": 6.5,
+    "max_score": 10.0,
+    "domain": "technology",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_06",
+    "text": "The relationship between minimum wage increases and employment remains one of the most contested questions in labour economics. Classical economic theory predicts that price floors above equilibrium reduce demand, implying that minimum wage increases should reduce employment. However, Card and Krueger's (1994) seminal study of fast-food restaurants along the New Jersey-Pennsylvania border found no significant employment effect from a minimum wage increase. Subsequent meta-analyses have produced mixed results: Doucouliagos and Stanley (2009) found evidence of publication bias in the literature, with the true employment effect near zero. The UK's experience with the National Living Wage, introduced in 2016, provides additional evidence: the Low Pay Commission found minimal employment effects while real wages for low-paid workers increased measurably. These findings suggest that moderate minimum wage increases may improve living standards without significant job losses, though the effect likely varies by region and industry.",
+    "expert_score": 7.0,
+    "max_score": 10.0,
+    "domain": "economics",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_07",
+    "text": "Antibiotic resistance represents a slow-moving pandemic that demands coordinated global action before existing treatments become ineffective. The World Health Organisation has identified antimicrobial resistance as one of the top ten threats to global health. Current projections by O'Neill (2016) estimate that drug-resistant infections could cause 10 million deaths annually by 2050 and cost the global economy $100 trillion in lost output. The drivers are well-understood: overuse in human medicine, prophylactic use in agriculture, and inadequate new drug development. Approximately 73% of antibiotics sold globally are used in livestock, often for growth promotion rather than treatment. Policy responses have been fragmented. While the EU banned growth-promoting antibiotics in 2006, many major agricultural economies have not followed suit. Market incentives for antibiotic development remain misaligned: the most socially valuable antibiotics are those prescribed least frequently, creating a paradox that conventional pharmaceutical business models cannot resolve.",
+    "expert_score": 7.0,
+    "max_score": 10.0,
+    "domain": "health",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_01",
+    "text": "The proposition that carbon border adjustment mechanisms (CBAMs) represent protectionism dressed in environmental clothing deserves serious scrutiny, but ultimately fails to account for the legitimate rationale underlying these instruments. The EU's Carbon Border Adjustment Mechanism, operational from 2026, imposes carbon costs on imports of steel, cement, aluminium, fertilisers, electricity, and hydrogen proportional to the embedded emissions in production. Critics such as Hillman (2013) argue that CBAMs violate WTO non-discrimination principles, particularly the most-favoured-nation clause under GATT Article I. However, this interpretation overlooks the environmental exceptions codified in GATT Article XX(b) and (g), which permit trade measures necessary to protect human health or conserve exhaustible natural resources. The Appellate Body's ruling in US-Shrimp (1998) established that environmental trade measures are permissible provided they are not applied in arbitrary or unjustifiably discriminatory ways. Crucially, CBAMs address a genuine market failure: without border adjustment, jurisdictions with ambitious climate policies face carbon leakage, where production shifts to regions with weaker regulation, producing no net emissions reduction while damaging domestic competitiveness. Branger and Quirion (2014) estimate leakage rates of 5-25% for energy-intensive industries under unilateral carbon pricing. By equalising carbon costs across domestic and imported goods, CBAMs restore competitive neutrality while preserving the environmental integrity of domestic climate policy.",
+    "expert_score": 8.5,
+    "max_score": 10.0,
+    "domain": "economics",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_02",
+    "text": "The deployment of predictive policing algorithms raises profound questions about the relationship between statistical efficiency and constitutional rights that cannot be resolved by technical improvements alone. Systems such as PredPol and HunchLab use historical crime data to forecast where offences are likely to occur, directing patrol resources accordingly. Proponents point to measured reductions in property crime of 7-12% in pilot deployments (Mohler et al., 2015). However, this framing obscures a fundamental epistemological problem: historical crime data reflects enforcement patterns rather than actual crime distribution. Richardson, Schultz, and Crawford (2019) demonstrate that when training data incorporates decades of racially biased policing practices, algorithmic predictions reproduce and amplify those biases, creating feedback loops where increased surveillance of minority communities generates more arrests, which in turn validates further surveillance. The constitutional implications are significant. In Carpenter v. United States (2018), the Supreme Court recognised that comprehensive surveillance can constitute an unreasonable search under the Fourth Amendment. Predictive policing, while not targeting individuals directly, enables a form of geographic profiling that functionally subjects entire communities to heightened scrutiny based on characteristics correlated with race and socioeconomic status. Lum and Isaac (2016) demonstrated this empirically by training a predictive model on historical drug crime data from Oakland, finding that the algorithm directed disproportionate enforcement to predominantly Black neighbourhoods despite survey evidence showing similar drug use rates across racial groups. Reform requires not merely debiasing algorithms but reconsidering the premise that public safety is optimally served by prediction-driven enforcement rather than investment in the social determinants of crime.",
+    "expert_score": 9.0,
+    "max_score": 10.0,
+    "domain": "technology",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_03",
+    "text": "The concept of planetary boundaries, first articulated by Rockström et al. (2009) and subsequently refined by Steffen et al. (2015), provides a scientifically grounded framework for evaluating the sustainability of human activity that conventional economic indicators systematically fail to capture. The framework identifies nine Earth system processes and quantifies safe operating boundaries for each, six of which have now been transgressed. While critics such as Nordhaus (2012) argue that the framework is insufficiently granular for policy application and that some boundaries lack robust quantification, these objections conflate precision with utility. The value of planetary boundaries lies not in providing exact thresholds but in making visible the biophysical constraints that GDP-focused policy ignores. Consider the nitrogen cycle boundary: anthropogenic nitrogen fixation now exceeds the safe boundary by approximately 130%, primarily driven by synthetic fertiliser use in agriculture (Fowler et al., 2013). This transgression manifests as aquatic dead zones, biodiversity loss in terrestrial ecosystems, and nitrous oxide emissions contributing approximately 6% of total greenhouse forcing. Yet conventional national accounts treat fertiliser inputs as production costs and agricultural output as income, recording no depreciation of the natural capital being degraded. The policy implications are transformative. Integrating planetary boundary science into economic governance requires what Raworth (2017) terms 'doughnut economics': ensuring that resource use remains within ecological ceilings while meeting social foundations. This is not merely an environmental agenda but a reconceptualisation of economic purpose, moving from growth maximisation to the more sophisticated objective of thriving within biophysical limits.",
+    "expert_score": 9.0,
+    "max_score": 10.0,
+    "domain": "environment",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_04",
+    "text": "Universal basic income (UBI) proposals have gained renewed political salience, yet much of the contemporary debate remains anchored to a false dichotomy between unconditional cash transfers and traditional means-tested welfare. A more productive analytical framework examines UBI as a response to specific structural transformations in labour markets rather than as a wholesale replacement for existing social protection. Three developments strengthen the case for experimentation. First, the 'fissuring' of employment documented by Weil (2014), whereby firms outsource, franchise, and subcontract to reduce labour costs, has eroded the employer-employee relationship that underpins contribution-based social insurance. Second, technological displacement is increasingly affecting middle-skill occupations: Autor and Dorn (2013) demonstrate persistent labour market polarisation in developed economies, with employment growth concentrated in high-skill and low-skill occupations while middle-skill roles decline. Third, the administrative costs and stigma effects of means-testing are substantial. Currie (2006) estimates that take-up rates for means-tested benefits range from 40-80%, meaning that significant portions of eligible populations do not receive support. Finland's randomised controlled trial (2017-2018) provides the most methodologically rigorous evidence to date. Participants receiving €560 monthly reported improved wellbeing and modest increases in employment compared to the control group (Kangas et al., 2019). While the employment effects were small, the finding that unconditional transfers did not reduce work participation contradicts the moral hazard assumption central to opposition arguments. The Stockton Economic Empowerment Demonstration produced similar results: recipients were more likely to find full-time employment than control group members (West and Castro Baker, 2023). However, these pilots test modest supplements rather than full income replacement, and scaling effects remain unknown.",
+    "expert_score": 9.5,
+    "max_score": 10.0,
+    "domain": "economics",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_05",
+    "text": "The replication crisis in psychology has prompted necessary methodological reform, but the dominant framing of the problem as primarily statistical obscures deeper epistemological issues that quantitative fixes alone cannot resolve. The Open Science Collaboration's (2015) landmark attempt to replicate 100 published psychology studies found that only 36% produced statistically significant results consistent with the originals, with mean effect sizes approximately half those originally reported. This finding catalysed widespread adoption of pre-registration, increased sample sizes, and multi-site replication protocols. While these reforms address genuine problems of p-hacking and publication bias documented by Simmons, Nelson, and Simonsohn (2011), they rest on an assumption that the underlying constructs being measured are stable and universal. This assumption is increasingly untenable. Henrich, Heine, and Norenzayan's (2010) influential critique demonstrated that approximately 96% of psychology research participants come from Western, Educated, Industrialised, Rich, and Democratic societies, representing approximately 12% of the global population. Crucially, cross-cultural replications reveal not merely attenuated effects but qualitatively different patterns: the Müller-Lyer illusion, long considered a basic perceptual phenomenon, shows minimal effect in San foragers (Segall et al., 1966); loss aversion, foundational to behavioural economics, does not replicate in several small-scale societies (Apicella et al., 2014). These are not failures of statistical power but evidence that some psychological phenomena are culturally constructed rather than universal. Meaningful reform therefore requires not just better statistics but a fundamental expansion of who participates in psychological science and whose experiences count as data.",
+    "expert_score": 9.5,
+    "max_score": 10.0,
+    "domain": "education",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_06",
+    "text": "The distinction between palliative sedation and euthanasia, though philosophically coherent under the doctrine of double effect, becomes practically tenuous in clinical contexts that demand greater ethical scrutiny than current medical guidelines provide. Palliative sedation involves administering sedatives to relieve refractory suffering in terminally ill patients, with death accepted as a foreseeable but unintended consequence. Euthanasia involves deliberately causing death to relieve suffering. The doctrinal distinction hinges on intention: in palliative sedation, the intended effect is symptom relief, while death is a tolerated side effect. However, empirical research challenges the clarity of this distinction. Rietjens et al. (2008), examining 208 cases of continuous deep sedation in the Netherlands, found that in 17% of cases, physicians reported partially intending to hasten death. Sykes and Thorns (2003) demonstrated that deep continuous sedation until death does not statistically shorten survival compared to matched controls, which paradoxically undermines both the euthanasia critique and the double-effect justification simultaneously. If sedation does not hasten death, then the 'bad effect' tolerating is theoretical rather than actual. The more fundamental issue concerns patient autonomy and the phenomenology of dying. Continuous deep sedation eliminates consciousness, including the possibility of meaningful interaction with loved ones, spiritual reflection, or experiencing one's own death. As Battin (2008) argues, if we accept that a permanently unconscious patient has no experiential interests being served, the moral distinction between continuous deep sedation and euthanasia narrows considerably. This does not necessarily argue for euthanasia but rather for greater honesty about what palliative sedation entails and more explicit conversations with patients about the phenomenological implications of each option.",
+    "expert_score": 9.0,
+    "max_score": 10.0,
+    "domain": "health",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_07",
+    "text": "The assumption that biodiversity conservation and economic development represent fundamentally competing objectives reflects a failure of economic valuation rather than an inherent trade-off. Conventional cost-benefit analyses systematically undervalue ecosystem services because they treat natural capital as substitutable and discount future benefits at rates that effectively assign near-zero value to ecological integrity beyond a 30-year horizon. Dasgupta's (2021) landmark review for the UK Treasury formalised this critique, demonstrating that between 1992 and 2014, produced capital per capita doubled globally while natural capital per capita declined by nearly 40%. This divergence is invisible in GDP accounting, which records the depletion of natural assets as income rather than depreciation. Costanza et al. (2014) estimated global ecosystem services at $125 trillion annually, exceeding global GDP. While such aggregate valuations are contested methodologically, they illustrate the scale of the omission. Localised studies offer more precise evidence: Ricketts et al. (2004) demonstrated that coffee farms within 1km of forest fragments in Costa Rica received pollination services worth approximately $60,000 per farm annually, a benefit that disappears with deforestation. The Dasgupta framework proposes replacing GDP with inclusive wealth accounting that treats natural capital depreciation as genuine economic loss. This is not merely an academic exercise: Costa Rica's payments for ecosystem services programme, operational since 1997, reversed deforestation while maintaining economic growth, demonstrating that appropriate institutional design can align conservation and development incentives.",
+    "expert_score": 8.5,
+    "max_score": 10.0,
+    "domain": "environment",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_08",
+    "text": "Standardised testing in education measures a narrower construct than its proponents acknowledge, and the consequences of this measurement error compound systematically across socioeconomic lines. The validity argument for standardised tests rests on predictive validity: SAT scores correlate with first-year college GPA at approximately r = 0.35 (Westrick et al., 2019). While statistically significant with large samples, this correlation explains only about 12% of variance in college performance, leaving 88% attributable to factors the test does not capture. More critically, Sackett et al. (2009) demonstrated that the SAT-GPA relationship is substantially attenuated after controlling for socioeconomic status, suggesting that both variables are partially measuring family resources rather than academic aptitude. The content validity concern is equally significant. Standardised tests necessarily sample from the universe of possible knowledge and skills, and the sampling process reflects culturally specific assumptions about what constitutes important knowledge. Au (2007), in a meta-synthesis of 49 qualitative studies, found that high-stakes testing consistently narrowed curriculum to tested subjects, fragmented knowledge into test-compatible discrete facts, and increased teacher-centred pedagogical approaches. These curricular distortions disproportionately affect schools serving low-income communities, where accountability pressures are greatest. Alternatives exist but require institutional commitment. Portfolio-based assessment systems, as implemented in Finland and parts of New York State, capture a broader range of competencies including collaboration, creativity, and sustained inquiry. Their limitation is cost and standardisation difficulty, but these are engineering problems, not fundamental validity barriers.",
+    "expert_score": 8.5,
+    "max_score": 10.0,
+    "domain": "education",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_08",
+    "text": "Remote working has transformed employment practices globally, with implications that extend beyond productivity metrics to questions of social cohesion and urban planning. A Stanford study by Bloom et al. (2015) found that remote workers were 13% more productive than their office-based counterparts, attributed to fewer distractions and reduced commuting stress. However, more recent research by Yang et al. (2022) using Microsoft collaboration data from 61,000 employees found that remote work made communication networks more siloed and static, potentially reducing innovation over time. The spatial implications are significant: if 20-30% of working days shift permanently to remote settings, as McKinsey projects, commercial real estate demand in city centres could decline by 15-20%. This presents both risks and opportunities for urban planning. Reduced office demand could free space for affordable housing, addressing chronic shortages in cities like London and San Francisco. Conversely, diminished foot traffic threatens the service economies that depend on office workers. A hybrid model appears to be emerging as the dominant arrangement, though the optimal balance remains contested.",
+    "expert_score": 5.5,
+    "max_score": 10.0,
+    "domain": "economics",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_09",
+    "text": "Vaccine hesitancy poses a growing threat to public health achievements that took decades to establish. The WHO identified it as one of the top ten threats to global health in 2019, before the COVID-19 pandemic intensified the challenge. Understanding hesitancy requires moving beyond a simplistic 'knowledge deficit' model. Larson et al. (2014) propose a matrix of determinants including confidence in vaccine safety and efficacy, complacency about disease risk, and convenience of access. In the UK, MMR vaccination rates fell below the 95% herd immunity threshold in several regions following the discredited Wakefield study, despite its retraction in 2010 and Wakefield's removal from the medical register. Rebuilding trust requires acknowledging legitimate concerns about pharmaceutical industry practices while firmly communicating the scientific consensus. Community health workers and trusted local figures are more effective messengers than institutional campaigns, as demonstrated by successful polio eradication efforts in Nigeria (Renne, 2010). However, the challenge is amplified by social media algorithms that preferentially surface emotionally engaging content, creating information environments where personal anecdotes routinely outcompete epidemiological evidence.",
+    "expert_score": 6.5,
+    "max_score": 10.0,
+    "domain": "health",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "mid_10",
+    "text": "The right to repair movement challenges the planned obsolescence strategies that have become standard practice in consumer electronics manufacturing. Apple, Samsung, and other major manufacturers have historically restricted access to repair parts, diagnostic tools, and technical documentation, effectively compelling consumers to purchase replacement devices rather than repair existing ones. The environmental consequences are substantial: the UN estimates that approximately 54 million tonnes of electronic waste are generated globally each year, with only 17% formally recycled. The European Parliament voted in 2022 to strengthen consumers' right to repair, requiring manufacturers to make spare parts available for a minimum period and to design products for repairability. Similar legislation has been introduced in several US states. Industry opposition centres on intellectual property concerns and safety considerations, arguing that untrained repairs could compromise device safety. While these concerns have some merit for complex components like lithium-ion batteries, they are overstated for routine repairs such as screen and battery replacements. The economic case for repairability is strengthened by lifecycle analysis showing that manufacturing a new smartphone produces approximately 70kg of CO2 equivalent emissions.",
+    "expert_score": 5.0,
+    "max_score": 10.0,
+    "domain": "technology",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_09",
+    "text": "The medicalisation of normal human variation represents a systematic category error with consequences that extend beyond individual over-treatment to the distortion of research priorities and resource allocation. Attention-deficit/hyperactivity disorder illustrates the pattern: diagnostic prevalence has increased from approximately 3% in the 1980s to over 10% in recent US estimates (Danielson et al., 2018), a trajectory more consistent with expanding diagnostic criteria than with genuine epidemiological change. Frances (2013), who chaired the DSM-IV task force, argues that successive revisions have lowered diagnostic thresholds to the point where normal developmental variation is routinely pathologised. The pharmaceutical incentive structure amplifies this tendency: Schwarz (2016) documents how stimulant manufacturers funded advocacy groups, sponsored continuing medical education, and promoted direct-to-consumer advertising that expanded the perceived boundaries of ADHD. This is not to deny that severe attentional difficulties cause genuine impairment, but to observe that the boundary between disorder and normal variation is a social construct with economic determinants. The consequences for research are significant: when heterogeneous populations are grouped under a single diagnostic label, treatment studies produce modest average effects that may reflect strong responses in a subgroup diluted by non-responders who were inappropriately diagnosed. Reconceptualising conditions like ADHD as dimensional rather than categorical, as the NIMH's Research Domain Criteria framework proposes, would enable more targeted interventions and reduce the harms of unnecessary pharmacological treatment in individuals whose difficulties are better addressed through environmental modification.",
+    "expert_score": 8.0,
+    "max_score": 10.0,
+    "domain": "health",
+    "rubric": "persuasive"
+  },
+  {
+    "id": "strong_10",
+    "text": "The proposition that artificial intelligence systems should be granted legal personhood to facilitate accountability misidentifies the problem and proposes a solution that would paradoxically reduce rather than enhance meaningful responsibility. The European Parliament's 2017 resolution considered creating a category of 'electronic persons' for autonomous AI systems, enabling them to hold rights and obligations independently. Proponents argue this would clarify liability when AI systems cause harm, analogous to corporate personhood which allows organisations to be sued independently of their members. However, this analogy is fatally flawed. Corporate personhood functions because corporations are composed of natural persons who ultimately bear consequences through financial loss, reputational damage, and potential criminal liability. AI personhood would create an entity that cannot suffer consequences, effectively establishing a liability shield for developers and deployers. As Bryson, Diamantis, and Grant (2017) argue, granting rights to AI systems would be a category error equivalent to granting rights to a corporation's filing cabinet. The accountability gap is real but requires different solutions: strict liability regimes that hold developers responsible for foreseeable harms, mandatory insurance requirements proportional to deployment risk, and algorithmic impact assessments analogous to environmental impact assessments. The EU's AI Act (2024) moves in this direction by imposing obligations on providers and deployers rather than on AI systems themselves. Turner (2019) demonstrates that existing tort law frameworks, supplemented by sector-specific regulation, can adequately address AI-related harms without the conceptual confusion and perverse incentives of electronic personhood.",
+    "expert_score": 8.0,
+    "max_score": 10.0,
+    "domain": "technology",
+    "rubric": "persuasive"
+  }
+]
