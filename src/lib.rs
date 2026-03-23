@@ -10,6 +10,7 @@ pub mod report;
 pub mod visualize;
 pub mod llm;
 pub mod research;
+pub mod orchestrator;
 pub mod server;
 pub mod snn;
 pub mod memory;

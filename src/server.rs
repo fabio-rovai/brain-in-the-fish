@@ -83,6 +83,14 @@ pub struct EvalChallengePromptInput {
     pub criterion_id: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EvalScoringTasksInput {
+    /// Optional: restrict to a specific agent index.
+    pub agent_index: Option<usize>,
+    /// Optional: restrict to a specific criterion index.
+    pub criterion_index: Option<usize>,
+}
+
 // ============================================================================
 // Session state
 // ============================================================================
@@ -93,6 +101,7 @@ struct SessionState {
     document: Option<EvalDocument>,
     framework: Option<EvaluationFramework>,
     agents: Vec<EvaluatorAgent>,
+    alignments: Vec<AlignmentMapping>,
     rounds: Vec<DebateRound>,
     current_round: u32,
     intent: String,
@@ -104,6 +113,7 @@ impl SessionState {
             document: None,
             framework: None,
             agents: Vec::new(),
+            alignments: Vec::new(),
             rounds: Vec::new(),
             current_round: 0,
             intent: String::new(),
@@ -333,6 +343,11 @@ impl EvalServer {
 
         let alignment_count = alignments.len();
         let gap_count = gaps.len();
+
+        // Store alignments in session for later use by eval_scoring_tasks
+        let mut session = self.session.lock().unwrap();
+        session.alignments = alignments.clone();
+        drop(session);
 
         serde_json::json!({
             "ok": true,
@@ -597,6 +612,60 @@ impl EvalServer {
         .to_string()
     }
 
+    // ── Scoring Tasks ───────────────────────────────────────────────────────
+
+    #[tool(name = "eval_scoring_tasks", description = "Generate all scoring tasks for the agent panel. Returns one task per (agent, criterion) pair with the full prompt. An orchestrator can dispatch each task to a Claude subagent.")]
+    async fn eval_scoring_tasks(&self, Parameters(input): Parameters<EvalScoringTasksInput>) -> String {
+        let session = self.session.lock().unwrap();
+
+        let doc = match &session.document {
+            Some(d) => d.clone(),
+            None => return r#"{"error":"No document ingested. Call eval_ingest first."}"#.to_string(),
+        };
+        let framework = match &session.framework {
+            Some(f) => f.clone(),
+            None => return r#"{"error":"No framework loaded. Call eval_criteria first."}"#.to_string(),
+        };
+        let agents = session.agents.clone();
+        let alignments = session.alignments.clone();
+        drop(session);
+
+        if agents.is_empty() {
+            return r#"{"error":"No agents spawned. Call eval_spawn first."}"#.to_string();
+        }
+
+        let mut tasks = crate::orchestrator::generate_scoring_tasks(
+            &agents, &framework, &doc, &alignments,
+        );
+
+        // Apply optional filters
+        if let Some(ai) = input.agent_index {
+            tasks.retain(|t| t.agent_index == ai);
+        }
+        if let Some(ci) = input.criterion_index {
+            tasks.retain(|t| t.criterion_index == ci);
+        }
+
+        // Generate subagent system prompts
+        let agent_prompts: Vec<serde_json::Value> = agents.iter().enumerate().map(|(i, a)| {
+            serde_json::json!({
+                "agent_index": i,
+                "agent_name": a.name.clone(),
+                "system_prompt": crate::orchestrator::subagent_system_prompt(a),
+            })
+        }).collect();
+
+        serde_json::json!({
+            "ok": true,
+            "task_count": tasks.len(),
+            "agent_count": agents.len(),
+            "criteria_count": framework.criteria.len(),
+            "tasks": tasks,
+            "agent_system_prompts": agent_prompts,
+        })
+        .to_string()
+    }
+
     // ── Report ──────────────────────────────────────────────────────────────
 
     #[tool(name = "eval_report", description = "Generate the full evaluation report. Runs moderation, calculates overall score, and returns Markdown.")]
@@ -695,6 +764,7 @@ mod tests {
         let _schema = schemars::schema_for!(EvalScorePromptInput);
         let _schema = schemars::schema_for!(EvalRecordScoreInput);
         let _schema = schemars::schema_for!(EvalChallengePromptInput);
+        let _schema = schemars::schema_for!(EvalScoringTasksInput);
     }
 
     #[test]
@@ -738,6 +808,7 @@ mod tests {
         assert!(names.contains(&"eval_record_score".to_string()));
         assert!(names.contains(&"eval_debate_status".to_string()));
         assert!(names.contains(&"eval_challenge_prompt".to_string()));
+        assert!(names.contains(&"eval_scoring_tasks".to_string()));
         assert!(names.contains(&"eval_report".to_string()));
     }
 }

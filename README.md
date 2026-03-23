@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://github.com/fabio-rovai/brain-in-the-fish/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/tests-104%20passing-brightgreen" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-162%20passing-brightgreen" alt="Tests" />
   <img src="https://img.shields.io/badge/rust-edition%202024-orange" alt="Rust" />
 </p>
 
@@ -138,6 +138,43 @@ This architecture aligns with [ARIA's £59M Safeguarded AI programme](https://ww
 
 The LLM generates qualitative judgment. The SNN provides a deterministic, auditable verification gate. The ontology provides the formal world model. Together, they implement ARIA's "gatekeeper" architecture for document evaluation.
 
+## Getting Started
+
+### Prerequisites
+
+- Rust 1.85+ (edition 2024)
+- [open-ontologies](https://github.com/fabio-rovai/open-ontologies) cloned alongside this repo
+
+```bash
+# Clone both repos side by side
+git clone https://github.com/fabio-rovai/open-ontologies.git
+git clone https://github.com/fabio-rovai/brain-in-the-fish.git
+cd brain-in-the-fish
+```
+
+### Build
+
+```bash
+cargo build --release
+```
+
+### Configure (optional)
+
+Copy the example environment file to enable real LLM scoring:
+
+```bash
+cp .env.example .env
+# Edit .env and add your ANTHROPIC_API_KEY
+```
+
+Without an API key, the system runs in **demo mode** with deterministic placeholder scores. All other features (SNN verification, alignment, debate, reporting) work fully.
+
+### Verify
+
+```bash
+cargo test
+```
+
 ## Quick Start
 
 ```bash
@@ -192,19 +229,24 @@ All modules compile into a single binary. No microservices, no Python, no networ
 | Module | Purpose | Lines |
 |--------|---------|-------|
 | `types` | Core evaluation domain types (Document, Criteria, Agent, Score, Session) | 289 |
-| `ingest` | PDF text extraction, section splitting, Document Ontology RDF generation | 559 |
-| `criteria` | Evaluation framework loading, Criteria Ontology RDF generation | 451 |
-| `agent` | Agent cognitive model (Maslow + trust), Agent Ontology RDF, panel spawning | 779 |
-| `scoring` | SPARQL queries, score recording, scoring prompt generation for subagents | 811 |
-| `debate` | Disagreement detection, challenge prompts, drift velocity, convergence | 879 |
+| `ingest` | PDF text extraction, section splitting, Document Ontology RDF generation | 557 |
+| `criteria` | Evaluation framework loading, Criteria Ontology RDF generation | 1,215 |
+| `agent` | Agent cognitive model (Maslow + trust), Agent Ontology RDF, panel spawning | 840 |
+| `scoring` | SPARQL queries, score recording, scoring prompt generation for subagents | 1,097 |
+| `debate` | Disagreement detection, challenge prompts, drift velocity, convergence | 875 |
 | `moderation` | Trust-weighted consensus, outlier detection, overall result calculation | 678 |
-| `report` | Markdown report generation, Turtle RDF session export | 714 |
-| `server` | MCP server with 10 eval_* tools (rmcp, stdio + HTTP transport) | 737 |
-| `main` | CLI entry point (clap), evaluate and serve subcommands | 200 |
+| `report` | Markdown report generation, Turtle RDF session export | 713 |
+| `server` | MCP server with 10 eval_* tools (rmcp, stdio + HTTP transport) | 743 |
+| `main` | CLI entry point (clap), evaluate and serve subcommands | 727 |
 | `snn` | Spiking neural network scoring — deterministic evidence-grounded verification | 752 |
-| `lib` | Module declarations | 9 |
+| `llm` | LLM client abstraction (Anthropic API, demo mode fallback) | 320 |
+| `alignment` | Ontology alignment between document sections and evaluation criteria | 414 |
+| `research` | Research pipeline for evidence gathering and synthesis | 493 |
+| `memory` | Agent memory persistence across evaluation rounds | 315 |
+| `visualize` | Evaluation visualization and chart generation | 2,311 |
+| `lib` | Module declarations | 15 |
 
-**Total: ~6,850 lines of Rust.**
+**Total: ~12,350 lines of Rust.**
 
 ## MCP Tools
 
@@ -235,7 +277,7 @@ It uses `GraphStore` for triple storage and SPARQL queries, `Reasoner` for infer
 
 ## Testing
 
-95 tests covering all modules: ingestion, criteria loading, agent spawning, scoring, debate mechanics, moderation, report generation, and MCP server tools.
+162 tests covering all modules: ingestion, criteria loading, agent spawning, scoring, debate mechanics, moderation, report generation, SNN verification, alignment, and MCP server tools.
 
 ```bash
 cargo test

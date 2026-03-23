@@ -60,6 +60,12 @@ All tests must pass before a PR will be merged.
 | `debate` | `src/debate.rs` | Multi-round structured debate with disagreement detection and convergence |
 | `moderation` | `src/moderation.rs` | Trust-weighted consensus moderation with outlier/dissent handling |
 | `report` | `src/report.rs` | Evaluation report generation (Markdown scorecard + Turtle export) |
+| `snn` | `src/snn.rs` | Spiking neural network verification layer for anti-hallucination scoring |
+| `llm` | `src/llm.rs` | LLM client abstraction (Anthropic API, demo mode fallback) |
+| `alignment` | `src/alignment.rs` | Ontology alignment between document sections and evaluation criteria |
+| `research` | `src/research.rs` | Research pipeline for evidence gathering and synthesis |
+| `memory` | `src/memory.rs` | Agent memory persistence across evaluation rounds |
+| `visualize` | `src/visualize.rs` | Evaluation visualization and chart generation |
 | `server` | `src/server.rs` | MCP server with 10 `eval_*` tools via rmcp |
 | `main` | `src/main.rs` | CLI interface: `evaluate` and `serve` commands |
 | `lib` | `src/lib.rs` | Library root, re-exports all modules |
