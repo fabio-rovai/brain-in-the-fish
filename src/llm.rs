@@ -97,6 +97,21 @@ impl ClaudeClient {
         Ok(text)
     }
 
+    /// Simple single-prompt completion (no system message).
+    /// Used by the hybrid extraction pipeline.
+    pub async fn raw_completion(&self, prompt: &str) -> anyhow::Result<String> {
+        let messages = vec![Message {
+            role: "user".into(),
+            content: prompt.to_string(),
+        }];
+        self.complete(
+            "You are a precise document analysis tool. Respond ONLY with valid JSON.",
+            &messages,
+            2000,
+        )
+        .await
+    }
+
     /// Score a document section against a criterion as a specific agent persona.
     /// Returns parsed JSON with score, justification, evidence_used, gaps_identified.
     pub async fn score_as_agent(

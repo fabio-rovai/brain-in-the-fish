@@ -16,6 +16,7 @@ use brain_in_the_fish::belief_dynamics;
 use brain_in_the_fish::epistemology;
 use brain_in_the_fish::philosophy;
 use brain_in_the_fish::predict;
+use brain_in_the_fish::benchmark;
 
 #[derive(Parser)]
 #[command(name = "brain-in-the-fish", version, about = "Universal document evaluation engine")]
@@ -46,11 +47,45 @@ enum Commands {
         /// Open the graph visualization in browser after evaluation
         #[arg(long)]
         open: bool,
+
+        /// Enable philosophical analysis (Kantian/utilitarian/virtue ethics)
+        #[arg(long)]
+        philosophy: bool,
+
+        /// Enable epistemological analysis (justified beliefs)
+        #[arg(long)]
+        epistemology: bool,
+
+        /// Enable prediction credibility assessment
+        #[arg(long)]
+        predict: bool,
+
+        /// Enable deep validation (all 15 checks). Default uses 8 core checks.
+        #[arg(long)]
+        deep_validate: bool,
+
+        /// Generate Claude subagent orchestration tasks
+        #[arg(long)]
+        orchestrate: bool,
     },
     /// Open the knowledge graph visualization
     Graph {
         /// Path to an evaluation output directory (defaults to most recent)
         path: Option<PathBuf>,
+    },
+    /// Run benchmarks against labeled datasets
+    Benchmark {
+        /// Path to labeled dataset (JSON)
+        #[arg(long)]
+        dataset: Option<PathBuf>,
+
+        /// Run ablation experiments
+        #[arg(long)]
+        ablation: bool,
+
+        /// Output directory for results
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     /// Start the MCP server for Claude subagent orchestration
     Serve {
@@ -72,11 +107,14 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Evaluate { document, intent, criteria, output, open } => {
-            run_evaluate(document, intent, criteria, output, open).await
+        Commands::Evaluate { document, intent, criteria, output, open, philosophy, epistemology, predict, deep_validate, orchestrate } => {
+            run_evaluate(document, intent, criteria, output, open, philosophy, epistemology, predict, deep_validate, orchestrate).await
         }
         Commands::Graph { path } => {
             run_graph(path)
+        }
+        Commands::Benchmark { dataset, ablation, output } => {
+            run_benchmark(dataset, ablation, output)
         }
         Commands::Serve { host, port } => {
             run_serve(host, port).await
@@ -152,12 +190,18 @@ fn run_graph(path: Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_evaluate(
     document: PathBuf,
     intent: String,
     criteria_path: Option<PathBuf>,
     output: Option<PathBuf>,
     open_graph: bool,
+    philosophy: bool,
+    epistemology: bool,
+    predict: bool,
+    deep_validate: bool,
+    orchestrate: bool,
 ) -> anyhow::Result<()> {
     // Resolve output_dir early (needed for state DB)
     let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
@@ -178,6 +222,27 @@ async fn run_evaluate(
     println!("2. Enriching document (deterministic)...");
     enrich_document(&mut doc);
 
+    // 2.5 Hybrid extraction
+    println!("   Running hybrid extraction...");
+    for section in &mut doc.sections {
+        let rule_items = extract::extract_all(&section.text);
+        let (claims, evidence) = extract::to_claims_and_evidence(&rule_items);
+        // Replace regex-extracted with rule-extracted (higher quality)
+        if !claims.is_empty() || !evidence.is_empty() {
+            section.claims = claims;
+            section.evidence = evidence;
+        }
+        // Also process subsections
+        for sub in &mut section.subsections {
+            let sub_items = extract::extract_all(&sub.text);
+            let (sub_claims, sub_evidence) = extract::to_claims_and_evidence(&sub_items);
+            if !sub_claims.is_empty() || !sub_evidence.is_empty() {
+                sub.claims = sub_claims;
+                sub.evidence = sub_evidence;
+            }
+        }
+    }
+
     let triples = ingest::load_document_ontology(&graph, &doc)?;
     println!("   Loaded {} triples, {} sections", triples, doc.sections.len());
     onto_lineage.record(&session_id, "I", "ingest", &format!("{} sections, {} triples", doc.sections.len(), triples));
@@ -196,12 +261,15 @@ async fn run_evaluate(
         }
     }
 
-    // 2.7 Validate document (deterministic fact-checking)
-    // NOTE: We run a preliminary validation here with a placeholder framework.
-    // The full validation with the real framework happens after criteria loading.
-    println!("   Validating document (preliminary)...");
+    // 3. Validate document (deterministic fact-checking)
     let prelim_framework = criteria::framework_for_intent(&intent);
-    let validation_signals = validate::validate_document(&doc, &prelim_framework);
+    let validation_signals = if deep_validate {
+        println!("3. Validating (deep, 15 checks)...");
+        validate::validate_deep(&doc, &prelim_framework)
+    } else {
+        println!("3. Validating (core, 8 checks)...");
+        validate::validate_core(&doc, &prelim_framework)
+    };
     let val_triples = validate::load_signals(&graph, &validation_signals)?;
     let warnings = validation_signals
         .iter()
@@ -243,31 +311,36 @@ async fn run_evaluate(
         ),
     );
 
-    // 2.8 Extract and assess predictions
-    println!("   Extracting predictions...");
-    let mut predictions = predict::extract_predictions(&doc);
-    predict::assess_credibility(&mut predictions, &doc);
-    if !predictions.is_empty() {
-        let pred_triples = graph.load_turtle(&predict::predictions_to_turtle(&predictions), None).unwrap_or(0);
-        println!("   {} predictions found, {} triples", predictions.len(), pred_triples);
-        for pred in &predictions {
-            let icon = match pred.credibility.verdict {
-                predict::CredibilityVerdict::WellSupported => "\u{2713}",
-                predict::CredibilityVerdict::PartiallySupported => "~",
-                predict::CredibilityVerdict::Aspirational => "?",
-                predict::CredibilityVerdict::Unsupported => "\u{2717}",
-                predict::CredibilityVerdict::OverClaimed => "!",
-            };
-            let display_text = if pred.text.len() > 60 { &pred.text[..60] } else { &pred.text };
-            println!("   {} {:?}: {} (credibility {:.0}%)",
-                icon, pred.prediction_type,
-                display_text,
-                pred.credibility.score * 100.0);
+    // Predictions (opt-in via --predict)
+    let predictions = if predict {
+        println!("   Extracting predictions...");
+        let mut predictions = predict::extract_predictions(&doc);
+        predict::assess_credibility(&mut predictions, &doc);
+        if !predictions.is_empty() {
+            let pred_triples = graph.load_turtle(&predict::predictions_to_turtle(&predictions), None).unwrap_or(0);
+            println!("   {} predictions found, {} triples", predictions.len(), pred_triples);
+            for pred in &predictions {
+                let icon = match pred.credibility.verdict {
+                    predict::CredibilityVerdict::WellSupported => "\u{2713}",
+                    predict::CredibilityVerdict::PartiallySupported => "~",
+                    predict::CredibilityVerdict::Aspirational => "?",
+                    predict::CredibilityVerdict::Unsupported => "\u{2717}",
+                    predict::CredibilityVerdict::OverClaimed => "!",
+                };
+                let display_text = if pred.text.len() > 60 { &pred.text[..60] } else { &pred.text };
+                println!("   {} {:?}: {} (credibility {:.0}%)",
+                    icon, pred.prediction_type,
+                    display_text,
+                    pred.credibility.score * 100.0);
+            }
         }
-    }
+        predictions
+    } else {
+        Vec::new()
+    };
 
-    // 3. Load evaluation criteria
-    println!("3. Loading evaluation criteria...");
+    // 4. Load evaluation criteria
+    println!("4. Loading evaluation criteria...");
     let framework = if let Some(criteria_file) = criteria_path {
         println!("   From file: {}", criteria_file.display());
         criteria::parse_framework_from_file(&criteria_file)?
@@ -278,8 +351,8 @@ async fn run_evaluate(
     println!("   {} criteria, {} triples", framework.criteria.len(), crit_triples);
     onto_lineage.record(&session_id, "I", "criteria", &format!("{} criteria loaded", framework.criteria.len()));
 
-    // 4. Discover sector guidelines with provenance
-    println!("4. Discovering sector guidelines...");
+    // Discover sector guidelines with provenance
+    println!("   Discovering sector guidelines...");
     let guidelines = research::built_in_guidelines(&intent);
     let guide_triples = research::load_guidelines(&graph, &guidelines)?;
     println!("   {} guidelines, {} triples", guidelines.len(), guide_triples);
@@ -462,31 +535,43 @@ async fn run_evaluate(
         }
     }
 
-    // Epistemology: form justified beliefs
-    println!("   Forming epistemic beliefs...");
-    let mut epistemic_states: Vec<epistemology::EpistemicState> = Vec::new();
-    for network in &snn_networks {
-        let agent = agents.iter().find(|a| a.id == network.agent_id);
-        if let Some(agent) = agent {
-            let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
-            let state = epistemology::beliefs_from_snn(agent, &snn_scores, &framework.criteria, &validation_signals);
-            let turtle = epistemology::epistemic_state_to_turtle(&state);
-            let _ = graph.load_turtle(&turtle, None);
-            println!("      {}: {} beliefs, {} revisions", agent.name, state.beliefs.len(), state.revision_history.len());
-            epistemic_states.push(state);
+    // Epistemology: form justified beliefs (opt-in via --epistemology)
+    let epistemic_states: Vec<epistemology::EpistemicState> = if epistemology {
+        println!("   [--epistemology] Forming epistemic beliefs...");
+        let mut states = Vec::new();
+        for network in &snn_networks {
+            let agent = agents.iter().find(|a| a.id == network.agent_id);
+            if let Some(agent) = agent {
+                let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
+                let state = epistemology::beliefs_from_snn(agent, &snn_scores, &framework.criteria, &validation_signals);
+                let turtle = epistemology::epistemic_state_to_turtle(&state);
+                let _ = graph.load_turtle(&turtle, None);
+                println!("      {}: {} beliefs, {} revisions", agent.name, state.beliefs.len(), state.revision_history.len());
+                states.push(state);
+            }
         }
-    }
+        states
+    } else {
+        Vec::new()
+    };
 
-    // Philosophical analysis
-    println!("   Philosophical analysis...");
-    let phil_assessments = philosophy::analyse(&doc);
-    let phil_turtle = philosophy::assessments_to_turtle(&phil_assessments);
-    let phil_triples = graph.load_turtle(&phil_turtle, None).unwrap_or(0);
-    println!("   {} philosophical frameworks, {} triples", phil_assessments.len(), phil_triples);
-    for assessment in &phil_assessments {
-        println!("      {:?}: alignment {:.0}%", assessment.framework, assessment.overall_alignment * 100.0);
+    // Philosophical analysis (opt-in via --philosophy)
+    let phil_assessments = if philosophy {
+        println!("   [--philosophy] Philosophical analysis...");
+        let assessments = philosophy::analyse(&doc);
+        let phil_turtle = philosophy::assessments_to_turtle(&assessments);
+        let phil_triples = graph.load_turtle(&phil_turtle, None).unwrap_or(0);
+        println!("   {} philosophical frameworks, {} triples", assessments.len(), phil_triples);
+        for assessment in &assessments {
+            println!("      {:?}: alignment {:.0}%", assessment.framework, assessment.overall_alignment * 100.0);
+        }
+        assessments
+    } else {
+        Vec::new()
+    };
+    if epistemology || philosophy {
+        onto_lineage.record(&session_id, "A", "epistemology", &format!("{} epistemic states, {} philosophical assessments", epistemic_states.len(), phil_assessments.len()));
     }
-    onto_lineage.record(&session_id, "A", "epistemology", &format!("{} epistemic states, {} philosophical assessments", epistemic_states.len(), phil_assessments.len()));
 
     // Version snapshot before debate (for drift detection after)
     let pre_debate_turtle = match graph.serialize("turtle") {
@@ -616,7 +701,7 @@ async fn run_evaluate(
         println!("   Result: {}", if passed { "PASS" } else { "FAIL" });
     }
 
-    // 10. Generate report
+    // 10. Generate report + outputs
     println!("10. Generating report...");
     let session = EvaluationSession {
         id: uuid::Uuid::new_v4().to_string(),
@@ -643,8 +728,8 @@ async fn run_evaluate(
     std::fs::write(&turtle_path, &turtle)?;
     println!("   Turtle: {}", turtle_path.display());
 
-    // 11. Generate graph visualization
-    println!("11. Generating graph visualization...");
+    // Generate graph visualization
+    println!("   Generating graph visualization...");
     let graph_data = visualize::extract_graph_data(&session);
     let lineage = visualize::build_lineage(&session);
     let graph_html = visualize::generate_graph_html(&graph_data, &lineage, &session.document.title, &intent);
@@ -655,8 +740,8 @@ async fn run_evaluate(
         let _ = std::process::Command::new("open").arg(&graph_path).spawn();
     }
 
-    // 12. Save to cross-evaluation memory
-    println!("12. Saving to memory...");
+    // Save to cross-evaluation memory
+    println!("   Saving to memory...");
     if let Ok(store) = memory::MemoryStore::open() {
         let record = memory::build_record(&session, &overall, &intent);
         if let Ok(Some(comp)) = store.compare(&record) {
@@ -668,24 +753,26 @@ async fn run_evaluate(
         }
     }
 
-    // 13. Save orchestration data for Claude subagent scoring
-    println!("13. Saving orchestration tasks...");
-    let tasks = orchestrator::generate_scoring_tasks(&agents, &session.framework, &session.document, &alignments);
-    let orchestration = serde_json::json!({
-        "session_id": session.id,
-        "document": session.document.title,
-        "intent": intent,
-        "mcp_server": "brain-in-the-fish serve",
-        "tasks": tasks.len(),
-        "scoring_tasks": tasks,
-        "instructions": "Start the MCP server, then dispatch one Claude subagent per scoring task. Each subagent should call eval_record_score with their assessment.",
-    });
-    let orch_path = output_dir.join("orchestration.json");
-    std::fs::write(&orch_path, serde_json::to_string_pretty(&orchestration)?)?;
-    println!("   Orchestration tasks: {}", orch_path.display());
+    // Orchestration (opt-in via --orchestrate)
+    if orchestrate {
+        println!("   [--orchestrate] Saving orchestration tasks...");
+        let tasks = orchestrator::generate_scoring_tasks(&agents, &session.framework, &session.document, &alignments);
+        let orchestration = serde_json::json!({
+            "session_id": session.id,
+            "document": session.document.title,
+            "intent": intent,
+            "mcp_server": "brain-in-the-fish serve",
+            "tasks": tasks.len(),
+            "scoring_tasks": tasks,
+            "instructions": "Start the MCP server, then dispatch one Claude subagent per scoring task. Each subagent should call eval_record_score with their assessment.",
+        });
+        let orch_path = output_dir.join("orchestration.json");
+        std::fs::write(&orch_path, serde_json::to_string_pretty(&orchestration)?)?;
+        println!("   Orchestration tasks: {}", orch_path.display());
+    }
 
-    // 14. Quality gate: enforce evaluation patterns
-    println!("14. Enforcing evaluation quality rules...");
+    // Quality gate: enforce evaluation patterns
+    println!("   Enforcing evaluation quality rules...");
     let enforcer = open_ontologies::enforce::Enforcer::new(state_db.clone(), graph.clone());
     enforcer.add_custom_rule(
         "eval_every_criterion_scored",
@@ -837,6 +924,225 @@ fn extract_first_phrase(text: &str, max_words: usize) -> String {
     let words: Vec<&str> = text.split_whitespace().take(max_words).collect();
     let phrase = words.join(" ");
     if phrase.len() > 50 { format!("{}...", &phrase[..47]) } else { phrase }
+}
+
+fn run_benchmark(
+    dataset_path: Option<PathBuf>,
+    ablation: bool,
+    output: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let samples = if let Some(ref path) = dataset_path {
+        println!("Loading dataset: {}", path.display());
+        benchmark::load_dataset(path)?
+    } else {
+        println!("Using synthetic benchmark dataset (10 samples)");
+        benchmark::synthetic_dataset()
+    };
+    println!("Loaded {} samples\n", samples.len());
+
+    let configs = if ablation {
+        println!("Running ablation experiments (6 configs)...\n");
+        benchmark::ablation_configs()
+    } else {
+        vec![benchmark::BenchmarkConfig::default()]
+    };
+
+    let mut all_results = Vec::new();
+
+    for config in &configs {
+        println!("--- Config: {} ---", config.label);
+        let mut predicted_scores: Vec<f64> = Vec::new();
+        let mut actual_scores: Vec<f64> = Vec::new();
+
+        for sample in &samples {
+            let mut doc = EvalDocument::new(
+                format!("Benchmark: {}", sample.id),
+                "essay".into(),
+            );
+            let word_count = sample.text.split_whitespace().count() as u32;
+            let mut section = Section {
+                id: uuid::Uuid::new_v4().to_string(),
+                title: sample.id.clone(),
+                text: sample.text.clone(),
+                word_count,
+                page_range: None,
+                claims: vec![],
+                evidence: vec![],
+                subsections: vec![],
+            };
+            extract_claims_and_evidence(&mut section);
+            doc.sections.push(section);
+            doc.total_word_count = Some(word_count);
+
+            let intent = if sample.domain.is_empty() {
+                "academic essay evaluation".to_string()
+            } else {
+                format!("{} essay evaluation", sample.domain)
+            };
+            let framework = criteria::framework_for_intent(&intent);
+
+            let (alignments, _gaps) = if config.use_ontology_alignment {
+                alignment::align_sections_to_criteria(&doc, &framework)
+            } else {
+                (vec![], vec![])
+            };
+
+            let validation_signals = if config.use_validation {
+                validate::validate_document(&doc, &framework)
+            } else {
+                vec![]
+            };
+
+            let mut agents = agent::spawn_panel(&intent, &framework);
+
+            let predicted = if config.use_snn {
+                let snn_config = snn::SNNConfig::default();
+                let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
+                for agent_item in &agents {
+                    let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+                    network.feed_evidence(&doc, &alignments, &snn_config);
+                    snn_networks.push(network);
+                }
+
+                if config.use_validation {
+                    for signal in &validation_signals {
+                        if signal.spike_effect.abs() > 0.01 {
+                            for network in &mut snn_networks {
+                                for neuron in &mut network.neurons {
+                                    let matches = signal.criterion_id.is_none()
+                                        || signal.criterion_id.as_deref() == Some(&neuron.criterion_id);
+                                    if matches {
+                                        neuron.receive_spike(
+                                            snn::Spike {
+                                                source_id: signal.id.clone(),
+                                                strength: signal.spike_effect.abs(),
+                                                spike_type: if signal.spike_effect > 0.0 {
+                                                    snn::SpikeType::Evidence
+                                                } else {
+                                                    snn::SpikeType::Claim
+                                                },
+                                                timestep: 0,
+                                            },
+                                            &snn_config,
+                                        );
+                                        if signal.spike_effect < 0.0 {
+                                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.5);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut round1_scores: Vec<Score> = Vec::new();
+                for network in &snn_networks {
+                    let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
+                    for (criterion_id, snn_score) in &snn_scores {
+                        let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
+                        let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+                        round1_scores.push(Score {
+                            agent_id: network.agent_id.clone(),
+                            criterion_id: criterion_id.clone(),
+                            score: snn_score.snn_score,
+                            max_score,
+                            round: 1,
+                            justification: snn_score.explanation.clone(),
+                            evidence_used: vec![],
+                            gaps_identified: vec![],
+                        });
+                    }
+                }
+
+                if config.use_maslow {
+                    for agent in &mut agents {
+                        let agent_snn: Vec<_> = snn_networks.iter()
+                            .find(|n| n.agent_id == agent.id)
+                            .map(|n| n.compute_scores(&framework.criteria, &snn_config))
+                            .unwrap_or_default();
+                        belief_dynamics::update_needs(agent, &agent_snn, &validation_signals, &framework.criteria);
+                    }
+                }
+
+                let final_scores = if config.use_debate && round1_scores.len() > 1 {
+                    let mut current_scores = round1_scores;
+                    for _round_num in 2..=5 {
+                        let disagreements = debate::find_disagreements(&current_scores, 2.0);
+                        if disagreements.is_empty() { break; }
+                        let mut new_scores = current_scores.clone();
+                        for disagreement in &disagreements {
+                            if let Some(target_score) = new_scores.iter_mut().find(|s| {
+                                s.agent_id == disagreement.agent_b_id
+                                    && s.criterion_id == disagreement.criterion_id
+                            }) {
+                                let challenger_val = current_scores.iter()
+                                    .find(|s| s.agent_id == disagreement.agent_a_id
+                                        && s.criterion_id == disagreement.criterion_id)
+                                    .map(|s| s.score)
+                                    .unwrap_or(target_score.score);
+                                let adjustment = (challenger_val - target_score.score) * 0.3;
+                                target_score.score = (target_score.score + adjustment)
+                                    .min(target_score.max_score).max(0.0);
+                            }
+                        }
+                        let drift = debate::calculate_drift_velocity(&current_scores, &new_scores);
+                        current_scores = new_scores;
+                        if debate::check_convergence(drift, 0.5) { break; }
+                    }
+                    current_scores
+                } else {
+                    round1_scores
+                };
+
+                let moderated = moderation::calculate_moderated_scores(&final_scores, &agents);
+                let overall = moderation::calculate_overall_score(&moderated, &framework);
+                overall.percentage / 100.0 * sample.max_score
+            } else {
+                sample.max_score * 0.5
+            };
+
+            predicted_scores.push(predicted);
+            actual_scores.push(sample.expert_score);
+            println!("  {} | predicted: {:.1} | actual: {:.1} | delta: {:.1}",
+                sample.id, predicted, sample.expert_score, (predicted - sample.expert_score).abs());
+        }
+
+        let pearson_r = benchmark::pearson_correlation(&predicted_scores, &actual_scores);
+        let qwk = benchmark::quadratic_weighted_kappa(&predicted_scores, &actual_scores, 0.0, 10.0);
+        let mae = benchmark::mean_absolute_error(&predicted_scores, &actual_scores);
+        let rmse_val = benchmark::rmse(&predicted_scores, &actual_scores);
+        let mean_predicted = predicted_scores.iter().sum::<f64>() / predicted_scores.len() as f64;
+        let mean_actual = actual_scores.iter().sum::<f64>() / actual_scores.len() as f64;
+
+        let result = benchmark::BenchmarkResults {
+            name: config.label.clone(),
+            samples: samples.len(),
+            pearson_r,
+            qwk,
+            mae,
+            rmse: rmse_val,
+            mean_predicted,
+            mean_actual,
+            config: config.clone(),
+        };
+        println!("  Pearson r: {:.3} | QWK: {:.3} | MAE: {:.2} | RMSE: {:.2}\n",
+            pearson_r, qwk, mae, rmse_val);
+        all_results.push(result);
+    }
+
+    println!("\n{}", benchmark::results_table(&all_results));
+
+    if let Some(output_dir) = output {
+        std::fs::create_dir_all(&output_dir)?;
+        let results_path = output_dir.join("benchmark-results.json");
+        std::fs::write(&results_path, serde_json::to_string_pretty(&all_results)?)?;
+        println!("Results saved to: {}", results_path.display());
+        let table_path = output_dir.join("benchmark-results.md");
+        std::fs::write(&table_path, benchmark::results_table(&all_results))?;
+        println!("Table saved to: {}", table_path.display());
+    }
+
+    Ok(())
 }
 
 async fn run_serve(_host: String, _port: u16) -> anyhow::Result<()> {

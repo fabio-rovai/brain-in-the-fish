@@ -56,8 +56,8 @@ pub enum Severity {
     Error,
 }
 
-/// Run all validation checks on a document.
-pub fn validate_document(
+/// Core validation — 8 checks that are always useful.
+pub fn validate_core(
     doc: &EvalDocument,
     framework: &EvaluationFramework,
 ) -> Vec<ValidationSignal> {
@@ -70,16 +70,35 @@ pub fn validate_document(
     signals.extend(check_reading_level(doc));
     signals.extend(check_duplicate_content(doc));
     signals.extend(check_evidence_quality(doc));
+    signals.extend(check_referencing_consistency(doc));
+
+    signals
+}
+
+/// Deep validation — adds 7 more checks (some are noisy, all are expensive).
+pub fn validate_deep(
+    doc: &EvalDocument,
+    framework: &EvaluationFramework,
+) -> Vec<ValidationSignal> {
+    let mut signals = validate_core(doc, framework);
+
     signals.extend(check_logical_fallacies(doc));
     signals.extend(check_hedging_language(doc));
     signals.extend(check_topic_sentences(doc));
     signals.extend(check_counter_arguments(doc));
     signals.extend(check_transition_quality(doc));
     signals.extend(check_specificity(doc));
-    signals.extend(check_referencing_consistency(doc));
     signals.extend(check_argument_flow(doc));
 
     signals
+}
+
+/// Run all validation checks on a document (alias for validate_deep, backward compat).
+pub fn validate_document(
+    doc: &EvalDocument,
+    framework: &EvaluationFramework,
+) -> Vec<ValidationSignal> {
+    validate_deep(doc, framework)
 }
 
 // ============================================================================

@@ -21,3 +21,5 @@ pub mod epistemology;
 pub mod belief_dynamics;
 pub mod philosophy;
 pub mod predict;
+pub mod benchmark;
+pub mod extract;
