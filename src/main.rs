@@ -7,6 +7,8 @@ use rmcp::ServiceExt;
 
 use brain_in_the_fish::*;
 use brain_in_the_fish::types::*;
+use brain_in_the_fish::llm;
+use brain_in_the_fish::alignment;
 
 #[derive(Parser)]
 #[command(name = "brain-in-the-fish", version, about = "Universal document evaluation engine")]
@@ -82,18 +84,12 @@ async fn run_evaluate(
     let triples = ingest::load_document_ontology(&graph, &doc)?;
     println!("   Loaded {} triples, {} sections", triples, doc.sections.len());
 
-    // 3. Load criteria
+    // 3. Load criteria — use framework_for_intent when no file provided
     println!("Loading evaluation criteria...");
     let framework = if let Some(_criteria_file) = criteria_path {
-        // TODO: parse criteria from file
-        criteria::generic_quality_framework()
+        criteria::generic_quality_framework() // TODO: parse from file
     } else {
-        // Select framework based on intent
-        let domain = agent::detect_domain(&intent);
-        match domain {
-            agent::EvalDomain::Academic => criteria::academic_essay_framework(),
-            _ => criteria::generic_quality_framework(),
-        }
+        criteria::framework_for_intent(&intent)
     };
     let crit_triples = criteria::load_criteria_ontology(&graph, &framework)?;
     println!(
@@ -102,9 +98,18 @@ async fn run_evaluate(
         crit_triples
     );
 
+    // 3.5 Align document sections to criteria
+    println!("Aligning document to criteria...");
+    let (alignments, gaps) = alignment::align_sections_to_criteria(&doc, &framework);
+    let align_triples = alignment::load_alignments(&graph, &alignments)?;
+    println!("   {} alignments, {} gaps, {} triples", alignments.len(), gaps.len(), align_triples);
+    for gap in &gaps {
+        println!("   GAP: No content for '{}'", gap.criterion_title);
+    }
+
     // 4. Spawn agent panel
     println!("Spawning evaluator panel...");
-    let agents = agent::spawn_panel(&intent, &framework);
+    let mut agents = agent::spawn_panel(&intent, &framework);
     for a in &agents {
         let agent_triples = agent::load_agent_ontology(&graph, a)?;
         println!("   {} ({}) - {} triples", a.name, a.role, agent_triples);
@@ -117,36 +122,193 @@ async fn run_evaluate(
         framework.criteria.len()
     );
 
-    // 6. Simulate a round of scoring (placeholder scores for demo)
+    // 6. Score — real LLM or demo fallback
     println!("\nRound 1: Independent scoring...");
     let mut round1_scores = Vec::new();
-    for agent_item in &agents {
-        for criterion in &framework.criteria {
-            let demo_score = generate_demo_score(agent_item, criterion);
-            let justification = generate_demo_justification(agent_item, criterion, demo_score);
-            let (evidence, gaps) = generate_demo_evidence_and_gaps(agent_item, criterion, demo_score);
-            let score = Score {
-                agent_id: agent_item.id.clone(),
-                criterion_id: criterion.id.clone(),
-                score: demo_score,
-                max_score: criterion.max_score,
-                round: 1,
-                justification,
-                evidence_used: evidence,
-                gaps_identified: gaps,
-            };
-            scoring::record_score(&graph, &score)?;
-            round1_scores.push(score);
+
+    if llm::ClaudeClient::available() {
+        println!("   Using Claude API for real evaluation...");
+        let claude = llm::ClaudeClient::from_env()?;
+
+        for agent_item in &agents {
+            for criterion in &framework.criteria {
+                // Get aligned sections for this criterion
+                let matched_sections: Vec<scoring::SectionMatch> = alignment::sections_for_criterion(&alignments, &criterion.id, &doc)
+                    .into_iter()
+                    .map(|(s, _conf)| scoring::SectionMatch {
+                        section_iri: s.id.clone(),
+                        title: s.title.clone(),
+                        text: s.text.clone(),
+                        word_count: s.word_count,
+                    })
+                    .collect();
+
+                let prompt = scoring::generate_scoring_prompt(agent_item, criterion, &matched_sections, 1);
+
+                match claude.score_as_agent(&prompt).await {
+                    Ok(result) => {
+                        let score = Score {
+                            agent_id: agent_item.id.clone(),
+                            criterion_id: criterion.id.clone(),
+                            score: result.score.min(criterion.max_score).max(0.0),
+                            max_score: criterion.max_score,
+                            round: 1,
+                            justification: result.justification,
+                            evidence_used: result.evidence_used,
+                            gaps_identified: result.gaps_identified,
+                        };
+                        println!("   {} → {}: {:.1}/{:.0}", agent_item.name, criterion.title, score.score, score.max_score);
+                        scoring::record_score(&graph, &score)?;
+                        round1_scores.push(score);
+                    }
+                    Err(e) => {
+                        eprintln!("   Warning: Claude scoring failed for {} on {}: {}", agent_item.name, criterion.title, e);
+                        // Fallback to demo score
+                        let demo_score_val = generate_demo_score(agent_item, criterion);
+                        let justification = generate_demo_justification(agent_item, criterion, demo_score_val);
+                        let (evidence, gaps_list) = generate_demo_evidence_and_gaps(agent_item, criterion, demo_score_val);
+                        let score = Score {
+                            agent_id: agent_item.id.clone(),
+                            criterion_id: criterion.id.clone(),
+                            score: demo_score_val,
+                            max_score: criterion.max_score,
+                            round: 1,
+                            justification,
+                            evidence_used: evidence,
+                            gaps_identified: gaps_list,
+                        };
+                        scoring::record_score(&graph, &score)?;
+                        round1_scores.push(score);
+                    }
+                }
+            }
+        }
+    } else {
+        println!("   ANTHROPIC_API_KEY not set — using demo scores");
+        println!("   Set ANTHROPIC_API_KEY for real LLM evaluation");
+        for agent_item in &agents {
+            for criterion in &framework.criteria {
+                let demo_score = generate_demo_score(agent_item, criterion);
+                let justification = generate_demo_justification(agent_item, criterion, demo_score);
+                let (evidence, gaps) = generate_demo_evidence_and_gaps(agent_item, criterion, demo_score);
+                let score = Score {
+                    agent_id: agent_item.id.clone(),
+                    criterion_id: criterion.id.clone(),
+                    score: demo_score,
+                    max_score: criterion.max_score,
+                    round: 1,
+                    justification,
+                    evidence_used: evidence,
+                    gaps_identified: gaps,
+                };
+                scoring::record_score(&graph, &score)?;
+                round1_scores.push(score);
+            }
         }
     }
 
-    // 7. Find disagreements
-    let disagreements = debate::find_disagreements(&round1_scores, 2.0);
-    println!("   Found {} disagreements", disagreements.len());
+    // 7. Debate rounds
+    let mut all_rounds = vec![debate::build_debate_round(1, round1_scores.clone(), vec![], None, false)];
+    let mut current_scores = round1_scores;
+    let max_rounds = 5;
+
+    for round_num in 2..=max_rounds {
+        let disagreements = debate::find_disagreements(&current_scores, 2.0);
+        if disagreements.is_empty() {
+            println!("\n   No disagreements — debate converged at round {}", round_num - 1);
+            // Mark last round as converged
+            if let Some(last) = all_rounds.last_mut() {
+                last.converged = true;
+            }
+            break;
+        }
+
+        println!("\nRound {}: {} disagreements to debate...", round_num, disagreements.len());
+        let mut challenges = Vec::new();
+        let mut new_scores = current_scores.clone();
+
+        for disagreement in &disagreements {
+            // Find challenger and target agents
+            let challenger = agents.iter().find(|a| a.id == disagreement.agent_a_id);
+            let target = agents.iter().find(|a| a.id == disagreement.agent_b_id);
+            let criterion = framework.criteria.iter().find(|c| c.id == disagreement.criterion_id);
+
+            if let (Some(challenger), Some(target), Some(criterion)) = (challenger, target, criterion) {
+                // Find their justifications
+                let challenger_just = current_scores.iter()
+                    .find(|s| s.agent_id == challenger.id && s.criterion_id == criterion.id)
+                    .map(|s| s.justification.as_str())
+                    .unwrap_or("");
+                let target_just = current_scores.iter()
+                    .find(|s| s.agent_id == target.id && s.criterion_id == criterion.id)
+                    .map(|s| s.justification.as_str())
+                    .unwrap_or("");
+
+                // Higher scorer challenges lower scorer
+                let (actual_challenger, actual_target) = if disagreement.agent_a_score > disagreement.agent_b_score {
+                    (challenger, target)
+                } else {
+                    (target, challenger)
+                };
+
+                println!("   {} challenges {} on '{}'", actual_challenger.name, actual_target.name, criterion.title);
+
+                // Simulate debate convergence: move scores 30% toward each other
+                // When LLM is available, use claude.generate_challenge() and claude.generate_response()
+                let target_score_entry = new_scores.iter_mut()
+                    .find(|s| s.agent_id == actual_target.id && s.criterion_id == criterion.id);
+
+                if let Some(target_score) = target_score_entry {
+                    let challenger_score_val = current_scores.iter()
+                        .find(|s| s.agent_id == actual_challenger.id && s.criterion_id == criterion.id)
+                        .map(|s| s.score)
+                        .unwrap_or(target_score.score);
+
+                    let old_score = target_score.score;
+                    let adjustment = (challenger_score_val - old_score) * 0.3;
+                    target_score.score = (old_score + adjustment).min(target_score.max_score).max(0.0);
+                    target_score.round = round_num;
+                    target_score.justification = format!("{} [Adjusted in R{} after challenge from {}]",
+                        target_score.justification, round_num, actual_challenger.name);
+
+                    let challenge = Challenge {
+                        challenger_id: actual_challenger.id.clone(),
+                        target_agent_id: actual_target.id.clone(),
+                        criterion_id: criterion.id.clone(),
+                        round: round_num,
+                        argument: format!("Score delta of {:.1} — challenging based on evidence assessment", disagreement.delta),
+                        response: Some(format!("Adjusted score from {:.1} to {:.1}", old_score, target_score.score)),
+                        score_change: Some((old_score, target_score.score)),
+                    };
+                    challenges.push(challenge);
+                }
+
+                let _ = challenger_just;
+                let _ = target_just;
+            }
+        }
+
+        // Update trust weights
+        debate::update_trust_weights(&mut agents, &challenges);
+
+        // Calculate drift
+        let drift = debate::calculate_drift_velocity(&current_scores, &new_scores);
+        let converged = debate::check_convergence(drift, 0.5);
+
+        println!("   Drift velocity: {:.2}, Converged: {}", drift, converged);
+
+        current_scores = new_scores;
+        all_rounds.push(debate::build_debate_round(round_num, current_scores.clone(), challenges, Some(drift), converged));
+
+        if converged {
+            println!("   Debate converged!");
+            break;
+        }
+    }
 
     // 8. Calculate moderated scores
     println!("\nCalculating consensus scores...");
-    let moderated = moderation::calculate_moderated_scores(&round1_scores, &agents);
+    let moderated = moderation::calculate_moderated_scores(&current_scores, &agents);
     let overall = moderation::calculate_overall_score(&moderated, &framework);
 
     println!(
@@ -164,9 +326,9 @@ async fn run_evaluate(
         document: doc,
         framework,
         agents,
-        alignments: vec![],
-        gaps: vec![],
-        rounds: vec![debate::build_debate_round(1, round1_scores, vec![], None, true)],
+        alignments,
+        gaps,
+        rounds: all_rounds,
         final_scores: moderated,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
