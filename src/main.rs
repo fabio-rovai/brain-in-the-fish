@@ -15,6 +15,7 @@ use brain_in_the_fish::validate;
 use brain_in_the_fish::belief_dynamics;
 use brain_in_the_fish::epistemology;
 use brain_in_the_fish::philosophy;
+use brain_in_the_fish::predict;
 
 #[derive(Parser)]
 #[command(name = "brain-in-the-fish", version, about = "Universal document evaluation engine")]
@@ -160,6 +161,29 @@ async fn run_evaluate(
             errors
         ),
     );
+
+    // 2.8 Extract and assess predictions
+    println!("   Extracting predictions...");
+    let mut predictions = predict::extract_predictions(&doc);
+    predict::assess_credibility(&mut predictions, &doc);
+    if !predictions.is_empty() {
+        let pred_triples = graph.load_turtle(&predict::predictions_to_turtle(&predictions), None).unwrap_or(0);
+        println!("   {} predictions found, {} triples", predictions.len(), pred_triples);
+        for pred in &predictions {
+            let icon = match pred.credibility.verdict {
+                predict::CredibilityVerdict::WellSupported => "\u{2713}",
+                predict::CredibilityVerdict::PartiallySupported => "~",
+                predict::CredibilityVerdict::Aspirational => "?",
+                predict::CredibilityVerdict::Unsupported => "\u{2717}",
+                predict::CredibilityVerdict::OverClaimed => "!",
+            };
+            let display_text = if pred.text.len() > 60 { &pred.text[..60] } else { &pred.text };
+            println!("   {} {:?}: {} (credibility {:.0}%)",
+                icon, pred.prediction_type,
+                display_text,
+                pred.credibility.score * 100.0);
+        }
+    }
 
     // 3. Load evaluation criteria
     println!("3. Loading evaluation criteria...");
@@ -525,7 +549,8 @@ async fn run_evaluate(
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    let report = report::generate_report(&session, &overall);
+    let mut report = report::generate_report(&session, &overall);
+    report.push_str(&predict::prediction_report(&predictions));
 
     let report_path = output_dir.join("evaluation-report.md");
     std::fs::write(&report_path, &report)?;

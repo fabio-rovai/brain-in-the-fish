@@ -20,3 +20,4 @@ pub mod validate;
 pub mod epistemology;
 pub mod belief_dynamics;
 pub mod philosophy;
+pub mod predict;
