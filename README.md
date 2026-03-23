@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://github.com/fabio-rovai/brain-in-the-fish/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/tests-162%20passing-brightgreen" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-224%20passing-brightgreen" alt="Tests" />
   <img src="https://img.shields.io/badge/rust-edition%202024-orange" alt="Rust" />
 </p>
 
@@ -73,30 +73,54 @@ Brain in the Fish gives the mind a skeleton -- a structured, queryable, diffable
 | Debate tracking | Round counter, text logs | Round counter, JSON state | Versioned RDF triples with `onto_diff` and drift velocity |
 | Reproducibility | Non-deterministic | Non-deterministic | Deterministic graph state per round, SPARQL-queryable |
 | Cross-evaluation learning | None | None | Turtle export enables cross-session analysis |
+| Fact-checking / validation | None | None | 15 deterministic checks (citations, consistency, fallacies, specificity, etc.) |
+| Epistemological grounding | None | None | Justified beliefs with empirical, normative, and testimonial bases |
+| Philosophical frameworks | None | None | Kantian, utilitarian, and virtue ethics analysis |
+| Belief dynamics | None | Maslow needs in Python dicts | Maslow needs update from findings, ontology-grounded |
 | Runtime dependencies | Python + multiple LLM APIs | Python + LLM APIs | Single Rust binary, Oxigraph embedded |
 | Deploy complexity | Multi-service Python stack | Multi-service Python stack | `cargo build` produces one binary |
 
 ## How It Works
 
-The evaluation pipeline runs in 9 stages:
+The evaluation pipeline runs in 19 stages:
 
 1. **Ingest** -- Extract text from PDF (or plain text), split into sections by heading detection, build the Document Ontology as RDF triples in Oxigraph.
 
-2. **Load Criteria** -- Select or generate an evaluation framework (academic marking rubric, tender ITT criteria, generic quality framework). Each criterion, rubric level, and weight becomes an OWL individual in the Criteria Ontology.
+2. **Enrich** -- Split sections into paragraphs, extract claims and evidence via regex pattern matching.
 
-3. **Spawn Agent Panel** -- Detect the evaluation domain from the intent string and spawn 3-5 specialist agents plus a moderator. Each agent's cognitive model (Maslow needs, trust weights, domain expertise) is loaded as the Agent Ontology.
+3. **Validate** -- Run 15 deterministic checks: citations, word count, consistency, structure, reading level, duplicates, evidence quality, fallacies, hedging, topic sentences, counter-arguments, transitions, specificity, referencing, and argument flow. Each check produces validation signals that feed into the SNN.
 
-4. **Align** -- Map document sections to criteria using keyword overlap (and eventually semantic embedding via open-ontologies). Identify gaps where no document content addresses a criterion.
+4. **OWL-RL Reasoning** -- Infer new triples from the knowledge graph using OWL-RL entailment rules.
 
-5. **Score (Round 1)** -- Each agent independently scores each criterion. Scoring prompts include the agent's persona, the criterion rubric, and the relevant document sections. Scores are recorded as RDF triples.
+5. **Load Criteria** -- Select or generate an evaluation framework (7 built-in frameworks + YAML/JSON file parsing). Each criterion, rubric level, and weight becomes an OWL individual in the Criteria Ontology.
 
-6. **Detect Disagreements** -- Find criterion-agent pairs where score deltas exceed a threshold. These become debate targets.
+6. **Discover Sector Guidelines** -- Detect the evaluation domain and load sector-specific guidelines with provenance tracking.
 
-7. **Debate** -- Challenger agents construct evidence-based arguments against target scores. Targets defend or revise. Trust weights update based on persuasion outcomes. Each round produces new score triples.
+7. **Align** -- Map document sections to criteria using 7 structural signals via AlignmentEngine. Identify gaps where no document content addresses a criterion.
 
-8. **Moderate** -- When drift velocity drops below threshold (convergence), the moderator calculates trust-weighted consensus scores, identifies outlier dissents, and produces moderated results.
+8. **Spawn Agent Panel** -- Spawn 7 domain-specialist agents plus a moderator. Each agent's cognitive model (Maslow needs, trust weights, domain expertise) is loaded as the Agent Ontology.
 
-9. **Report** -- Generate a structured Markdown report with executive summary, scorecard table, gap analysis, full debate trail, improvement recommendations, and panel summary. Export the complete evaluation as Turtle RDF for cross-session analysis.
+9. **SNN Scoring** -- Deterministic, evidence-grounded scoring via spiking neural networks. Anti-hallucination: no evidence in the graph means no spikes means score of zero. Validation signals feed in as spikes (positive findings) or inhibition (negative findings).
+
+10. **Belief Dynamics** -- Update agent Maslow needs based on evaluation findings.
+
+11. **Epistemology** -- Construct justified beliefs with empirical, normative, and testimonial bases.
+
+12. **Philosophical Analysis** -- Apply Kantian, utilitarian, and virtue ethics lenses to evaluation findings.
+
+13. **Debate** -- Challenger agents construct evidence-based arguments. Deterministic convergence with trust evolution. Each round produces new score triples.
+
+14. **Moderation** -- Trust-weighted consensus with outlier detection and moderated results.
+
+15. **Report** -- Generate structured Markdown report, Turtle RDF export, interactive graph HTML, and orchestration JSON.
+
+16. **Enforce** -- Quality gate with custom rules via the Enforcer.
+
+17. **Lineage** -- Full audit trail via onto_lineage, tracking every transformation from ingest to final score.
+
+18. **Cross-evaluation Memory** -- Historical comparison across evaluation sessions.
+
+19. **Orchestration Output** -- Generate subagent tasks for Claude-enhanced scoring via the orchestrator.
 
 ## Anti-Hallucination: SNN Verification Layer
 
@@ -106,7 +130,7 @@ Brain in the Fish solves this with a **Spiking Neural Network (SNN)** verificati
 
 ### How the SNN works
 
-Each evaluator agent has a neural network with one **neuron per criterion**. Evidence from the document ontology generates **input spikes**:
+Each evaluator agent has a neural network with one **neuron per criterion**. Evidence from the document ontology generates **input spikes**. Validation signals from the 15-check validation pipeline also feed into the SNN: positive findings (good evidence quality, strong citations) generate excitatory spikes, while negative findings (logical fallacies, excessive hedging, vague language) generate inhibitory signals that reduce membrane potential.
 
 | Evidence type | Spike strength | Example |
 | ------------- | -------------- | ------- |
@@ -249,27 +273,34 @@ All modules compile into a single binary. No microservices, no Python, no networ
 |--------|---------|-------|
 | `types` | Core evaluation domain types (Document, Criteria, Agent, Score, Session) | 289 |
 | `ingest` | PDF text extraction, section splitting, Document Ontology RDF generation | 557 |
-| `criteria` | Evaluation framework loading, Criteria Ontology RDF generation | 1,215 |
+| `criteria` | Evaluation framework loading (7 built-in + YAML/JSON), Criteria Ontology RDF generation | 1,360 |
 | `agent` | Agent cognitive model (Maslow + trust), Agent Ontology RDF, panel spawning | 840 |
-| `scoring` | SPARQL queries, score recording, scoring prompt generation for subagents | 1,097 |
+| `scoring` | SPARQL queries, score recording, scoring prompt generation for subagents | 1,278 |
 | `debate` | Disagreement detection, challenge prompts, drift velocity, convergence | 875 |
 | `moderation` | Trust-weighted consensus, outlier detection, overall result calculation | 678 |
 | `report` | Markdown report generation, Turtle RDF session export | 713 |
-| `server` | MCP server with 10 eval_* tools (rmcp, stdio + HTTP transport) | 743 |
-| `main` | CLI entry point (clap), evaluate and serve subcommands | 727 |
+| `server` | MCP server with 12 eval_* tools (rmcp, stdio + HTTP transport) | 905 |
+| `main` | CLI entry point (clap), evaluate and serve subcommands, full pipeline orchestration | 737 |
 | `snn` | Spiking neural network scoring — deterministic evidence-grounded verification | 752 |
 | `llm` | LLM client abstraction (Anthropic API, demo mode fallback) | 320 |
-| `alignment` | Ontology alignment between document sections and evaluation criteria | 414 |
+| `alignment` | Ontology alignment between document sections and evaluation criteria (7 structural signals) | 842 |
 | `research` | Research pipeline for evidence gathering and synthesis | 493 |
 | `memory` | Agent memory persistence across evaluation rounds | 315 |
-| `visualize` | Evaluation visualization and chart generation | 2,311 |
-| `lib` | Module declarations | 15 |
+| `visualize` | Evaluation visualization, interactive graph HTML, chart generation | 2,520 |
+| `validate` | 15 deterministic document validation checks feeding SNN spikes/inhibition | 2,147 |
+| `batch` | Batch evaluation of multiple documents | 602 |
+| `belief_dynamics` | Maslow needs update from evaluation findings | 166 |
+| `epistemology` | Justified beliefs with empirical, normative, and testimonial bases | 347 |
+| `philosophy` | Kantian, utilitarian, and virtue ethics analysis | 316 |
+| `orchestrator` | Subagent task generation for Claude-enhanced scoring | 292 |
+| `semantic` | Semantic similarity via embeddings (TextEmbedder + VecStore) | 154 |
+| `lib` | Module declarations | 22 |
 
-**Total: ~12,350 lines of Rust.**
+**Total: ~17,520 lines of Rust across 24 modules.**
 
 ## MCP Tools
 
-The MCP server exposes 10 tools for orchestrating evaluations programmatically:
+The MCP server exposes 12 tools for orchestrating evaluations programmatically:
 
 | Tool | Description |
 |------|-------------|
@@ -282,6 +313,8 @@ The MCP server exposes 10 tools for orchestrating evaluations programmatically:
 | `eval_record_score` | Record a score from an agent into the graph store |
 | `eval_debate_status` | Disagreements, drift velocity, and convergence for the active round |
 | `eval_challenge_prompt` | Generate a challenge prompt for one agent to challenge another |
+| `eval_scoring_tasks` | Generate all scoring tasks for the agent panel as orchestrator-dispatchable prompts |
+| `eval_whatif` | Simulate a text change and estimate how it would affect scores |
 | `eval_report` | Generate the full evaluation report with moderation and consensus |
 
 ## Built on open-ontologies
@@ -292,11 +325,34 @@ Brain in the Fish is not a fork of [open-ontologies](https://github.com/fabio-ro
 open-ontologies = { path = "../open-ontologies", features = ["embeddings"] }
 ```
 
-It uses `GraphStore` for triple storage and SPARQL queries, `Reasoner` for inference, `Aligner` for ontology alignment, and `Embedder` for semantic similarity -- all as in-process Rust function calls. Zero network overhead. No serialisation boundaries. The ontology engine runs in the same address space as the evaluation logic.
+It uses `GraphStore` for triple storage and SPARQL queries, `Reasoner` for OWL-RL inference, `AlignmentEngine` for ontology alignment, `StateDb` for persistent state, `LineageLog` for full audit trails, `DriftDetector` for convergence monitoring, and `Enforcer` for quality gates -- plus optionally `TextEmbedder` and `VecStore` for semantic similarity. All run as in-process Rust function calls. Zero network overhead. No serialisation boundaries. The ontology engine runs in the same address space as the evaluation logic.
+
+## Validation
+
+The validation pipeline runs 15 deterministic checks on every document before scoring begins. Each check produces signals that feed into the SNN as spikes (positive) or inhibition (negative).
+
+| Check | Description |
+| ----- | ----------- |
+| Citation recency | Flags citations older than 10 years and missing citations in long sections |
+| Citation format | Detects malformed parenthetical references |
+| Word count | Checks section lengths against rubric requirements |
+| Number consistency | Finds contradictory numbers cited across different sections |
+| Structure compliance | Verifies required sections (introduction, conclusion, etc.) are present |
+| Reading level | Flesch-Kincaid grade level assessment for audience appropriateness |
+| Duplicate content | Detects repeated passages across sections |
+| Evidence quality | Measures evidence-to-claim ratio and proportion of quantified evidence |
+| Logical fallacies | Pattern-matches common fallacies (ad populum, slippery slope, straw man) |
+| Hedging balance | Flags excessive hedging language that weakens assertions |
+| Topic sentences | Checks that paragraphs open with clear topic sentences |
+| Counter-arguments | Detects engagement with opposing viewpoints |
+| Transition quality | Checks for effective transitions between sections |
+| Specificity | Flags vague generalisations and rewards precise, data-backed language |
+| Referencing consistency | Detects mixed citation styles (Harvard vs numeric) |
+| Argument flow | Checks that later sections build on evidence from earlier ones |
 
 ## Testing
 
-162 tests covering all modules: ingestion, criteria loading, agent spawning, scoring, debate mechanics, moderation, report generation, SNN verification, alignment, and MCP server tools.
+224 tests covering all 24 modules: ingestion, criteria loading, agent spawning, scoring, debate mechanics, moderation, report generation, SNN verification, alignment, validation, belief dynamics, epistemology, philosophy, orchestration, batch processing, and MCP server tools.
 
 ```bash
 cargo test
