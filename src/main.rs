@@ -9,6 +9,8 @@ use brain_in_the_fish::*;
 use brain_in_the_fish::types::*;
 use brain_in_the_fish::llm;
 use brain_in_the_fish::alignment;
+use brain_in_the_fish::snn;
+use brain_in_the_fish::memory;
 
 #[derive(Parser)]
 #[command(name = "brain-in-the-fish", version, about = "Universal document evaluation engine")]
@@ -207,6 +209,55 @@ async fn run_evaluate(
         }
     }
 
+    // 6.5 SNN verification layer
+    println!("\nSNN verification...");
+    let snn_config = snn::SNNConfig::default();
+    let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
+
+    for agent_item in &agents {
+        let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+        network.feed_evidence(&doc, &alignments, &snn_config);
+        snn_networks.push(network);
+    }
+
+    // Compute SNN scores and blend with LLM/demo scores
+    let mut blended_scores = Vec::new();
+    for network in snn_networks.iter() {
+        let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
+        for (criterion_id, snn_score) in &snn_scores {
+            // Find matching LLM score
+            if let Some(llm_score_entry) = round1_scores.iter().find(|s|
+                s.agent_id == network.agent_id && s.criterion_id == *criterion_id
+            ) {
+                let max_score = llm_score_entry.max_score;
+                let blended = snn::blend_scores(snn_score, llm_score_entry.score, max_score);
+
+                if blended.hallucination_risk {
+                    println!("   WARNING: {} on '{}' — LLM={:.1} vs SNN={:.1} — possible hallucination",
+                        network.agent_name,
+                        framework.criteria.iter().find(|c| c.id == *criterion_id)
+                            .map(|c| c.title.as_str()).unwrap_or(criterion_id),
+                        llm_score_entry.score, snn_score.snn_score);
+                }
+
+                blended_scores.push((network.agent_id.clone(), criterion_id.clone(), blended));
+            }
+        }
+    }
+
+    // Update round1_scores with blended values
+    for (agent_id, criterion_id, blended) in &blended_scores {
+        if let Some(score) = round1_scores.iter_mut().find(|s|
+            s.agent_id == *agent_id && s.criterion_id == *criterion_id
+        ) {
+            score.score = blended.final_score;
+            score.justification = format!("{}\n\n[SNN: {}]", score.justification, blended.explanation);
+        }
+    }
+
+    let hallucination_count = blended_scores.iter().filter(|(_, _, b)| b.hallucination_risk).count();
+    println!("   {} scores blended (SNN+LLM), {} hallucination warnings", blended_scores.len(), hallucination_count);
+
     // 7. Debate rounds
     let mut all_rounds = vec![debate::build_debate_round(1, round1_scores.clone(), vec![], None, false)];
     let mut current_scores = round1_scores;
@@ -361,6 +412,19 @@ async fn run_evaluate(
     let graph_path = output_dir.join("evaluation-graph.html");
     std::fs::write(&graph_path, &graph_html)?;
     println!("   Graph visualization: {}", graph_path.display());
+
+    // 11. Save to cross-evaluation memory
+    if let Ok(store) = memory::MemoryStore::open() {
+        let record = memory::build_record(&session, &overall, &intent);
+        if let Ok(Some(comp)) = store.compare(&record) {
+            println!("\n   Historical comparison ({} previous evaluations):", comp.total_compared);
+            println!("   This: {:.1}% | Mean: {:.1}% | Percentile: {}th",
+                comp.current_percentage, comp.historical_mean, comp.percentile);
+        }
+        if let Ok(path) = store.save(&record) {
+            println!("   Saved to memory: {}", path.display());
+        }
+    }
 
     Ok(())
 }
