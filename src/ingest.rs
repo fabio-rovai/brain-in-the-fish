@@ -198,14 +198,14 @@ pub fn ingest_pdf(path: &Path, _intent: &str) -> anyhow::Result<(EvalDocument, V
 // ============================================================================
 
 /// Sanitize a string for use as a Turtle IRI local name.
-fn iri_safe(s: &str) -> String {
+pub fn iri_safe(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
         .collect()
 }
 
 /// Escape a string for Turtle string literal.
-fn turtle_escape(s: &str) -> String {
+pub fn turtle_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
