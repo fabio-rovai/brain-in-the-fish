@@ -270,25 +270,39 @@ pub fn align_sections_to_criteria(
     let mut alignments = Vec::new();
     let mut gaps = Vec::new();
 
+    let all_secs = all_sections(&doc.sections);
+    let is_single_section = all_secs.len() <= 2;
+
     for criterion in all_criteria(&framework.criteria) {
         let crit_words = extract_keywords(&criterion.title, criterion.description.as_deref());
         let mut best_confidence = 0.0;
         let mut best_section_id = None;
 
-        for section in all_sections(&doc.sections) {
+        for section in &all_secs {
             let section_words = extract_keywords(&section.title, Some(&section.text));
             let confidence = keyword_overlap(&crit_words, &section_words);
 
-            if confidence > 0.1 {
+            // For single-section documents (e.g. essays pasted as one block),
+            // the section covers ALL criteria. Lower the threshold but keep
+            // the original confidence so evidence richness still differentiates.
+            let effective_confidence = if is_single_section && confidence < 0.1 {
+                // Force alignment with low confidence — spikes will be weak
+                // but at least evidence reaches the criterion neurons
+                0.15
+            } else {
+                confidence
+            };
+
+            if effective_confidence > 0.1 {
                 alignments.push(AlignmentMapping {
                     section_id: section.id.clone(),
                     criterion_id: criterion.id.clone(),
-                    confidence,
+                    confidence: effective_confidence,
                 });
             }
 
-            if confidence > best_confidence {
-                best_confidence = confidence;
+            if effective_confidence > best_confidence {
+                best_confidence = effective_confidence;
                 best_section_id = Some(section.id.clone());
             }
         }
@@ -586,9 +600,17 @@ mod tests {
             }],
         };
 
-        let (_, gaps) = align_sections_to_criteria(&doc, &fw);
-        assert_eq!(gaps.len(), 1, "Should detect gap for unmatched criterion");
-        assert_eq!(gaps[0].criterion_title, "Advanced Statistical Methods");
+        let (alignments, gaps) = align_sections_to_criteria(&doc, &fw);
+        // Single-section documents get force-aligned with low confidence (0.15)
+        // to ensure evidence reaches all criterion neurons. Gaps only appear
+        // in multi-section documents where no section matches.
+        if doc.sections.len() <= 2 {
+            assert!(gaps.is_empty(), "Single-section docs should have no gaps (force-aligned)");
+            assert!(alignments.iter().any(|a| a.criterion_id == "c1" && a.confidence < 0.2),
+                "Force-aligned with low confidence");
+        } else {
+            assert_eq!(gaps.len(), 1, "Multi-section docs should detect gap");
+        }
     }
 
     #[test]

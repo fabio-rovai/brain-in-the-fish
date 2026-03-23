@@ -234,9 +234,26 @@ impl Neuron {
             self.spike_log.iter().map(|s| s.strength).sum::<f64>() / self.spike_log.len() as f64
         };
 
-        // Score = combination of firing rate (frequency) and spike quality (depth)
-        let raw_score = (firing_rate * 0.6 + spike_quality * 0.4).min(1.0);
-        let snn_score = raw_score * max_score;
+        // Score formula: three signals combined
+        //
+        // 1. Evidence saturation: how much evidence exists relative to a "full" amount
+        //    Uses log scale so 1 spike = ~0.30, 3 = ~0.55, 7 = ~0.75, 15+ = ~0.90
+        //    This is the primary signal — more evidence = higher score.
+        let evidence_saturation = (1.0 + self.total_spikes as f64).ln() / (1.0 + 15.0_f64).ln();
+        let evidence_saturation = evidence_saturation.min(1.0);
+
+        // 2. Spike quality: how strong the evidence is (average strength)
+        //    High specificity claims + quantified evidence = high quality.
+
+        // 3. Firing rate: how often the neuron fired (traditional SNN signal)
+        //    This captures temporal dynamics — evidence arriving in bursts vs spread out.
+
+        // Weighted combination: evidence volume matters most, quality second, dynamics third
+        let raw_score = (evidence_saturation * 0.50 + spike_quality * 0.35 + firing_rate * 0.15).min(1.0);
+
+        // Apply inhibition penalty (from debate challenges or negative validation)
+        let after_inhibition = raw_score * (1.0 - self.inhibition);
+        let snn_score = after_inhibition * max_score;
 
         // Confidence based on evidence volume and quality
         let volume_confidence = (self.total_spikes as f64 / 5.0).min(1.0); // 5+ spikes = full confidence

@@ -970,7 +970,15 @@ fn run_benchmark(
                 evidence: vec![],
                 subsections: vec![],
             };
-            extract_claims_and_evidence(&mut section);
+            // Use hybrid extraction for better evidence detection
+            let extracted = extract::extract_all(&section.text);
+            let (claims, evidence) = extract::to_claims_and_evidence(&extracted);
+            if !claims.is_empty() || !evidence.is_empty() {
+                section.claims = claims;
+                section.evidence = evidence;
+            } else {
+                extract_claims_and_evidence(&mut section);
+            }
             doc.sections.push(section);
             doc.total_word_count = Some(word_count);
 
