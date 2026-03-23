@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://github.com/fabio-rovai/brain-in-the-fish/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/tests-233%20passing-brightgreen" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-239%20passing-brightgreen" alt="Tests" />
   <img src="https://img.shields.io/badge/rust-edition%202024-orange" alt="Rust" />
 </p>
 
@@ -44,7 +44,7 @@
 
 Two prior systems attempted multi-agent document evaluation. Both fell short.
 
-**MiroFish** gave fish a swarm -- agents debate a document and converge on a prediction. But MiroFish agents are stateless LLM prompts. They have no memory between rounds, no structured cognition, and no formal link between what they read and what they score. Prediction from an LLM swarm is fundamentally hallucination-prone: agents invent plausible-sounding justifications without grounding them in the document's actual content.
+**MiroFish** gave fish a swarm -- agents debate a document and converge on a prediction. But MiroFish agents are stateless LLM prompts. They have no memory between rounds, no structured cognition, and no formal link between what they read and what they score. Prediction from an LLM swarm is fundamentally hallucination-prone: agents invent plausible-sounding justifications without grounding them in the document's actual content. When MiroFish's agents predict 'this policy will reduce complaints by 50%,' there is no evidence check — the prediction is as credible as the LLM's temperature setting.
 
 **AgentSociety** gave agents a mind -- Maslow needs, Theory of Planned Behaviour, trust dynamics. But the cognitive model lives in Python dictionaries. It is opaque to reasoning, not queryable by SPARQL, not diffable between debate rounds, and not interoperable with any external knowledge system. The mind exists, but nobody can examine it.
 
@@ -62,6 +62,8 @@ Brain in the Fish gives the mind a skeleton -- a structured, queryable, diffable
 
 **Ontology alignment maps document to criteria.** `onto_align` produces a mathematical mapping between document sections and evaluation criteria. Gaps are identified before scoring begins. No criterion goes unanswered silently.
 
+**Prediction credibility, not prediction.** MiroFish predicts futures. Brain in the Fish assesses whether predictions within a document are credible. It extracts every forecast, target, commitment, and cost estimate, then checks each against the document's evidence base. 'Reduce complaints by 50%' gets a credibility score based on what evidence supports that number — not based on what an LLM thinks will happen.
+
 **Versioned debate.** Each debate round produces new score triples. `onto_diff` between rounds reveals exactly which agents moved, by how much, and why. Drift velocity measures convergence. The entire deliberation is reproducible from the graph state.
 
 ## Comparison
@@ -76,51 +78,54 @@ Brain in the Fish gives the mind a skeleton -- a structured, queryable, diffable
 | Fact-checking / validation | None | None | 15 deterministic checks (citations, consistency, fallacies, specificity, etc.) |
 | Epistemological grounding | None | None | Justified beliefs with empirical, normative, and testimonial bases |
 | Philosophical frameworks | None | None | Kantian, utilitarian, and virtue ethics analysis |
+| Prediction handling | Agents hallucinate futures | Not addressed | Extracts predictions from document, assesses credibility against evidence |
 | Belief dynamics | None | Maslow needs in Python dicts | Maslow needs update from findings, ontology-grounded |
 | Runtime dependencies | Python + multiple LLM APIs | Python + LLM APIs | Single Rust binary, Oxigraph embedded |
 | Deploy complexity | Multi-service Python stack | Multi-service Python stack | `cargo build` produces one binary |
 
 ## How It Works
 
-The evaluation pipeline runs in 19 stages:
+The evaluation pipeline runs in 20 stages:
 
 1. **Ingest** -- Extract text from PDF (or plain text), split into sections by heading detection, build the Document Ontology as RDF triples in Oxigraph.
 
 2. **Enrich** -- Split sections into paragraphs, extract claims and evidence via regex pattern matching.
 
-3. **Validate** -- Run 15 deterministic checks: citations, word count, consistency, structure, reading level, duplicates, evidence quality, fallacies, hedging, topic sentences, counter-arguments, transitions, specificity, referencing, and argument flow. Each check produces validation signals that feed into the SNN.
+3. **Predict** -- Extract quantitative targets, cost estimates, timelines, comparisons, and commitments. Assess each prediction's credibility against the document's own evidence base. Flag unsupported forecasts.
 
-4. **OWL-RL Reasoning** -- Infer new triples from the knowledge graph using OWL-RL entailment rules.
+4. **Validate** -- Run 15 deterministic checks: citations, word count, consistency, structure, reading level, duplicates, evidence quality, fallacies, hedging, topic sentences, counter-arguments, transitions, specificity, referencing, and argument flow. Each check produces validation signals that feed into the SNN.
 
-5. **Load Criteria** -- Select or generate an evaluation framework (7 built-in frameworks + YAML/JSON file parsing). Each criterion, rubric level, and weight becomes an OWL individual in the Criteria Ontology.
+5. **OWL-RL Reasoning** -- Infer new triples from the knowledge graph using OWL-RL entailment rules.
 
-6. **Discover Sector Guidelines** -- Detect the evaluation domain and load sector-specific guidelines with provenance tracking.
+6. **Load Criteria** -- Select or generate an evaluation framework (7 built-in frameworks + YAML/JSON file parsing). Each criterion, rubric level, and weight becomes an OWL individual in the Criteria Ontology.
 
-7. **Align** -- Map document sections to criteria using 7 structural signals via AlignmentEngine. Identify gaps where no document content addresses a criterion.
+7. **Discover Sector Guidelines** -- Detect the evaluation domain and load sector-specific guidelines with provenance tracking.
 
-8. **Spawn Agent Panel** -- Spawn 7 domain-specialist agents plus a moderator. Each agent's cognitive model (Maslow needs, trust weights, domain expertise) is loaded as the Agent Ontology.
+8. **Align** -- Map document sections to criteria using 7 structural signals via AlignmentEngine. Identify gaps where no document content addresses a criterion.
 
-9. **SNN Scoring** -- Deterministic, evidence-grounded scoring via spiking neural networks. Anti-hallucination: no evidence in the graph means no spikes means score of zero. Validation signals feed in as spikes (positive findings) or inhibition (negative findings).
+9. **Spawn Agent Panel** -- Spawn 7 domain-specialist agents plus a moderator. Each agent's cognitive model (Maslow needs, trust weights, domain expertise) is loaded as the Agent Ontology.
 
-10. **Belief Dynamics** -- Update agent Maslow needs based on evaluation findings.
+10. **SNN Scoring** -- Deterministic, evidence-grounded scoring via spiking neural networks. Anti-hallucination: no evidence in the graph means no spikes means score of zero. Validation signals feed in as spikes (positive findings) or inhibition (negative findings).
 
-11. **Epistemology** -- Construct justified beliefs with empirical, normative, and testimonial bases.
+11. **Belief Dynamics** -- Update agent Maslow needs based on evaluation findings.
 
-12. **Philosophical Analysis** -- Apply Kantian, utilitarian, and virtue ethics lenses to evaluation findings.
+12. **Epistemology** -- Construct justified beliefs with empirical, normative, and testimonial bases.
 
-13. **Debate** -- Challenger agents construct evidence-based arguments. Deterministic convergence with trust evolution. Each round produces new score triples.
+13. **Philosophical Analysis** -- Apply Kantian, utilitarian, and virtue ethics lenses to evaluation findings.
 
-14. **Moderation** -- Trust-weighted consensus with outlier detection and moderated results.
+14. **Debate** -- Challenger agents construct evidence-based arguments. Deterministic convergence with trust evolution. Each round produces new score triples.
 
-15. **Report** -- Generate structured Markdown report, Turtle RDF export, interactive graph HTML, and orchestration JSON.
+15. **Moderation** -- Trust-weighted consensus with outlier detection and moderated results.
 
-16. **Enforce** -- Quality gate with custom rules via the Enforcer.
+16. **Report** -- Generate structured Markdown report, Turtle RDF export, interactive graph HTML, and orchestration JSON.
 
-17. **Lineage** -- Full audit trail via onto_lineage, tracking every transformation from ingest to final score.
+17. **Enforce** -- Quality gate with custom rules via the Enforcer.
 
-18. **Cross-evaluation Memory** -- Historical comparison across evaluation sessions.
+18. **Lineage** -- Full audit trail via onto_lineage, tracking every transformation from ingest to final score.
 
-19. **Orchestration Output** -- Generate subagent tasks for Claude-enhanced scoring via the orchestrator.
+19. **Cross-evaluation Memory** -- Historical comparison across evaluation sessions.
+
+20. **Orchestration Output** -- Generate subagent tasks for Claude-enhanced scoring via the orchestrator.
 
 ## Anti-Hallucination: SNN Verification Layer
 
@@ -397,7 +402,7 @@ The validation pipeline runs 15 deterministic checks on every document before sc
 
 ## Testing
 
-233 tests covering all 24 modules: ingestion, criteria loading, agent spawning, scoring, debate mechanics, moderation, report generation, SNN verification, alignment, validation, belief dynamics, epistemology, philosophy, orchestration, batch processing, and MCP server tools.
+239 tests covering all 24 modules: ingestion, criteria loading, agent spawning, scoring, debate mechanics, moderation, report generation, SNN verification, alignment, validation, belief dynamics, epistemology, philosophy, orchestration, batch processing, and MCP server tools.
 
 ```bash
 cargo test
