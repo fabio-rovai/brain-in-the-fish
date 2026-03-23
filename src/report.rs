@@ -4,22 +4,7 @@
 //! Pure string generation — no graph store operations.
 
 use crate::types::*;
-
-/// Overall evaluation result summary.
-///
-/// Defined here to avoid coupling with the moderation module which may
-/// be under concurrent development. If `crate::moderation::OverallResult`
-/// lands first, this can be replaced with a re-export.
-#[derive(Debug, Clone)]
-pub struct OverallResult {
-    pub total_score: f64,
-    pub max_possible: f64,
-    pub percentage: f64,
-    pub pass_mark: Option<f64>,
-    pub passed: Option<bool>,
-    pub top_strengths: Vec<String>,
-    pub top_weaknesses: Vec<String>,
-}
+pub use crate::moderation::OverallResult;
 
 /// Generate a full evaluation report as Markdown.
 pub fn generate_report(session: &EvaluationSession, overall: &OverallResult) -> String {
