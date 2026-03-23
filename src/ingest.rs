@@ -1,7 +1,8 @@
 //! PDF ingestion and document ontology generation.
 
-use crate::types::{EvalDocument, Section};
+use crate::types::{Claim, EvalDocument, Evidence, Section};
 use regex::Regex;
+use std::fmt::Write;
 use std::path::Path;
 
 /// Raw section before LLM enrichment.
@@ -192,6 +193,147 @@ pub fn ingest_pdf(path: &Path, _intent: &str) -> anyhow::Result<(EvalDocument, V
     Ok((doc, raw_sections))
 }
 
+// ============================================================================
+// Document Ontology — Turtle/RDF generation
+// ============================================================================
+
+/// Sanitize a string for use as a Turtle IRI local name.
+fn iri_safe(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .collect()
+}
+
+/// Escape a string for Turtle string literal.
+fn turtle_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+/// Write Turtle triples for a single section (and its claims, evidence, subsections).
+fn write_section_turtle(out: &mut String, section: &Section, doc_id: &str) {
+    let sec_id = iri_safe(&section.id);
+    let _ = writeln!(out, "doc:{sec_id} a eval:Section ;");
+    let _ = writeln!(out, "    eval:title \"{}\" ;", turtle_escape(&section.title));
+    let _ = writeln!(out, "    eval:text \"{}\" ;", turtle_escape(&section.text));
+    let _ = writeln!(
+        out,
+        "    eval:wordCount \"{}\"^^xsd:integer ;",
+        section.word_count
+    );
+    let _ = writeln!(out, "    eval:parentDocument doc:{} .", iri_safe(doc_id));
+    let _ = writeln!(out);
+
+    for claim in &section.claims {
+        write_claim_turtle(out, claim, &sec_id);
+    }
+    for ev in &section.evidence {
+        write_evidence_turtle(out, ev, &sec_id);
+    }
+    for sub in &section.subsections {
+        write_section_turtle(out, sub, doc_id);
+    }
+}
+
+/// Write Turtle triples for a single claim.
+fn write_claim_turtle(out: &mut String, claim: &Claim, section_id: &str) {
+    let claim_id = iri_safe(&claim.id);
+    let _ = writeln!(out, "doc:{claim_id} a eval:Claim ;");
+    let _ = writeln!(out, "    eval:text \"{}\" ;", turtle_escape(&claim.text));
+    let _ = writeln!(
+        out,
+        "    eval:specificity \"{}\"^^xsd:decimal ;",
+        claim.specificity
+    );
+    let _ = writeln!(
+        out,
+        "    eval:verifiable \"{}\"^^xsd:boolean ;",
+        claim.verifiable
+    );
+    let _ = writeln!(out, "    eval:inSection doc:{section_id} .");
+    let _ = writeln!(out);
+}
+
+/// Write Turtle triples for a single piece of evidence.
+fn write_evidence_turtle(out: &mut String, ev: &Evidence, section_id: &str) {
+    let ev_id = iri_safe(&ev.id);
+    let _ = writeln!(out, "doc:{ev_id} a eval:Evidence ;");
+    let _ = writeln!(
+        out,
+        "    eval:source \"{}\" ;",
+        turtle_escape(&ev.source)
+    );
+    let _ = writeln!(
+        out,
+        "    eval:evidenceType \"{}\" ;",
+        turtle_escape(&ev.evidence_type)
+    );
+    let _ = writeln!(out, "    eval:text \"{}\" ;", turtle_escape(&ev.text));
+    let _ = writeln!(
+        out,
+        "    eval:hasQuantifiedOutcome \"{}\"^^xsd:boolean ;",
+        ev.has_quantified_outcome
+    );
+    let _ = writeln!(out, "    eval:inSection doc:{section_id} .");
+    let _ = writeln!(out);
+}
+
+/// Convert an `EvalDocument` into a Turtle RDF string.
+///
+/// Uses the brain-in-the-fish vocabulary:
+///   @prefix doc: <http://brain-in-the-fish.dev/doc/> .
+///   @prefix eval: <http://brain-in-the-fish.dev/eval/> .
+pub fn document_to_turtle(doc: &EvalDocument) -> String {
+    let mut out = String::new();
+
+    // Prefixes
+    let _ = writeln!(out, "@prefix doc: <http://brain-in-the-fish.dev/doc/> .");
+    let _ = writeln!(out, "@prefix eval: <http://brain-in-the-fish.dev/eval/> .");
+    let _ = writeln!(
+        out,
+        "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> ."
+    );
+    let _ = writeln!(out);
+
+    // Document node
+    let doc_id = iri_safe(&doc.id);
+    let _ = writeln!(out, "doc:{doc_id} a eval:Document ;");
+    let _ = writeln!(out, "    eval:title \"{}\" ;", turtle_escape(&doc.title));
+    let _ = writeln!(
+        out,
+        "    eval:docType \"{}\" ;",
+        turtle_escape(&doc.doc_type)
+    );
+    let _ = writeln!(
+        out,
+        "    eval:totalWordCount \"{}\"^^xsd:integer .",
+        doc.total_word_count.unwrap_or(0)
+    );
+    let _ = writeln!(out);
+
+    // Sections (recursive)
+    for section in &doc.sections {
+        write_section_turtle(&mut out, section, &doc.id);
+    }
+
+    out
+}
+
+/// Load the document ontology into open-ontologies graph store.
+///
+/// Uses `open_ontologies::graph::GraphStore` directly.
+pub fn load_document_ontology(
+    graph: &open_ontologies::graph::GraphStore,
+    doc: &EvalDocument,
+) -> anyhow::Result<usize> {
+    let turtle = document_to_turtle(doc);
+    let triples = graph.load_turtle(&turtle, None)?;
+    Ok(triples)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +407,149 @@ mod tests {
     fn test_page_estimate() {
         let sections = split_into_sections("1. First\n\nSome text.\n\n2. Second\n\nMore text.");
         assert!(sections.iter().all(|s| s.page_estimate.is_some()));
+    }
+
+    // ========================================================================
+    // Turtle generation tests
+    // ========================================================================
+
+    use crate::types::{Claim, Evidence};
+
+    #[test]
+    fn test_turtle_escape() {
+        assert_eq!(turtle_escape("hello \"world\""), "hello \\\"world\\\"");
+        assert_eq!(turtle_escape("line1\nline2"), "line1\\nline2");
+        assert_eq!(turtle_escape("tab\there"), "tab\\there");
+        assert_eq!(turtle_escape("back\\slash"), "back\\\\slash");
+    }
+
+    #[test]
+    fn test_iri_safe() {
+        assert_eq!(iri_safe("Section 3.2"), "Section_3_2");
+        assert_eq!(iri_safe("hello-world!"), "hello_world_");
+        assert_eq!(iri_safe("already_safe"), "already_safe");
+    }
+
+    #[test]
+    fn test_document_to_turtle_basic() {
+        let doc = EvalDocument {
+            id: "test-doc-1".to_string(),
+            title: "Test Document".to_string(),
+            doc_type: "essay".to_string(),
+            total_pages: Some(5),
+            total_word_count: Some(1000),
+            sections: vec![Section {
+                id: "sec-1".to_string(),
+                title: "Introduction".to_string(),
+                text: "This is the intro.".to_string(),
+                word_count: 5,
+                page_range: None,
+                claims: vec![],
+                evidence: vec![],
+                subsections: vec![],
+            }],
+        };
+
+        let turtle = document_to_turtle(&doc);
+        assert!(turtle.contains("eval:Document"));
+        assert!(turtle.contains("eval:title"));
+        assert!(turtle.contains("Introduction"));
+        assert!(turtle.contains("eval:Section"));
+        assert!(turtle.contains("eval:totalWordCount \"1000\"^^xsd:integer"));
+        assert!(turtle.contains("eval:parentDocument doc:test_doc_1"));
+    }
+
+    #[test]
+    fn test_document_to_turtle_with_claims_and_evidence() {
+        let doc = EvalDocument {
+            id: "doc-2".to_string(),
+            title: "Full Doc".to_string(),
+            doc_type: "proposal".to_string(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![Section {
+                id: "sec-a".to_string(),
+                title: "Method".to_string(),
+                text: "Our method is robust.".to_string(),
+                word_count: 4,
+                page_range: None,
+                claims: vec![Claim {
+                    id: "claim-1".to_string(),
+                    text: "We achieved 99% accuracy.".to_string(),
+                    specificity: 0.9,
+                    verifiable: true,
+                }],
+                evidence: vec![Evidence {
+                    id: "ev-1".to_string(),
+                    source: "Internal report".to_string(),
+                    evidence_type: "case_study".to_string(),
+                    text: "The trial showed improvement.".to_string(),
+                    has_quantified_outcome: true,
+                }],
+                subsections: vec![],
+            }],
+        };
+
+        let turtle = document_to_turtle(&doc);
+        assert!(turtle.contains("eval:Claim"));
+        assert!(turtle.contains("eval:specificity \"0.9\"^^xsd:decimal"));
+        assert!(turtle.contains("eval:verifiable \"true\"^^xsd:boolean"));
+        assert!(turtle.contains("eval:Evidence"));
+        assert!(turtle.contains("eval:evidenceType \"case_study\""));
+        assert!(turtle.contains("eval:hasQuantifiedOutcome \"true\"^^xsd:boolean"));
+    }
+
+    #[test]
+    fn test_document_to_turtle_escaping() {
+        let doc = EvalDocument {
+            id: "doc-esc".to_string(),
+            title: "Doc with \"quotes\"".to_string(),
+            doc_type: "report".to_string(),
+            total_pages: None,
+            total_word_count: Some(10),
+            sections: vec![Section {
+                id: "sec-esc".to_string(),
+                title: "Line\nBreak".to_string(),
+                text: "Text with \"special\" chars\nand newlines.".to_string(),
+                word_count: 6,
+                page_range: None,
+                claims: vec![],
+                evidence: vec![],
+                subsections: vec![],
+            }],
+        };
+
+        let turtle = document_to_turtle(&doc);
+        // Quotes and newlines should be escaped
+        assert!(turtle.contains("Doc with \\\"quotes\\\""));
+        assert!(turtle.contains("Line\\nBreak"));
+    }
+
+    #[test]
+    fn test_load_document_ontology() {
+        let graph = open_ontologies::graph::GraphStore::new();
+        let doc = EvalDocument {
+            id: "load-test".to_string(),
+            title: "Load Test".to_string(),
+            doc_type: "test".to_string(),
+            total_pages: None,
+            total_word_count: Some(100),
+            sections: vec![Section {
+                id: "sec-lt".to_string(),
+                title: "Only Section".to_string(),
+                text: "Some content here.".to_string(),
+                word_count: 3,
+                page_range: None,
+                claims: vec![],
+                evidence: vec![],
+                subsections: vec![],
+            }],
+        };
+
+        let triples = load_document_ontology(&graph, &doc).expect("should load");
+        // Document: 4 triples (a, title, docType, totalWordCount)
+        // Section: 5 triples (a, title, text, wordCount, parentDocument)
+        assert_eq!(triples, 9);
+        assert_eq!(graph.triple_count(), 9);
     }
 }
