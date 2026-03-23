@@ -200,8 +200,8 @@ pub fn beliefs_from_snn(
         }
 
         // Normative belief from rubric comparison
-        if let Some(crit) = criterion {
-            if !crit.rubric_levels.is_empty() {
+        if let Some(crit) = criterion
+            && !crit.rubric_levels.is_empty() {
                 let score_pct = snn_score.snn_score / crit.max_score;
                 let matching_level = crit.rubric_levels.iter()
                     .find(|r| {
@@ -224,14 +224,12 @@ pub fn beliefs_from_snn(
                     );
                 }
             }
-        }
 
         // Add defeaters from validation signals
         for signal in validation_signals {
-            if signal.spike_effect < -0.05 {
-                if signal.criterion_id.as_deref() == Some(criterion_id.as_str()) || signal.criterion_id.is_none() {
-                    state.add_defeater(criterion_id, &signal.title);
-                }
+            if signal.spike_effect < -0.05
+                && (signal.criterion_id.as_deref() == Some(criterion_id.as_str()) || signal.criterion_id.is_none()) {
+                state.add_defeater(criterion_id, &signal.title);
             }
         }
     }

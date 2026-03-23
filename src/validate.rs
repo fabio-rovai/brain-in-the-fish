@@ -336,7 +336,13 @@ fn extract_significant_numbers(text: &str) -> Vec<NumberInContext> {
 }
 
 fn numbers_suspiciously_similar(a: &str, b: &str) -> bool {
-    // Strip currency/percentage symbols for comparison
+    // Only compare numbers with the SAME unit type
+    let unit_a = number_unit(a);
+    let unit_b = number_unit(b);
+    if unit_a != unit_b {
+        return false; // £45M vs 50% = different units, not suspicious
+    }
+
     let clean_a: String = a
         .chars()
         .filter(|c| c.is_ascii_digit() || *c == '.')
@@ -347,20 +353,28 @@ fn numbers_suspiciously_similar(a: &str, b: &str) -> bool {
         .collect();
 
     if clean_a == clean_b || clean_a.is_empty() || clean_b.is_empty() {
-        return false; // Identical or empty — not suspicious
+        return false;
     }
 
-    // Parse as floats and check if within 20% of each other
     if let (Ok(va), Ok(vb)) = (clean_a.parse::<f64>(), clean_b.parse::<f64>()) {
-        if va == 0.0 || vb == 0.0 {
+        // Skip small numbers (< 10) — too many false positives
+        if va < 10.0 || vb < 10.0 || va == 0.0 || vb == 0.0 {
             return false;
         }
         let ratio = (va / vb).max(vb / va);
-        // Between 1.0 and 1.2 = suspiciously similar but different
-        ratio > 1.0 && ratio < 1.2
+        ratio > 1.0 && ratio < 1.15 // Tightened from 20% to 15%
     } else {
         false
     }
+}
+
+/// Classify the unit type of a number string.
+fn number_unit(s: &str) -> &'static str {
+    if s.contains('%') { "percent" }
+    else if s.contains('£') || s.contains('$') || s.contains('€') { "currency" }
+    else if s.to_lowercase().contains("billion") || s.to_lowercase().contains("million") { "currency_large" }
+    else if s.contains('-') && s.len() < 8 { "range" } // e.g. "1-6"
+    else { "plain" }
 }
 
 // ============================================================================
