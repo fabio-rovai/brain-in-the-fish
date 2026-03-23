@@ -6,4 +6,5 @@ pub mod scoring;
 pub mod debate;
 pub mod moderation;
 pub mod report;
+pub mod visualize;
 pub mod server;

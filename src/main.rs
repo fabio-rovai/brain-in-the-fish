@@ -181,6 +181,13 @@ async fn run_evaluate(
     std::fs::write(&turtle_path, &turtle)?;
     println!("   Turtle export: {}", turtle_path.display());
 
+    // Generate interactive graph visualization
+    let graph_data = visualize::extract_graph_data(&session);
+    let graph_html = visualize::generate_graph_html(&graph_data);
+    let graph_path = output_dir.join("evaluation-graph.html");
+    std::fs::write(&graph_path, &graph_html)?;
+    println!("   Graph visualization: {}", graph_path.display());
+
     Ok(())
 }
 
