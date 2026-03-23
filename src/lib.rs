@@ -14,3 +14,4 @@ pub mod orchestrator;
 pub mod server;
 pub mod snn;
 pub mod memory;
+pub mod batch;
