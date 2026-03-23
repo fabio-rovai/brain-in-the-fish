@@ -1,10 +1,12 @@
 pub mod types;
 pub mod ingest;
 pub mod criteria;
+pub mod alignment;
 pub mod agent;
 pub mod scoring;
 pub mod debate;
 pub mod moderation;
 pub mod report;
 pub mod visualize;
+pub mod llm;
 pub mod server;
