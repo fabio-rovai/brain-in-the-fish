@@ -11,6 +11,7 @@ use brain_in_the_fish::alignment;
 use brain_in_the_fish::snn;
 use brain_in_the_fish::memory;
 use brain_in_the_fish::semantic;
+use brain_in_the_fish::validate;
 
 #[derive(Parser)]
 #[command(name = "brain-in-the-fish", version, about = "Universal document evaluation engine")]
@@ -110,6 +111,53 @@ async fn run_evaluate(
         }
     }
 
+    // 2.7 Validate document (deterministic fact-checking)
+    // NOTE: We run a preliminary validation here with a placeholder framework.
+    // The full validation with the real framework happens after criteria loading.
+    println!("   Validating document (preliminary)...");
+    let prelim_framework = criteria::framework_for_intent(&intent);
+    let validation_signals = validate::validate_document(&doc, &prelim_framework);
+    let val_triples = validate::load_signals(&graph, &validation_signals)?;
+    let warnings = validation_signals
+        .iter()
+        .filter(|s| s.severity == validate::Severity::Warning)
+        .count();
+    let errors = validation_signals
+        .iter()
+        .filter(|s| s.severity == validate::Severity::Error)
+        .count();
+    println!(
+        "   {} signals ({} warnings, {} errors), {} triples",
+        validation_signals.len(),
+        warnings,
+        errors,
+        val_triples
+    );
+    for signal in &validation_signals {
+        if signal.severity != validate::Severity::Info {
+            println!(
+                "   {}: {}",
+                if signal.severity == validate::Severity::Error {
+                    "ERROR"
+                } else {
+                    "WARN"
+                },
+                signal.title
+            );
+        }
+    }
+    onto_lineage.record(
+        &session_id,
+        "A",
+        "validate",
+        &format!(
+            "{} signals, {} warnings, {} errors",
+            validation_signals.len(),
+            warnings,
+            errors
+        ),
+    );
+
     // 3. Load evaluation criteria
     println!("3. Loading evaluation criteria...");
     let framework = if let Some(criteria_file) = criteria_path {
@@ -192,20 +240,50 @@ async fn run_evaluate(
         for network in &mut snn_networks {
             for neuron in &mut network.neurons {
                 for alignment in &alignments {
-                    if alignment.criterion_id == neuron.criterion_id {
-                        if let Ok(sim) = semantic::semantic_similarity(
+                    if alignment.criterion_id == neuron.criterion_id
+                        && let Ok(sim) = semantic::semantic_similarity(
                             &alignment.section_id,
                             &alignment.criterion_id,
                             &output_dir,
-                        ) {
-                            if sim > 0.3 {
-                                neuron.receive_spike(snn::Spike {
-                                    source_id: format!("semantic_{}", alignment.section_id),
-                                    strength: sim.min(1.0),
-                                    spike_type: snn::SpikeType::Alignment,
-                                    timestep: 0,
-                                }, &snn_config);
-                            }
+                        )
+                        && sim > 0.3
+                    {
+                        neuron.receive_spike(snn::Spike {
+                            source_id: format!("semantic_{}", alignment.section_id),
+                            strength: sim.min(1.0),
+                            spike_type: snn::SpikeType::Alignment,
+                            timestep: 0,
+                        }, &snn_config);
+                    }
+                }
+            }
+        }
+    }
+
+    // Feed validation signals into SNN
+    for signal in &validation_signals {
+        if signal.spike_effect.abs() > 0.01 {
+            for network in &mut snn_networks {
+                for neuron in &mut network.neurons {
+                    // Apply to all neurons (document-level signals) or matching criterion
+                    let matches = signal.criterion_id.is_none()
+                        || signal.criterion_id.as_deref() == Some(&neuron.criterion_id);
+                    if matches {
+                        neuron.receive_spike(
+                            snn::Spike {
+                                source_id: signal.id.clone(),
+                                strength: signal.spike_effect.abs(),
+                                spike_type: if signal.spike_effect > 0.0 {
+                                    snn::SpikeType::Evidence
+                                } else {
+                                    snn::SpikeType::Claim
+                                },
+                                timestep: 0,
+                            },
+                            &snn_config,
+                        );
+                        if signal.spike_effect < 0.0 {
+                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.5);
                         }
                     }
                 }
