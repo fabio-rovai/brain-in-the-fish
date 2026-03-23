@@ -9,4 +9,5 @@ pub mod moderation;
 pub mod report;
 pub mod visualize;
 pub mod llm;
+pub mod research;
 pub mod server;
