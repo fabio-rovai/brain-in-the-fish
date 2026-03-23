@@ -1,0 +1,57 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: brain-in-the-fish-linux-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: brain-in-the-fish-macos-arm64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            name: brain-in-the-fish-macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout open-ontologies
+        uses: actions/checkout@v4
+        with:
+          repository: fabio-rovai/open-ontologies
+          path: open-ontologies
+      - name: Fix dependency path
+        run: sed -i'' -e 's|path = "../open-ontologies"|path = "open-ontologies"|' Cargo.toml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Rename binary
+        run: cp target/${{ matrix.target }}/release/brain-in-the-fish ${{ matrix.name }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            brain-in-the-fish-linux-x86_64/brain-in-the-fish-linux-x86_64
+            brain-in-the-fish-macos-arm64/brain-in-the-fish-macos-arm64
+            brain-in-the-fish-macos-x86_64/brain-in-the-fish-macos-x86_64
