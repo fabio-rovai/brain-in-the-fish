@@ -323,9 +323,11 @@ async fn run_evaluate(
                 },
             };
 
-            println!("   {} -> {}: {:.1}/{:.0} (confidence {:.0}%)",
+            println!("   {} -> {}: {:.1}/{:.0} (CI: {:.1}-{:.1}, Bayesian: {:.0}%, falsification: {})",
                 network.agent_name, criterion_title, snn_score.snn_score, max_score,
-                snn_score.confidence * 100.0);
+                snn_score.confidence_interval.0, snn_score.confidence_interval.1,
+                snn_score.bayesian_confidence * 100.0,
+                if snn_score.falsification_checked { "passed" } else { "NOT CHECKED" });
 
             if !snn_score.grounded {
                 println!("      LOW EVIDENCE: {}", criterion_title);

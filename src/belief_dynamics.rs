@@ -159,6 +159,7 @@ mod tests {
         let criteria = vec![EvaluationCriterion { id: "c1".into(), title: "Quality".into(), description: None, max_score: 10.0, weight: 1.0, rubric_levels: vec![], sub_criteria: vec![] }];
         let snn_scores = vec![("c1".to_string(), crate::snn::SNNScore {
             snn_score: 5.0, confidence: 0.8, firing_rate: 0.4, evidence_count: 5, spike_quality: 0.7, grounded: true, explanation: String::new(),
+            falsification_checked: true, bayesian_confidence: 0.8, confidence_interval: (3.5, 6.5),
         })];
         update_needs(&mut agent, &snn_scores, &[], &criteria);
         assert!(agent.needs[0].satisfied, "5/10 > 30% minimum, should be satisfied");

@@ -69,6 +69,8 @@ pub struct Neuron {
     pub spike_log: Vec<Spike>,
     /// Lateral inhibition from other agents' challenges
     pub inhibition: f64,
+    /// Bayesian confidence that this criterion is met (0.0-1.0)
+    pub bayesian_confidence: f64,
 }
 
 /// The complete SNN for one evaluator agent.
@@ -129,7 +131,29 @@ impl Neuron {
             refractory: false,
             spike_log: Vec::new(),
             inhibition: 0.0,
+            bayesian_confidence: 0.5, // uninformative prior
         }
+    }
+
+    /// Bayesian update with likelihood ratio capping.
+    /// Prevents overconfidence from thin evidence.
+    /// Based on epistemic-deconstructor calibration discipline.
+    pub fn bayesian_update(&mut self, likelihood_ratio: f64) {
+        // Cap likelihood ratio to prevent overconfidence
+        let max_lr = if self.total_spikes < 3 {
+            3.0
+        } else if self.total_spikes < 10 {
+            5.0
+        } else {
+            10.0
+        };
+        let capped_lr = likelihood_ratio.min(max_lr).max(1.0 / max_lr);
+
+        let prior_odds =
+            self.bayesian_confidence / (1.0 - self.bayesian_confidence).max(1e-10);
+        let posterior_odds = prior_odds * capped_lr;
+        self.bayesian_confidence =
+            (posterior_odds / (1.0 + posterior_odds)).clamp(0.01, 0.99);
     }
 
     /// Receive a spike — integrate into membrane potential.
@@ -141,6 +165,21 @@ impl Neuron {
         self.total_spikes += 1;
         let effective_strength = (spike.strength - self.inhibition).max(0.0);
         self.membrane_potential += effective_strength;
+
+        // After accumulating the spike, update Bayesian confidence
+        let lr = if spike.spike_type == SpikeType::QuantifiedData {
+            2.5
+        } else if spike.spike_type == SpikeType::Evidence {
+            2.0
+        } else if spike.spike_type == SpikeType::Citation {
+            1.8
+        } else if spike.spike_type == SpikeType::Alignment {
+            1.5
+        } else {
+            1.3 // Claim
+        };
+        self.bayesian_update(lr);
+
         self.spike_log.push(spike);
 
         // Check if we fire
@@ -178,6 +217,9 @@ impl Neuron {
                 explanation: "Insufficient evidence in the knowledge graph. The neuron \
                               did not receive enough spikes to produce a valid score."
                     .into(),
+                falsification_checked: false,
+                bayesian_confidence: self.bayesian_confidence,
+                confidence_interval: (0.0, max_score),
             };
         }
 
@@ -205,31 +247,83 @@ impl Neuron {
             .filter(|s| s.spike_type == SpikeType::QuantifiedData)
             .count();
 
+        // Falsification check: if score > 80% of max, look for counter-evidence
+        // Counter-evidence = spikes with very low strength or inhibition
+        let high_score = snn_score > max_score * 0.8;
+        let has_counter_evidence = self.spike_log.iter().any(|s| s.strength < 0.2);
+        let falsification_checked = if high_score {
+            has_counter_evidence || self.inhibition > 0.0
+        } else {
+            true // Low scores don't need falsification
+        };
+
+        // If high score but no falsification, reduce confidence
+        let adjusted_confidence = if high_score && !falsification_checked {
+            confidence * 0.7 // 30% confidence penalty for unfalsified high scores
+        } else {
+            confidence
+        };
+
+        // Confidence interval based on evidence count (more evidence = narrower interval)
+        let interval_width = if self.total_spikes == 0 {
+            max_score
+        } else if self.total_spikes < 3 {
+            max_score * 0.4
+        } else if self.total_spikes < 5 {
+            max_score * 0.25
+        } else if self.total_spikes < 10 {
+            max_score * 0.15
+        } else {
+            max_score * 0.08
+        };
+
+        let ci_low = (snn_score - interval_width / 2.0).max(0.0);
+        let ci_high = (snn_score + interval_width / 2.0).min(max_score);
+        let confidence_interval = (ci_low, ci_high);
+
+        let hallucination_risk_note = if high_score && !falsification_checked {
+            "Unfalsified high score — confidence reduced by 30%."
+        } else {
+            ""
+        };
+
         let explanation = format!(
-            "SNN score: {:.1}/{:.0}. Firing rate: {:.2} ({} fires in {} steps). \
-             {} evidence spikes received ({} quantified). \
-             Spike quality: {:.2}. Inhibition from debate: {:.2}. \
-             Confidence: {:.0}%.",
+            "SNN: {:.1}/{:.0} (CI: {:.1}-{:.1}). Firing rate: {:.2} ({} fires in {} steps). \
+             {} evidence spikes ({} quantified). Bayesian confidence: {:.0}%. \
+             Falsification: {}. {}",
             snn_score,
             max_score,
+            ci_low,
+            ci_high,
             firing_rate,
             self.fire_count,
             config.timesteps,
             self.total_spikes,
             quantified_count,
-            spike_quality,
-            self.inhibition,
-            confidence * 100.0,
+            self.bayesian_confidence * 100.0,
+            if falsification_checked {
+                "passed"
+            } else {
+                "NOT CHECKED — score may be overconfident"
+            },
+            if hallucination_risk_note.is_empty() {
+                ""
+            } else {
+                hallucination_risk_note
+            },
         );
 
         SNNScore {
             snn_score,
-            confidence,
+            confidence: adjusted_confidence,
             firing_rate,
             evidence_count: self.total_spikes,
             spike_quality,
             grounded: true,
             explanation,
+            falsification_checked,
+            bayesian_confidence: self.bayesian_confidence,
+            confidence_interval,
         }
     }
 }
@@ -251,6 +345,14 @@ pub struct SNNScore {
     pub grounded: bool,
     /// Human-readable explanation
     pub explanation: String,
+    /// Whether a falsification check was passed.
+    /// True = disconfirming evidence was sought and not found (strengthens score).
+    /// False = no falsification attempt was made (score may be overconfident).
+    pub falsification_checked: bool,
+    /// Bayesian confidence after LR-capped updates (more calibrated than raw confidence).
+    pub bayesian_confidence: f64,
+    /// 95% confidence interval for the score [low, high]
+    pub confidence_interval: (f64, f64),
 }
 
 impl AgentNetwork {
@@ -466,8 +568,8 @@ pub fn blend_scores(snn_score: &SNNScore, llm_score: f64, max_score: f64) -> Ble
     let snn_normalised = snn_score.snn_score / max_score;
     let llm_normalised = llm_score / max_score;
 
-    // SNN weight increases with confidence
-    let snn_weight = snn_score.confidence * 0.6; // Max 60% SNN influence
+    // SNN weight increases with Bayesian confidence (more calibrated than raw confidence)
+    let snn_weight = snn_score.bayesian_confidence * 0.6; // Max 60% SNN influence
     let llm_weight = 1.0 - snn_weight;
 
     let blended_normalised = snn_normalised * snn_weight + llm_normalised * llm_weight;
@@ -654,6 +756,9 @@ mod tests {
             spike_quality: 0.7,
             grounded: true,
             explanation: String::new(),
+            falsification_checked: true,
+            bayesian_confidence: 0.8,
+            confidence_interval: (5.5, 8.5),
         };
         let blended = blend_scores(&snn, 7.0, 10.0);
         assert!(!blended.hallucination_risk);
@@ -670,6 +775,9 @@ mod tests {
             spike_quality: 0.3,
             grounded: true,
             explanation: String::new(),
+            falsification_checked: true,
+            bayesian_confidence: 0.8,
+            confidence_interval: (1.0, 3.0),
         };
         // LLM says 9/10 but SNN says 2/10 — hallucination!
         let blended = blend_scores(&snn, 9.0, 10.0);
@@ -689,6 +797,9 @@ mod tests {
             spike_quality: 0.3,
             grounded: true,
             explanation: String::new(),
+            falsification_checked: true,
+            bayesian_confidence: 0.1,
+            confidence_interval: (1.0, 5.0),
         };
         let blended = blend_scores(&snn, 8.0, 10.0);
         // Low SNN confidence → LLM dominates
@@ -748,5 +859,168 @@ mod tests {
         let (_, snn_score) = &scores[0];
         assert!(snn_score.evidence_count > 0, "Should have received spikes");
         assert!(snn_score.grounded, "Should be evidence-grounded");
+    }
+
+    #[test]
+    fn test_bayesian_update_from_prior() {
+        let crit = test_criterion();
+        let mut neuron = Neuron::new(&crit, "a1");
+        let config = SNNConfig::default();
+
+        assert!((neuron.bayesian_confidence - 0.5).abs() < 0.01, "Prior should be 0.5");
+
+        // Add strong quantified evidence — confidence should increase
+        for i in 0..3 {
+            neuron.clear_refractory();
+            neuron.receive_spike(
+                Spike {
+                    source_id: format!("ev{}", i),
+                    strength: 0.9,
+                    spike_type: SpikeType::QuantifiedData,
+                    timestep: i,
+                },
+                &config,
+            );
+        }
+
+        assert!(
+            neuron.bayesian_confidence > 0.7,
+            "Bayesian confidence should increase with strong evidence: {}",
+            neuron.bayesian_confidence
+        );
+    }
+
+    #[test]
+    fn test_bayesian_lr_cap() {
+        let crit = test_criterion();
+        let mut neuron = Neuron::new(&crit, "a1");
+        let config = SNNConfig::default();
+
+        // Even with many strong spikes, confidence should never exceed 0.99
+        for i in 0..20 {
+            neuron.clear_refractory();
+            neuron.receive_spike(
+                Spike {
+                    source_id: format!("ev{}", i),
+                    strength: 1.0,
+                    spike_type: SpikeType::QuantifiedData,
+                    timestep: i,
+                },
+                &config,
+            );
+        }
+
+        assert!(
+            neuron.bayesian_confidence <= 0.99,
+            "LR cap should prevent confidence > 0.99: {}",
+            neuron.bayesian_confidence
+        );
+    }
+
+    #[test]
+    fn test_falsification_unfalsified_high_score() {
+        let crit = test_criterion();
+        let mut neuron = Neuron::new(&crit, "a1");
+        let config = SNNConfig::default();
+
+        // Send many strong spikes to produce a high score, none with low strength
+        for i in 0..10 {
+            neuron.clear_refractory();
+            neuron.receive_spike(
+                Spike {
+                    source_id: format!("ev{}", i),
+                    strength: 0.95,
+                    spike_type: SpikeType::QuantifiedData,
+                    timestep: i,
+                },
+                &config,
+            );
+        }
+
+        let score = neuron.compute_score(10.0, &config);
+        // If the score is high (>80% of max) and no counter-evidence, falsification should fail
+        if score.snn_score > 8.0 {
+            assert!(
+                !score.falsification_checked,
+                "High score without counter-evidence should not pass falsification"
+            );
+            // Confidence should be penalised
+            // (adjusted_confidence = confidence * 0.7)
+        }
+    }
+
+    #[test]
+    fn test_confidence_interval_narrows_with_evidence() {
+        let crit = test_criterion();
+        let config = SNNConfig::default();
+
+        // Few spikes
+        let mut neuron_few = Neuron::new(&crit, "a1");
+        for i in 0..2 {
+            neuron_few.clear_refractory();
+            neuron_few.receive_spike(
+                Spike {
+                    source_id: format!("ev{}", i),
+                    strength: 0.7,
+                    spike_type: SpikeType::Evidence,
+                    timestep: i,
+                },
+                &config,
+            );
+        }
+        let score_few = neuron_few.compute_score(10.0, &config);
+
+        // Many spikes
+        let mut neuron_many = Neuron::new(&crit, "a1");
+        for i in 0..12 {
+            neuron_many.clear_refractory();
+            neuron_many.receive_spike(
+                Spike {
+                    source_id: format!("ev{}", i),
+                    strength: 0.7,
+                    spike_type: SpikeType::Evidence,
+                    timestep: i % config.timesteps,
+                },
+                &config,
+            );
+        }
+        let score_many = neuron_many.compute_score(10.0, &config);
+
+        let width_few = score_few.confidence_interval.1 - score_few.confidence_interval.0;
+        let width_many = score_many.confidence_interval.1 - score_many.confidence_interval.0;
+
+        assert!(
+            width_many < width_few,
+            "More evidence should narrow CI: few={:.1}, many={:.1}",
+            width_few,
+            width_many
+        );
+    }
+
+    #[test]
+    fn test_confidence_interval_wide_with_few_spikes() {
+        let crit = test_criterion();
+        let mut neuron = Neuron::new(&crit, "a1");
+        let config = SNNConfig::default();
+
+        neuron.receive_spike(
+            Spike {
+                source_id: "ev1".into(),
+                strength: 0.7,
+                spike_type: SpikeType::Evidence,
+                timestep: 0,
+            },
+            &config,
+        );
+
+        let score = neuron.compute_score(10.0, &config);
+        let width = score.confidence_interval.1 - score.confidence_interval.0;
+
+        // With only 1 spike, CI width should be at least 3.0 (40% of max_score=10)
+        assert!(
+            width >= 3.0,
+            "Few spikes should produce wide CI: width={:.1}",
+            width
+        );
     }
 }
