@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
+use rmcp::ServiceExt;
+
 use brain_in_the_fish::*;
 use brain_in_the_fish::types::*;
 
@@ -189,11 +191,10 @@ fn generate_demo_score(agent: &EvaluatorAgent, criterion: &EvaluationCriterion) 
     base.min(criterion.max_score)
 }
 
-async fn run_serve(host: String, port: u16) -> anyhow::Result<()> {
-    println!("Brain in the Fish - MCP Server");
-    println!("   Listening on {}:{}", host, port);
-    // For now, just print and exit
-    // The actual MCP server startup will be wired when server.rs is complete
-    println!("   Server not yet fully implemented. Use 'evaluate' subcommand.");
+async fn run_serve(_host: String, _port: u16) -> anyhow::Result<()> {
+    eprintln!("Brain in the Fish MCP server starting (stdio transport)...");
+    let server = server::EvalServer::new();
+    let service = server.serve(rmcp::transport::stdio()).await?;
+    service.waiting().await?;
     Ok(())
 }
