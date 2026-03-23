@@ -17,3 +17,6 @@ pub mod memory;
 pub mod batch;
 pub mod semantic;
 pub mod validate;
+pub mod epistemology;
+pub mod belief_dynamics;
+pub mod philosophy;
