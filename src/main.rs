@@ -96,8 +96,9 @@ async fn run_evaluate(
 
     // 3. Load criteria — use framework_for_intent when no file provided
     println!("Loading evaluation criteria...");
-    let framework = if let Some(_criteria_file) = criteria_path {
-        criteria::generic_quality_framework() // TODO: parse from file
+    let framework = if let Some(criteria_file) = criteria_path {
+        println!("   Loading criteria from: {}", criteria_file.display());
+        criteria::parse_framework_from_file(&criteria_file)?
     } else {
         criteria::framework_for_intent(&intent)
     };
@@ -295,6 +296,13 @@ async fn run_evaluate(
         let mut challenges = Vec::new();
         let mut new_scores = current_scores.clone();
 
+        // Create Claude client once if available for this round
+        let claude_client = if llm::ClaudeClient::available() {
+            llm::ClaudeClient::from_env().ok()
+        } else {
+            None
+        };
+
         for disagreement in &disagreements {
             // Find challenger and target agents
             let challenger = agents.iter().find(|a| a.id == disagreement.agent_a_id);
@@ -321,38 +329,83 @@ async fn run_evaluate(
 
                 println!("   {} challenges {} on '{}'", actual_challenger.name, actual_target.name, criterion.title);
 
-                // Simulate debate convergence: move scores 30% toward each other
-                // When LLM is available, use claude.generate_challenge() and claude.generate_response()
-                let target_score_entry = new_scores.iter_mut()
-                    .find(|s| s.agent_id == actual_target.id && s.criterion_id == criterion.id);
+                if let Some(ref claude) = claude_client {
+                    // Real LLM debate
+                    let challenge_prompt = debate::generate_challenge_prompt(
+                        actual_challenger, actual_target,
+                        disagreement,
+                        challenger_just, target_just,
+                        criterion,
+                    );
 
-                if let Some(target_score) = target_score_entry {
-                    let challenger_score_val = current_scores.iter()
-                        .find(|s| s.agent_id == actual_challenger.id && s.criterion_id == criterion.id)
-                        .map(|s| s.score)
-                        .unwrap_or(target_score.score);
+                    match claude.generate_challenge(&challenge_prompt).await {
+                        Ok(challenge_result) => {
+                            let target_score_entry = current_scores.iter()
+                                .find(|s| s.agent_id == actual_target.id && s.criterion_id == criterion.id)
+                                .cloned();
 
-                    let old_score = target_score.score;
-                    let adjustment = (challenger_score_val - old_score) * 0.3;
-                    target_score.score = (old_score + adjustment).min(target_score.max_score).max(0.0);
-                    target_score.round = round_num;
-                    target_score.justification = format!("{} [Adjusted in R{} after challenge from {}]",
-                        target_score.justification, round_num, actual_challenger.name);
+                            if let Some(target_score) = target_score_entry {
+                                let response_prompt = debate::generate_response_prompt(
+                                    actual_target, actual_challenger,
+                                    &challenge_result.argument,
+                                    &target_score,
+                                    criterion,
+                                );
 
-                    let challenge = Challenge {
-                        challenger_id: actual_challenger.id.clone(),
-                        target_agent_id: actual_target.id.clone(),
-                        criterion_id: criterion.id.clone(),
-                        round: round_num,
-                        argument: format!("Score delta of {:.1} — challenging based on evidence assessment", disagreement.delta),
-                        response: Some(format!("Adjusted score from {:.1} to {:.1}", old_score, target_score.score)),
-                        score_change: Some((old_score, target_score.score)),
-                    };
-                    challenges.push(challenge);
+                                match claude.generate_response(&response_prompt).await {
+                                    Ok(response_result) => {
+                                        let old_score = target_score.score;
+                                        let new_score_val = if response_result.maintain_score {
+                                            old_score
+                                        } else {
+                                            response_result.new_score
+                                                .unwrap_or(old_score)
+                                                .min(target_score.max_score)
+                                                .max(0.0)
+                                        };
+
+                                        if let Some(s) = new_scores.iter_mut().find(|s|
+                                            s.agent_id == actual_target.id && s.criterion_id == criterion.id
+                                        ) {
+                                            s.score = new_score_val;
+                                            s.round = round_num;
+                                            s.justification = response_result.justification.clone();
+                                        }
+
+                                        let challenge = Challenge {
+                                            challenger_id: actual_challenger.id.clone(),
+                                            target_agent_id: actual_target.id.clone(),
+                                            criterion_id: criterion.id.clone(),
+                                            round: round_num,
+                                            argument: challenge_result.argument,
+                                            response: Some(response_result.response),
+                                            score_change: if (old_score - new_score_val).abs() > 0.01 {
+                                                Some((old_score, new_score_val))
+                                            } else {
+                                                None
+                                            },
+                                        };
+                                        challenges.push(challenge);
+
+                                        println!("     {} -> {} (LLM debate: {:.1} -> {:.1})",
+                                            actual_challenger.name, actual_target.name, old_score, new_score_val);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("     LLM response failed, using mechanical fallback: {}", e);
+                                        mechanical_converge(&mut new_scores, &current_scores, actual_challenger, actual_target, criterion, round_num, &mut challenges, disagreement);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("     LLM challenge failed, using mechanical fallback: {}", e);
+                            mechanical_converge(&mut new_scores, &current_scores, actual_challenger, actual_target, criterion, round_num, &mut challenges, disagreement);
+                        }
+                    }
+                } else {
+                    // Mechanical convergence fallback (no API key)
+                    mechanical_converge(&mut new_scores, &current_scores, actual_challenger, actual_target, criterion, round_num, &mut challenges, disagreement);
                 }
-
-                let _ = challenger_just;
-                let _ = target_just;
             }
         }
 
@@ -849,6 +902,44 @@ fn generate_demo_evidence_and_gaps(
     };
 
     (evidence, gaps)
+}
+
+/// Mechanical convergence fallback: move target score 30% toward challenger's score.
+fn mechanical_converge(
+    new_scores: &mut Vec<Score>,
+    current_scores: &[Score],
+    challenger: &EvaluatorAgent,
+    target: &EvaluatorAgent,
+    criterion: &EvaluationCriterion,
+    round_num: u32,
+    challenges: &mut Vec<Challenge>,
+    disagreement: &debate::Disagreement,
+) {
+    if let Some(target_score) = new_scores.iter_mut().find(|s|
+        s.agent_id == target.id && s.criterion_id == criterion.id
+    ) {
+        let challenger_score_val = current_scores.iter()
+            .find(|s| s.agent_id == challenger.id && s.criterion_id == criterion.id)
+            .map(|s| s.score)
+            .unwrap_or(target_score.score);
+
+        let old_score = target_score.score;
+        let adjustment = (challenger_score_val - old_score) * 0.3;
+        target_score.score = (old_score + adjustment).min(target_score.max_score).max(0.0);
+        target_score.round = round_num;
+        target_score.justification = format!("{} [Adjusted in R{} after challenge from {}]",
+            target_score.justification, round_num, challenger.name);
+
+        challenges.push(Challenge {
+            challenger_id: challenger.id.clone(),
+            target_agent_id: target.id.clone(),
+            criterion_id: criterion.id.clone(),
+            round: round_num,
+            argument: format!("Score delta of {:.1} — challenging based on evidence assessment", disagreement.delta),
+            response: Some(format!("Adjusted from {:.1} to {:.1}", old_score, target_score.score)),
+            score_change: Some((old_score, target_score.score)),
+        });
+    }
 }
 
 async fn run_serve(_host: String, _port: u16) -> anyhow::Result<()> {
