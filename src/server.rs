@@ -27,7 +27,7 @@ pub struct EvalIngestInput {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct EvalCriteriaInput {
-    /// Built-in framework name: "generic", "academic", or "tender".
+    /// Built-in framework name: "generic", "academic", "policy", "clinical", "legal", or auto-detected from intent.
     pub framework: Option<String>,
     /// Free-text intent to auto-select framework.
     pub intent: Option<String>,

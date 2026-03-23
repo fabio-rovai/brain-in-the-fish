@@ -84,11 +84,17 @@ The evaluation pipeline runs in 9 stages:
 ```bash
 cargo build
 
-# Evaluate a document
-brain-in-the-fish evaluate document.pdf --intent "mark this essay"
+# Evaluate an essay
+brain-in-the-fish evaluate essay.pdf --intent "mark this essay"
+
+# Evaluate a policy document
+brain-in-the-fish evaluate policy.pdf --intent "assess this policy against Green Book criteria"
+
+# Evaluate a contract
+brain-in-the-fish evaluate contract.pdf --intent "review this contract for compliance risks"
 
 # With custom criteria and output directory
-brain-in-the-fish evaluate proposal.pdf --intent "score this tender bid" --criteria rubric.yaml --output ./results
+brain-in-the-fish evaluate document.pdf --intent "evaluate this document" --criteria rubric.yaml --output ./results
 
 # Start the MCP server (stdio transport)
 brain-in-the-fish serve
@@ -101,10 +107,24 @@ The system does not know what it is evaluating until you tell it. The same engin
 | Use Case | Document Ontology | Criteria Ontology | Agent Panel |
 |----------|-------------------|-------------------|-------------|
 | Mark a student essay | Paragraphs, arguments, citations, thesis | Marking rubric, grade boundaries, learning outcomes | Subject expert, writing specialist, critical thinking assessor |
-| Score a tender bid | Sections, claims, evidence, case studies | ITT criteria, weights, pass/fail thresholds | Procurement lead, domain expert, social value champion, finance assessor |
-| Assess a policy | Objectives, measures, impact projections | Policy framework, impact criteria, stakeholder needs | Policy analyst, stakeholder representative, implementation expert |
-| Analyse survey results | Response themes, methodology, demographics | Research questions, validity criteria | Statistician, research designer, ethics reviewer |
+| Assess a policy document | Objectives, measures, impact projections | Green Book appraisal, impact criteria, stakeholder needs | Policy analyst, stakeholder representative, implementation expert |
 | Review a contract | Clauses, obligations, terms, definitions | Legal checklist, risk criteria, regulatory requirements | Legal reviewer, compliance officer, commercial analyst |
+| Analyse survey results | Response themes, methodology, demographics | Research questions, validity criteria | Statistician, research designer, ethics reviewer |
+| Score a tender bid | Sections, claims, evidence, case studies | ITT criteria, weights, pass/fail thresholds | Procurement lead, domain expert, social value champion, finance assessor |
+
+## Sectors
+
+Brain in the Fish evaluates documents across any domain. The engine adapts its criteria ontology, agent panel, and scoring rubrics to the sector automatically based on the evaluation intent.
+
+| Sector | Document Types | Frameworks & Standards |
+|--------|---------------|----------------------|
+| **Education** | Essays, coursework, dissertations, exam scripts | AQA, Ofsted, Bloom's Taxonomy, QAA |
+| **Healthcare** | Clinical governance reports, patient safety audits, care plans | CQC, NICE guidelines, NHS England |
+| **Government** | Policy documents, impact assessments, business cases | Green Book, Magenta Book, Civil Service competencies |
+| **Legal** | Contracts, compliance reports, terms and conditions | GDPR, Consumer Rights Act, regulatory checklists |
+| **Research** | Survey methodology, ethics applications, peer review | ESRC framework, research council criteria |
+| **Procurement** | Tender bids, proposals, ITT responses | PPN, Social Value Act, framework-specific criteria |
+| **Generic** | Any document against any criteria you define | Custom rubrics, weighted scoring, pass/fail thresholds |
 
 ## Architecture
 
@@ -134,7 +154,7 @@ The MCP server exposes 10 tools for orchestrating evaluations programmatically:
 |------|-------------|
 | `eval_status` | Server status, version, session state, triple count |
 | `eval_ingest` | Ingest a PDF and build the Document Ontology |
-| `eval_criteria` | Load an evaluation framework (generic, academic, tender) |
+| `eval_criteria` | Load an evaluation framework (generic, academic, policy, clinical, legal) |
 | `eval_align` | Run ontology alignment between document sections and criteria |
 | `eval_spawn` | Generate an evaluator agent panel from the intent |
 | `eval_score_prompt` | Generate a scoring prompt for a specific agent-criterion pair |

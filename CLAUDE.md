@@ -1,6 +1,6 @@
 # Brain in the Fish
 
-Universal document evaluation engine. Given any document and an evaluation intent, it spawns a panel of AI agents that independently score, debate, and reach consensus on quality — producing a structured evaluation report.
+Universal document evaluation engine. Evaluates any document — essays, policies, contracts, clinical reports, surveys, legislation, tender bids — against any criteria. Given a document and an evaluation intent, it spawns a panel of cognitively-modelled AI agents that independently score, debate, and reach consensus on quality, producing a structured evaluation report with full audit trail.
 
 ## Relationship to open-ontologies
 
