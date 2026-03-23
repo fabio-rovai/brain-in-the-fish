@@ -127,7 +127,7 @@ fn check_citations(doc: &EvalDocument) -> Vec<ValidationSignal> {
                      Academic and policy documents typically require sourced claims.",
                     section.title, section.word_count
                 ),
-                spike_effect: -0.2,
+                spike_effect: -0.05,
             });
         }
 
@@ -147,7 +147,7 @@ fn check_citations(doc: &EvalDocument) -> Vec<ValidationSignal> {
                          Consider whether more recent evidence is available.",
                         author, year, age
                     ),
-                    spike_effect: -0.1,
+                    spike_effect: -0.05,
                 });
             } else if age <= 3 {
                 signals.push(ValidationSignal {
@@ -247,7 +247,7 @@ fn check_word_count(
                  Short documents may lack sufficient depth.",
                 doc_type_label, total, doc_type_label, min_words, max_words
             ),
-            spike_effect: -0.15,
+            spike_effect: -0.05,
         });
     }
 
@@ -331,7 +331,7 @@ fn check_number_consistency(doc: &EvalDocument) -> Vec<ValidationSignal> {
                             all_numbers[i], contexts_a[0].1,
                             all_numbers[j], contexts_b[0].1,
                         ),
-                        spike_effect: -0.15,
+                        spike_effect: -0.05,
                     });
                 }
             }
@@ -483,7 +483,7 @@ fn check_structure_compliance(
                 criterion_id: None,
                 title: format!("Missing expected section: '{}'", keyword),
                 description: explanation.to_string(),
-                spike_effect: -0.1,
+                spike_effect: -0.05,
             });
         }
     }
@@ -687,7 +687,7 @@ fn check_duplicate_content(doc: &EvalDocument) -> Vec<ValidationSignal> {
                              Repeated content does not add to the evaluation.",
                             section.title
                         ),
-                        spike_effect: -0.2,
+                        spike_effect: -0.05,
                     });
                 }
             } else {
@@ -732,7 +732,7 @@ fn check_evidence_quality(doc: &EvalDocument) -> Vec<ValidationSignal> {
                      Aim for at least 1 evidence item per claim.",
                     total_claims, total_evidence
                 ),
-                spike_effect: -0.15,
+                spike_effect: -0.05,
             });
         } else if ratio >= 1.0 {
             signals.push(ValidationSignal {
@@ -1334,7 +1334,7 @@ fn check_referencing_consistency(doc: &EvalDocument) -> Vec<ValidationSignal> {
                 "Multiple citation styles found: {}. Use one style consistently.",
                 style_list.join("; ")
             ),
-            spike_effect: -0.15,
+            spike_effect: -0.05,
         });
     } else if styles_used.len() == 1 && styles_used[0].1 >= 3 {
         signals.push(ValidationSignal {

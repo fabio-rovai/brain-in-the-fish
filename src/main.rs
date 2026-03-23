@@ -464,7 +464,7 @@ async fn run_evaluate(
                             &snn_config,
                         );
                         if signal.spike_effect < 0.0 {
-                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.5);
+                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.2); // gentler inhibition
                         }
                     }
                 }
@@ -1034,7 +1034,7 @@ fn run_benchmark(
                                             &snn_config,
                                         );
                                         if signal.spike_effect < 0.0 {
-                                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.5);
+                                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.2); // gentler inhibition
                                         }
                                     }
                                 }
