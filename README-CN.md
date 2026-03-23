@@ -5,7 +5,9 @@
 <h1 align="center">Brain in the Fish</h1>
 
 <p align="center">
-  <strong>通用文档评估与预测可信度 MCP 服务器——SNN 反幻觉验证 + OWL 本体骨架 + 贝叶斯校准。MiroFish 缺失的大脑。</strong>
+  <strong>评估一切。预测万物。零幻觉。</strong>
+  <br>
+  <em>MiroFish 缺失的大脑——SNN 验证的评估与预测可信度，适用于任何文档、任何领域、任何语言。</em>
 </p>
 
 <p align="center">

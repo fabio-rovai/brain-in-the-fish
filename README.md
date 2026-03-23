@@ -5,7 +5,9 @@
 <h1 align="center">Brain in the Fish</h1>
 
 <p align="center">
-  <strong>Universal document evaluation & prediction credibility MCP server — SNN anti-hallucination verification + OWL ontology backbone + Bayesian calibration. The brain that MiroFish was missing.</strong>
+  <strong>Evaluate anything. Predict everything. Hallucinate nothing.</strong>
+  <br>
+  <em>The brain that MiroFish was missing — SNN-verified evaluation & prediction credibility for any document, any domain, any language.</em>
 </p>
 
 <p align="center">
