@@ -1,9 +1,9 @@
 //! Integration test: ontology generation and SPARQL querying.
 
-use brain_in_the_fish::agent;
-use brain_in_the_fish::criteria;
-use brain_in_the_fish::ingest;
-use brain_in_the_fish::types::*;
+use brain_in_the_fish_core::agent;
+use brain_in_the_fish_core::criteria;
+use brain_in_the_fish_core::ingest;
+use brain_in_the_fish_core::types::*;
 use open_ontologies::graph::GraphStore;
 
 #[test]

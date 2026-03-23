@@ -1,7 +1,7 @@
 //! Integration test: debate flow with disagreements and convergence.
 
-use brain_in_the_fish::debate;
-use brain_in_the_fish::types::*;
+use brain_in_the_fish_core::debate;
+use brain_in_the_fish_core::types::*;
 
 #[test]
 fn test_debate_convergence_flow() {
@@ -158,7 +158,7 @@ fn test_trust_evolution_across_rounds() {
 
 #[test]
 fn test_multi_round_debate_with_challenges_and_moderation() {
-    use brain_in_the_fish::moderation;
+    use brain_in_the_fish_core::moderation;
 
     // Set up agents with mutual trust
     let agents = vec![

@@ -1,13 +1,13 @@
 //! Integration test: full evaluation pipeline from document to report.
 
-use brain_in_the_fish::agent;
-use brain_in_the_fish::criteria;
-use brain_in_the_fish::debate;
-use brain_in_the_fish::ingest;
-use brain_in_the_fish::moderation;
-use brain_in_the_fish::report;
-use brain_in_the_fish::scoring;
-use brain_in_the_fish::types::*;
+use brain_in_the_fish_core::agent;
+use brain_in_the_fish_core::criteria;
+use brain_in_the_fish_core::debate;
+use brain_in_the_fish_core::ingest;
+use brain_in_the_fish_core::moderation;
+use brain_in_the_fish_core::report;
+use brain_in_the_fish_core::scoring;
+use brain_in_the_fish_core::types::*;
 use open_ontologies::graph::GraphStore;
 
 #[test]

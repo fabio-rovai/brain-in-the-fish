@@ -1,0 +1,19 @@
+[package]
+name = "brain-in-the-fish-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Universal document evaluation engine — MCP server binary"
+
+[[bin]]
+name = "brain-in-the-fish-mcp"
+path = "src/main.rs"
+
+[dependencies]
+brain-in-the-fish-core = { path = "../core" }
+rmcp = { version = "1", features = ["server", "transport-io", "transport-streamable-http-server"] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

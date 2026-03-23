@@ -5,18 +5,18 @@ use clap::{Parser, Subcommand};
 
 use rmcp::ServiceExt;
 
-use brain_in_the_fish::*;
-use brain_in_the_fish::types::*;
-use brain_in_the_fish::alignment;
-use brain_in_the_fish::snn;
-use brain_in_the_fish::memory;
-use brain_in_the_fish::semantic;
-use brain_in_the_fish::validate;
-use brain_in_the_fish::belief_dynamics;
-use brain_in_the_fish::epistemology;
-use brain_in_the_fish::philosophy;
-use brain_in_the_fish::predict;
-use brain_in_the_fish::benchmark;
+use brain_in_the_fish_core::*;
+use brain_in_the_fish_core::types::*;
+use brain_in_the_fish_core::alignment;
+use brain_in_the_fish_core::snn;
+use brain_in_the_fish_core::memory;
+use brain_in_the_fish_core::semantic;
+use brain_in_the_fish_core::validate;
+use brain_in_the_fish_core::belief_dynamics;
+use brain_in_the_fish_core::epistemology;
+use brain_in_the_fish_core::philosophy;
+use brain_in_the_fish_core::predict;
+use brain_in_the_fish_core::benchmark;
 
 #[derive(Parser)]
 #[command(name = "brain-in-the-fish", version, about = "Universal document evaluation engine")]
@@ -1155,7 +1155,7 @@ fn run_benchmark(
 
 async fn run_serve(_host: String, _port: u16) -> anyhow::Result<()> {
     eprintln!("Brain in the Fish MCP server starting (stdio transport)...");
-    let server = server::EvalServer::new();
+    let server = brain_in_the_fish_core::server::EvalServer::new();
     let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     Ok(())
