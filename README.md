@@ -407,6 +407,14 @@ cargo test
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+## Acknowledgments
+
+- [MiroFish](https://github.com/666ghj/MiroFish) — the multi-agent swarm prediction engine that inspired this project's agent debate architecture
+- [AgentSociety](https://github.com/tsinghua-fib-lab/AgentSociety) — Tsinghua's cognitive agent simulation that inspired the Maslow + Theory of Planned Behaviour model
+- [open-ontologies](https://github.com/fabio-rovai/open-ontologies) — the OWL ontology engine that provides the knowledge graph backbone
+- [epistemic-deconstructor](https://github.com/NikolasMarkou/epistemic-deconstructor) — Nikolas Markou's Bayesian hypothesis tracking and falsification-first epistemology, which inspired the calibrated confidence scoring with LR caps and falsification checks
+- [ARIA Safeguarded AI](https://www.aria.org.uk/programme-safeguarded-ai/) — the £59M programme whose gatekeeper architecture (world model + deterministic verifier + proof certificate) validated the SNN + ontology verification approach
+
 ## License
 
 MIT

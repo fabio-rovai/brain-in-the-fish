@@ -341,6 +341,14 @@ cargo test
 
 请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解贡献指南。
 
+## 致谢
+
+- [MiroFish](https://github.com/666ghj/MiroFish) — 多智能体群体预测引擎，启发了本项目的智能体辩论架构
+- [AgentSociety](https://github.com/tsinghua-fib-lab/AgentSociety) — 清华大学认知智能体仿真，启发了马斯洛 + 计划行为理论模型
+- [open-ontologies](https://github.com/fabio-rovai/open-ontologies) — 提供知识图谱骨架的 OWL 本体引擎
+- [epistemic-deconstructor](https://github.com/NikolasMarkou/epistemic-deconstructor) — Nikolas Markou 的贝叶斯假设追踪与证伪优先认识论，启发了校准置信度评分与似然比上限
+- [ARIA Safeguarded AI](https://www.aria.org.uk/programme-safeguarded-ai/) — 5900万英镑的守门人架构（世界模型 + 确定性验证器 + 证明证书），验证了 SNN + 本体验证方法
+
 ## 许可证
 
 MIT
