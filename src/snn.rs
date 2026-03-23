@@ -78,6 +78,8 @@ pub struct Neuron {
 pub struct AgentNetwork {
     pub agent_id: String,
     pub agent_name: String,
+    pub agent_role: String,
+    pub agent_domain: String,
     pub neurons: Vec<Neuron>,
 }
 
@@ -362,6 +364,8 @@ impl AgentNetwork {
         Self {
             agent_id: agent.id.clone(),
             agent_name: agent.name.clone(),
+            agent_role: agent.role.clone(),
+            agent_domain: agent.domain.clone(),
             neurons,
         }
     }
@@ -391,16 +395,24 @@ impl AgentNetwork {
                     if let Some(section) = find_section(&doc.sections, &alignment.section_id) {
                         // Generate spikes from claims
                         for claim in &section.claims {
-                            let strength = claim.specificity * alignment.confidence;
+                            let spike_type = if claim.verifiable {
+                                SpikeType::Evidence
+                            } else {
+                                SpikeType::Claim
+                            };
+                            let multiplier = role_spike_multiplier(
+                                &self.agent_role,
+                                &self.agent_domain,
+                                &spike_type,
+                                &section.title,
+                            );
+                            let strength =
+                                (claim.specificity * alignment.confidence * multiplier).min(1.0);
                             neuron.receive_spike(
                                 Spike {
                                     source_id: claim.id.clone(),
                                     strength,
-                                    spike_type: if claim.verifiable {
-                                        SpikeType::Evidence
-                                    } else {
-                                        SpikeType::Claim
-                                    },
+                                    spike_type,
                                     timestep,
                                 },
                                 config,
@@ -415,18 +427,26 @@ impl AgentNetwork {
                             } else {
                                 0.0
                             };
-                            let strength = (base_strength + quant_bonus).min(1.0);
+                            let spike_type = if ev.has_quantified_outcome {
+                                SpikeType::QuantifiedData
+                            } else if ev.evidence_type == "citation" {
+                                SpikeType::Citation
+                            } else {
+                                SpikeType::Evidence
+                            };
+                            let multiplier = role_spike_multiplier(
+                                &self.agent_role,
+                                &self.agent_domain,
+                                &spike_type,
+                                &section.title,
+                            );
+                            let strength =
+                                ((base_strength + quant_bonus) * multiplier).min(1.0);
                             neuron.receive_spike(
                                 Spike {
                                     source_id: ev.id.clone(),
                                     strength,
-                                    spike_type: if ev.has_quantified_outcome {
-                                        SpikeType::QuantifiedData
-                                    } else if ev.evidence_type == "citation" {
-                                        SpikeType::Citation
-                                    } else {
-                                        SpikeType::Evidence
-                                    },
+                                    spike_type,
                                     timestep,
                                 },
                                 config,
@@ -435,10 +455,18 @@ impl AgentNetwork {
 
                         // Generate alignment spike (the section itself addresses the criterion)
                         if alignment.confidence > 0.3 {
+                            let multiplier = role_spike_multiplier(
+                                &self.agent_role,
+                                &self.agent_domain,
+                                &SpikeType::Alignment,
+                                &section.title,
+                            );
+                            let strength =
+                                (alignment.confidence * 0.5 * multiplier).min(1.0);
                             neuron.receive_spike(
                                 Spike {
                                     source_id: section.id.clone(),
-                                    strength: alignment.confidence * 0.5,
+                                    strength,
                                     spike_type: SpikeType::Alignment,
                                     timestep,
                                 },
@@ -454,6 +482,8 @@ impl AgentNetwork {
                                 alignment.confidence,
                                 timestep,
                                 config,
+                                &self.agent_role,
+                                &self.agent_domain,
                             );
                         }
                     }
@@ -496,6 +526,133 @@ impl AgentNetwork {
     }
 }
 
+/// Get a spike weight multiplier based on agent role and evidence type.
+/// Different agent roles prioritize different types of evidence, producing
+/// differentiated SNN scores across the panel.
+fn role_spike_multiplier(
+    agent_role: &str,
+    _agent_domain: &str,
+    spike_type: &SpikeType,
+    section_title: &str,
+) -> f64 {
+    let role_lower = agent_role.to_lowercase();
+    let title_lower = section_title.to_lowercase();
+
+    // Subject Expert / Domain Expert: boost knowledge-related evidence
+    if role_lower.contains("subject")
+        || role_lower.contains("domain")
+        || role_lower.contains("expert")
+    {
+        return match spike_type {
+            SpikeType::QuantifiedData => 1.4,
+            SpikeType::Evidence => 1.3,
+            SpikeType::Citation => 1.2,
+            SpikeType::Claim => 0.8,
+            SpikeType::Alignment => 1.0,
+        };
+    }
+
+    // Writing Specialist / Communication: boost structure and transitions
+    if role_lower.contains("writing")
+        || role_lower.contains("communication")
+        || role_lower.contains("language")
+    {
+        let structure_bonus = if title_lower.contains("intro")
+            || title_lower.contains("conclu")
+            || title_lower.contains("structure")
+            || title_lower.contains("communicat")
+        {
+            1.3
+        } else {
+            1.0
+        };
+        return match spike_type {
+            SpikeType::Alignment => 1.4 * structure_bonus,
+            SpikeType::Claim => 1.2,
+            SpikeType::Citation => 0.9,
+            SpikeType::QuantifiedData => 0.8,
+            SpikeType::Evidence => 1.0,
+        };
+    }
+
+    // Critical Thinking / Analytical: boost analysis evidence
+    if role_lower.contains("critical")
+        || role_lower.contains("analy")
+        || role_lower.contains("thinking")
+    {
+        return match spike_type {
+            SpikeType::Claim => 1.4,
+            SpikeType::Evidence => 1.3,
+            SpikeType::QuantifiedData => 1.2,
+            SpikeType::Citation => 1.0,
+            SpikeType::Alignment => 0.9,
+        };
+    }
+
+    // Policy Analyst: values evidence base and stakeholder representation
+    if role_lower.contains("policy") || role_lower.contains("analyst") {
+        return match spike_type {
+            SpikeType::QuantifiedData => 1.4,
+            SpikeType::Evidence => 1.3,
+            SpikeType::Citation => 1.1,
+            SpikeType::Claim => 0.9,
+            SpikeType::Alignment => 1.0,
+        };
+    }
+
+    // Stakeholder / Patient / Community Representative: values breadth
+    if role_lower.contains("stakeholder")
+        || role_lower.contains("patient")
+        || role_lower.contains("community")
+        || role_lower.contains("representative")
+    {
+        return match spike_type {
+            SpikeType::Claim => 1.3,
+            SpikeType::Evidence => 1.1,
+            SpikeType::Alignment => 1.3,
+            SpikeType::QuantifiedData => 0.9,
+            SpikeType::Citation => 0.8,
+        };
+    }
+
+    // Finance / Commercial: values quantified data
+    if role_lower.contains("finance")
+        || role_lower.contains("commercial")
+        || role_lower.contains("value")
+    {
+        return match spike_type {
+            SpikeType::QuantifiedData => 1.5,
+            SpikeType::Evidence => 1.1,
+            SpikeType::Claim => 0.7,
+            SpikeType::Citation => 0.9,
+            SpikeType::Alignment => 1.0,
+        };
+    }
+
+    // Compliance / Legal / Governance: values structure and alignment
+    if role_lower.contains("compliance")
+        || role_lower.contains("legal")
+        || role_lower.contains("governance")
+        || role_lower.contains("procurement")
+    {
+        return match spike_type {
+            SpikeType::Alignment => 1.5,
+            SpikeType::Evidence => 1.2,
+            SpikeType::QuantifiedData => 1.1,
+            SpikeType::Claim => 0.8,
+            SpikeType::Citation => 1.0,
+        };
+    }
+
+    // Moderator: balanced across all types
+    if role_lower.contains("moderator") || role_lower.contains("panel") {
+        return 1.0;
+    }
+
+    // Default: no multiplier
+    1.0
+}
+
 /// Feed spikes from a subsection.
 fn feed_subsection_spikes(
     neuron: &mut Neuron,
@@ -503,42 +660,59 @@ fn feed_subsection_spikes(
     parent_confidence: f64,
     timestep: u32,
     config: &SNNConfig,
+    agent_role: &str,
+    agent_domain: &str,
 ) {
     let confidence = parent_confidence * 0.8; // Subsections inherit parent confidence with decay
     for claim in &section.claims {
-        let strength = claim.specificity * confidence;
+        let spike_type = if claim.verifiable {
+            SpikeType::Evidence
+        } else {
+            SpikeType::Claim
+        };
+        let multiplier =
+            role_spike_multiplier(agent_role, agent_domain, &spike_type, &section.title);
+        let strength = (claim.specificity * confidence * multiplier).min(1.0);
         neuron.receive_spike(
             Spike {
                 source_id: claim.id.clone(),
                 strength,
-                spike_type: if claim.verifiable {
-                    SpikeType::Evidence
-                } else {
-                    SpikeType::Claim
-                },
+                spike_type,
                 timestep,
             },
             config,
         );
     }
     for ev in &section.evidence {
-        let strength = (confidence + if ev.has_quantified_outcome { 0.2 } else { 0.0 }).min(1.0);
+        let spike_type = if ev.has_quantified_outcome {
+            SpikeType::QuantifiedData
+        } else {
+            SpikeType::Evidence
+        };
+        let multiplier =
+            role_spike_multiplier(agent_role, agent_domain, &spike_type, &section.title);
+        let base = confidence + if ev.has_quantified_outcome { 0.2 } else { 0.0 };
+        let strength = (base * multiplier).min(1.0);
         neuron.receive_spike(
             Spike {
                 source_id: ev.id.clone(),
                 strength,
-                spike_type: if ev.has_quantified_outcome {
-                    SpikeType::QuantifiedData
-                } else {
-                    SpikeType::Evidence
-                },
+                spike_type,
                 timestep,
             },
             config,
         );
     }
     for sub in &section.subsections {
-        feed_subsection_spikes(neuron, sub, confidence, timestep, config);
+        feed_subsection_spikes(
+            neuron,
+            sub,
+            confidence,
+            timestep,
+            config,
+            agent_role,
+            agent_domain,
+        );
     }
 }
 
@@ -1021,6 +1195,198 @@ mod tests {
             width >= 3.0,
             "Few spikes should produce wide CI: width={:.1}",
             width
+        );
+    }
+
+    #[test]
+    fn test_role_spike_multiplier_expert() {
+        // Subject Expert should boost QuantifiedData and reduce Claim
+        let m = role_spike_multiplier("Subject Expert", "Test", &SpikeType::QuantifiedData, "sec");
+        assert!((m - 1.4).abs() < 0.01);
+        let m = role_spike_multiplier("Subject Expert", "Test", &SpikeType::Claim, "sec");
+        assert!((m - 0.8).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_role_spike_multiplier_writing() {
+        // Writing Specialist should boost Alignment
+        let m = role_spike_multiplier("Writing Specialist", "Test", &SpikeType::Alignment, "sec");
+        assert!((m - 1.4).abs() < 0.01);
+        // With structure section title, bonus applies
+        let m = role_spike_multiplier(
+            "Writing Specialist",
+            "Test",
+            &SpikeType::Alignment,
+            "Introduction",
+        );
+        assert!((m - 1.4 * 1.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_role_spike_multiplier_default() {
+        // Unknown role returns 1.0
+        let m = role_spike_multiplier("Unknown Role", "Test", &SpikeType::Evidence, "sec");
+        assert!((m - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_role_specific_scoring() {
+        // Two agents with different roles should produce different SNN scores
+        // on the same document because they weight evidence types differently.
+        let expert = EvaluatorAgent {
+            role: "Subject Expert".into(),
+            ..test_agent()
+        };
+        let writer = EvaluatorAgent {
+            role: "Academic Writing Specialist".into(),
+            ..test_agent()
+        };
+
+        let criteria = vec![test_criterion()];
+        let mut net_expert = AgentNetwork::new(&expert, &criteria);
+        let mut net_writer = AgentNetwork::new(&writer, &criteria);
+
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(200),
+            sections: vec![Section {
+                id: "s1".into(),
+                title: "Test Section".into(),
+                text: "Content with claims and data".into(),
+                word_count: 50,
+                page_range: None,
+                claims: vec![
+                    Claim {
+                        id: "cl1".into(),
+                        text: "A verifiable claim".into(),
+                        specificity: 0.9,
+                        verifiable: true,
+                    },
+                    Claim {
+                        id: "cl2".into(),
+                        text: "An unverifiable claim".into(),
+                        specificity: 0.7,
+                        verifiable: false,
+                    },
+                ],
+                evidence: vec![
+                    Evidence {
+                        id: "ev1".into(),
+                        source: "Source A".into(),
+                        evidence_type: "statistical".into(),
+                        text: "87% improvement".into(),
+                        has_quantified_outcome: true,
+                    },
+                    Evidence {
+                        id: "ev2".into(),
+                        source: "Source B".into(),
+                        evidence_type: "citation".into(),
+                        text: "Smith et al (2024)".into(),
+                        has_quantified_outcome: false,
+                    },
+                ],
+                subsections: vec![],
+            }],
+        };
+
+        let alignments = vec![AlignmentMapping {
+            section_id: "s1".into(),
+            criterion_id: "c1".into(),
+            confidence: 0.9,
+        }];
+
+        let config = SNNConfig::default();
+
+        net_expert.feed_evidence(&doc, &alignments, &config);
+        net_writer.feed_evidence(&doc, &alignments, &config);
+
+        let expert_scores = net_expert.compute_scores(&criteria, &config);
+        let writer_scores = net_writer.compute_scores(&criteria, &config);
+
+        assert_eq!(expert_scores.len(), 1);
+        assert_eq!(writer_scores.len(), 1);
+
+        let expert_snn = expert_scores[0].1.snn_score;
+        let writer_snn = writer_scores[0].1.snn_score;
+
+        assert_ne!(
+            expert_snn, writer_snn,
+            "Different roles should produce different SNN scores: expert={}, writer={}",
+            expert_snn, writer_snn
+        );
+
+        // Both should still be grounded
+        assert!(expert_scores[0].1.grounded);
+        assert!(writer_scores[0].1.grounded);
+    }
+
+    #[test]
+    fn test_role_specific_scoring_finance_vs_compliance() {
+        // Finance agent should score higher on quantified-data-heavy documents
+        // Compliance agent should score higher on alignment-heavy documents
+        let finance = EvaluatorAgent {
+            role: "Finance Specialist".into(),
+            ..test_agent()
+        };
+        let compliance = EvaluatorAgent {
+            role: "Compliance Officer".into(),
+            ..test_agent()
+        };
+
+        let criteria = vec![test_criterion()];
+        let mut net_finance = AgentNetwork::new(&finance, &criteria);
+        let mut net_compliance = AgentNetwork::new(&compliance, &criteria);
+
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "report".into(),
+            total_pages: None,
+            total_word_count: Some(100),
+            sections: vec![Section {
+                id: "s1".into(),
+                title: "Financial Analysis".into(),
+                text: "Numbers and data".into(),
+                word_count: 50,
+                page_range: None,
+                claims: vec![Claim {
+                    id: "cl1".into(),
+                    text: "Revenue increased".into(),
+                    specificity: 0.6,
+                    verifiable: false,
+                }],
+                evidence: vec![Evidence {
+                    id: "ev1".into(),
+                    source: "Accounts".into(),
+                    evidence_type: "statistical".into(),
+                    text: "Revenue +23%".into(),
+                    has_quantified_outcome: true,
+                }],
+                subsections: vec![],
+            }],
+        };
+
+        let alignments = vec![AlignmentMapping {
+            section_id: "s1".into(),
+            criterion_id: "c1".into(),
+            confidence: 0.9,
+        }];
+
+        let config = SNNConfig::default();
+
+        net_finance.feed_evidence(&doc, &alignments, &config);
+        net_compliance.feed_evidence(&doc, &alignments, &config);
+
+        let finance_scores = net_finance.compute_scores(&criteria, &config);
+        let compliance_scores = net_compliance.compute_scores(&criteria, &config);
+
+        assert_ne!(
+            finance_scores[0].1.snn_score,
+            compliance_scores[0].1.snn_score,
+            "Finance and compliance roles should produce different scores"
         );
     }
 }
