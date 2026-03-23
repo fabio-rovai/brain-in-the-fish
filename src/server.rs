@@ -84,6 +84,14 @@ pub struct EvalChallengePromptInput {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EvalWhatIfInput {
+    /// The section ID to modify.
+    pub section_id: String,
+    /// The new text content for the section.
+    pub new_text: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct EvalScoringTasksInput {
     /// Optional: restrict to a specific agent index.
     pub agent_index: Option<usize>,
@@ -666,6 +674,87 @@ impl EvalServer {
         .to_string()
     }
 
+    // ── What-If ─────────────────────────────────────────────────────────────
+
+    #[tool(name = "eval_whatif", description = "Simulate a text change and estimate how it would affect scores. Uses LLM re-scoring when ANTHROPIC_API_KEY is set, otherwise falls back to text-metric heuristics.")]
+    async fn eval_whatif(&self, Parameters(input): Parameters<EvalWhatIfInput>) -> String {
+        let (doc, framework, agents, alignments, current_round) = {
+            let session = self.session.lock().unwrap();
+
+            let doc = match &session.document {
+                Some(d) => d.clone(),
+                None => return r#"{"error":"No document ingested. Call eval_ingest first."}"#.to_string(),
+            };
+            let framework = match &session.framework {
+                Some(f) => f.clone(),
+                None => return r#"{"error":"No framework loaded. Call eval_criteria first."}"#.to_string(),
+            };
+            let agents = session.agents.clone();
+            let alignments = session.alignments.clone();
+            let current_round = session.current_round;
+            (doc, framework, agents, alignments, current_round)
+        };
+
+        // Build a lightweight EvaluationSession for the scoring functions
+        let latest_scores = crate::scoring::get_scores_for_round(&self.graph, current_round)
+            .unwrap_or_default();
+
+        let moderated = if !latest_scores.is_empty() && !agents.is_empty() {
+            crate::moderation::calculate_moderated_scores(&latest_scores, &agents)
+        } else {
+            Vec::new()
+        };
+
+        let eval_session = EvaluationSession {
+            id: uuid::Uuid::new_v4().to_string(),
+            document: doc,
+            framework,
+            agents,
+            alignments: alignments.clone(),
+            gaps: Vec::new(),
+            rounds: Vec::new(),
+            final_scores: moderated,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+
+        // Try LLM re-scoring, fall back to heuristic
+        let results = if crate::llm::ClaudeClient::available() && !eval_session.agents.is_empty() {
+            match crate::scoring::what_if_rescore_llm(
+                &eval_session,
+                &input.section_id,
+                &input.new_text,
+                &alignments,
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => crate::scoring::what_if_rescore(
+                    &eval_session,
+                    &input.section_id,
+                    &input.new_text,
+                    &alignments,
+                ),
+            }
+        } else {
+            crate::scoring::what_if_rescore(
+                &eval_session,
+                &input.section_id,
+                &input.new_text,
+                &alignments,
+            )
+        };
+
+        let used_llm = crate::llm::ClaudeClient::available() && !eval_session.agents.is_empty();
+
+        serde_json::json!({
+            "ok": true,
+            "section_id": input.section_id,
+            "method": if used_llm { "llm" } else { "heuristic" },
+            "results": results,
+        })
+        .to_string()
+    }
+
     // ── Report ──────────────────────────────────────────────────────────────
 
     #[tool(name = "eval_report", description = "Generate the full evaluation report. Runs moderation, calculates overall score, and returns Markdown.")]
@@ -765,13 +854,14 @@ mod tests {
         let _schema = schemars::schema_for!(EvalRecordScoreInput);
         let _schema = schemars::schema_for!(EvalChallengePromptInput);
         let _schema = schemars::schema_for!(EvalScoringTasksInput);
+        let _schema = schemars::schema_for!(EvalWhatIfInput);
     }
 
     #[test]
     fn test_server_construction() {
         let server = EvalServer::new();
         let tools = server.list_tool_definitions();
-        assert!(tools.len() >= 8, "Should have at least 8 tools, got {}", tools.len());
+        assert!(tools.len() >= 9, "Should have at least 9 tools, got {}", tools.len());
     }
 
     #[test]
@@ -809,6 +899,7 @@ mod tests {
         assert!(names.contains(&"eval_debate_status".to_string()));
         assert!(names.contains(&"eval_challenge_prompt".to_string()));
         assert!(names.contains(&"eval_scoring_tasks".to_string()));
+        assert!(names.contains(&"eval_whatif".to_string()));
         assert!(names.contains(&"eval_report".to_string()));
     }
 }

@@ -590,6 +590,107 @@ impl TextMetrics {
     }
 }
 
+/// Re-score affected criteria using Claude API after a text change.
+/// Falls back to heuristic what_if_rescore if API unavailable.
+pub async fn what_if_rescore_llm(
+    session: &EvaluationSession,
+    section_id: &str,
+    new_text: &str,
+    alignments: &[AlignmentMapping],
+) -> anyhow::Result<Vec<WhatIfResult>> {
+    let claude = crate::llm::ClaudeClient::from_env()?;
+
+    // Find which criteria this section maps to
+    let affected_criteria: Vec<&EvaluationCriterion> = alignments
+        .iter()
+        .filter(|a| a.section_id == section_id)
+        .filter_map(|a| {
+            session
+                .framework
+                .criteria
+                .iter()
+                .find(|c| c.id == a.criterion_id)
+        })
+        .collect();
+
+    if affected_criteria.is_empty() {
+        return Ok(vec![WhatIfResult {
+            criterion_id: String::new(),
+            criterion_title: "No affected criteria".into(),
+            current_score: 0.0,
+            estimated_new_score: 0.0,
+            delta: 0.0,
+            reasoning: "This section is not aligned to any evaluation criterion.".into(),
+        }]);
+    }
+
+    let mut results = Vec::new();
+
+    for criterion in &affected_criteria {
+        // Find current score for this criterion
+        let current = session
+            .final_scores
+            .iter()
+            .find(|ms| ms.criterion_id == criterion.id)
+            .map(|ms| ms.consensus_score)
+            .unwrap_or(0.0);
+
+        // Create a scoring prompt with the NEW text
+        let section_match = SectionMatch {
+            section_iri: section_id.to_string(),
+            title: "Modified section".into(),
+            text: new_text.to_string(),
+            word_count: new_text.split_whitespace().count() as u32,
+        };
+
+        // Use the first agent's persona for re-scoring
+        let agent = session
+            .agents
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("No agents in session"))?;
+
+        let prompt = generate_scoring_prompt(agent, criterion, &[section_match], 1);
+
+        match claude.score_as_agent(&prompt).await {
+            Ok(scoring_result) => {
+                let new_score = scoring_result.score.min(criterion.max_score).max(0.0);
+                results.push(WhatIfResult {
+                    criterion_id: criterion.id.clone(),
+                    criterion_title: criterion.title.clone(),
+                    current_score: current,
+                    estimated_new_score: new_score,
+                    delta: new_score - current,
+                    reasoning: scoring_result.justification,
+                });
+            }
+            Err(e) => {
+                // Fall back to heuristic
+                let heuristic = what_if_rescore(session, section_id, new_text, alignments);
+                if let Some(hr) = heuristic
+                    .into_iter()
+                    .find(|r| r.criterion_id == criterion.id)
+                {
+                    results.push(hr);
+                } else {
+                    results.push(WhatIfResult {
+                        criterion_id: criterion.id.clone(),
+                        criterion_title: criterion.title.clone(),
+                        current_score: current,
+                        estimated_new_score: current,
+                        delta: 0.0,
+                        reasoning: format!(
+                            "LLM re-scoring failed: {}. No estimate available.",
+                            e
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
 fn format_rubric(levels: &[RubricLevel]) -> String {
     levels
         .iter()
@@ -1073,6 +1174,86 @@ mod tests {
 
         let results = what_if_rescore(&session, "sec-1", "new text", &[]);
         assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_what_if_rescore_llm_falls_back_without_api_key() {
+        // Ensure ANTHROPIC_API_KEY is not set for this test
+        // SAFETY: test is single-threaded; no other thread reads this env var concurrently.
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
+
+        let session = EvaluationSession {
+            id: "sess-llm".into(),
+            document: EvalDocument {
+                id: "doc-1".into(),
+                title: "Test".into(),
+                doc_type: "essay".into(),
+                total_pages: None,
+                total_word_count: None,
+                sections: vec![Section {
+                    id: "sec-1".into(),
+                    title: "Intro".into(),
+                    text: "Short text.".into(),
+                    word_count: 2,
+                    page_range: None,
+                    claims: vec![],
+                    evidence: vec![],
+                    subsections: vec![],
+                }],
+            },
+            framework: EvaluationFramework {
+                id: "fw-1".into(),
+                name: "Test FW".into(),
+                total_weight: 1.0,
+                pass_mark: None,
+                criteria: vec![EvaluationCriterion {
+                    id: "crit-1".into(),
+                    title: "Quality".into(),
+                    description: None,
+                    max_score: 10.0,
+                    weight: 1.0,
+                    rubric_levels: vec![],
+                    sub_criteria: vec![],
+                }],
+            },
+            agents: vec![make_test_agent()],
+            alignments: vec![],
+            gaps: vec![],
+            rounds: vec![],
+            final_scores: vec![ModeratedScore {
+                criterion_id: "crit-1".into(),
+                consensus_score: 5.0,
+                panel_mean: 5.0,
+                panel_std_dev: 0.5,
+                dissents: vec![],
+            }],
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+
+        let alignments = vec![AlignmentMapping {
+            section_id: "sec-1".into(),
+            criterion_id: "crit-1".into(),
+            confidence: 0.9,
+        }];
+
+        // Without API key, what_if_rescore_llm should return an error
+        let result = what_if_rescore_llm(&session, "sec-1", "better text with evidence data", &alignments).await;
+        assert!(result.is_err(), "Should error when ANTHROPIC_API_KEY is not set");
+    }
+
+    #[test]
+    fn test_what_if_result_serializes_to_json() {
+        let result = WhatIfResult {
+            criterion_id: "crit-1".into(),
+            criterion_title: "Quality".into(),
+            current_score: 5.0,
+            estimated_new_score: 7.0,
+            delta: 2.0,
+            reasoning: "Improved evidence density.".into(),
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["criterion_id"], "crit-1");
+        assert_eq!(json["delta"], 2.0);
     }
 
     #[test]
