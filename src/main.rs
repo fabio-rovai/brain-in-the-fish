@@ -102,7 +102,16 @@ async fn run_evaluate(
 
     // 3.5 Align document sections to criteria
     println!("Aligning document to criteria...");
-    let (alignments, gaps) = alignment::align_sections_to_criteria(&doc, &framework);
+    let (alignments, gaps) = match alignment::align_via_ontology(&graph, &doc, &framework) {
+        Ok(result) => {
+            println!("   (using ontology alignment with 7 structural signals)");
+            result
+        }
+        Err(_) => {
+            println!("   (using keyword-based alignment)");
+            alignment::align_sections_to_criteria(&doc, &framework)
+        }
+    };
     let align_triples = alignment::load_alignments(&graph, &alignments)?;
     println!("   {} alignments, {} gaps, {} triples", alignments.len(), gaps.len(), align_triples);
     for gap in &gaps {

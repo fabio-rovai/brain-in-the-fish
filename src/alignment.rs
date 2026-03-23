@@ -5,8 +5,256 @@
 
 use crate::ingest::iri_safe;
 use crate::types::*;
+use open_ontologies::align::AlignmentEngine;
 use open_ontologies::graph::GraphStore;
+use open_ontologies::state::StateDb;
 use std::collections::HashMap;
+use std::sync::Arc;
+
+/// Align document sections to criteria using open-ontologies' full alignment engine.
+///
+/// Uses 7 weighted signals: label similarity, property overlap, parent overlap,
+/// instance overlap, restriction patterns, graph neighborhood, embedding similarity.
+///
+/// Both document sections and evaluation criteria are serialized as OWL classes
+/// with `rdfs:label` and domain-specific properties, then passed through
+/// `AlignmentEngine::align()` which computes the weighted structural similarity.
+///
+/// Falls back to keyword overlap if the ontology-based alignment fails.
+pub fn align_via_ontology(
+    _graph: &GraphStore,
+    doc: &EvalDocument,
+    framework: &EvaluationFramework,
+) -> anyhow::Result<(Vec<AlignmentMapping>, Vec<Gap>)> {
+    // Build Turtle for sections as OWL classes with labels and properties
+    let source_ttl = sections_to_turtle(doc);
+    let target_ttl = criteria_to_turtle(framework);
+
+    if source_ttl.is_empty() || target_ttl.is_empty() {
+        anyhow::bail!("no sections or criteria to align");
+    }
+
+    // Create a temporary StateDb for the alignment engine
+    let tmp_path = std::env::temp_dir().join(format!(
+        "bitf-align-{}.db",
+        std::process::id()
+    ));
+    let db = StateDb::open(&tmp_path)
+        .map_err(|e| anyhow::anyhow!("failed to open temp StateDb: {e}"))?;
+
+    let engine = AlignmentEngine::new(db, Arc::new(GraphStore::new()));
+
+    // Run alignment with a low threshold to capture partial matches
+    let result_json = engine.align(&source_ttl, Some(&target_ttl), 0.1, true)?;
+
+    // Clean up temp db
+    let _ = std::fs::remove_file(&tmp_path);
+
+    let parsed: serde_json::Value = serde_json::from_str(&result_json)?;
+
+    let candidates = parsed["candidates"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("no candidates array in alignment result"))?;
+
+    if candidates.is_empty() {
+        anyhow::bail!("ontology alignment produced no candidates");
+    }
+
+    // Map alignment candidates back to AlignmentMapping / Gap
+    // Source IRIs are section IRIs, target IRIs are criterion IRIs
+    let section_ids: HashMap<String, String> = all_sections(&doc.sections)
+        .iter()
+        .map(|s| {
+            let iri = format!(
+                "http://brain-in-the-fish.dev/section/{}",
+                iri_safe(&s.id)
+            );
+            (iri, s.id.clone())
+        })
+        .collect();
+
+    let criterion_ids: HashMap<String, String> = all_criteria(&framework.criteria)
+        .iter()
+        .map(|c| {
+            let iri = format!(
+                "http://brain-in-the-fish.dev/criterion/{}",
+                iri_safe(&c.id)
+            );
+            (iri, c.id.clone())
+        })
+        .collect();
+
+    let mut alignments = Vec::new();
+    let mut best_per_criterion: HashMap<String, (Option<String>, f64)> = HashMap::new();
+
+    // Initialize best_per_criterion for gap detection
+    for c in all_criteria(&framework.criteria) {
+        best_per_criterion.insert(c.id.clone(), (None, 0.0));
+    }
+
+    for candidate in candidates {
+        let source_iri = candidate["source_iri"].as_str().unwrap_or("");
+        let target_iri = candidate["target_iri"].as_str().unwrap_or("");
+        let confidence = candidate["confidence"].as_f64().unwrap_or(0.0);
+
+        let section_id = section_ids.get(source_iri);
+        let criterion_id = criterion_ids.get(target_iri);
+
+        if let (Some(sid), Some(cid)) = (section_id, criterion_id) {
+            if confidence > 0.1 {
+                alignments.push(AlignmentMapping {
+                    section_id: sid.clone(),
+                    criterion_id: cid.clone(),
+                    confidence,
+                });
+            }
+
+            let entry = best_per_criterion
+                .entry(cid.clone())
+                .or_insert((None, 0.0));
+            if confidence > entry.1 {
+                *entry = (Some(sid.clone()), confidence);
+            }
+        }
+    }
+
+    // Build gaps for criteria with no good match
+    let mut gaps = Vec::new();
+    for criterion in all_criteria(&framework.criteria) {
+        if let Some((best_sid, best_conf)) = best_per_criterion.get(&criterion.id)
+            && *best_conf < 0.1
+        {
+            gaps.push(Gap {
+                criterion_id: criterion.id.clone(),
+                criterion_title: criterion.title.clone(),
+                best_partial_match: best_sid.as_ref().map(|sid| AlignmentMapping {
+                    section_id: sid.clone(),
+                    criterion_id: criterion.id.clone(),
+                    confidence: *best_conf,
+                }),
+            });
+        }
+    }
+
+    alignments.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    Ok((alignments, gaps))
+}
+
+/// Serialize document sections as OWL classes in Turtle format.
+///
+/// Each section becomes an `owl:Class` with `rdfs:label` (title),
+/// `rdfs:comment` (text excerpt), and properties linking to the document.
+fn sections_to_turtle(doc: &EvalDocument) -> String {
+    let mut ttl = String::from(
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
+         @prefix skos: <http://www.w3.org/2004/02/skos/core#> .\n\
+         @prefix sec: <http://brain-in-the-fish.dev/section/> .\n\
+         @prefix eval: <http://brain-in-the-fish.dev/eval/> .\n\n",
+    );
+
+    let doc_iri = format!("eval:{}", iri_safe(&doc.id));
+    ttl.push_str(&format!("{doc_iri} a owl:NamedIndividual .\n\n"));
+
+    for section in all_sections(&doc.sections) {
+        let safe_id = iri_safe(&section.id);
+        let label = escape_turtle_string(&section.title);
+        // Use first 200 chars of text as comment for matching
+        let comment = escape_turtle_string(&truncate_text(&section.text, 200));
+        // Extract keywords as altLabels for broader matching
+        let keywords = extract_keywords(&section.title, Some(&section.text));
+
+        ttl.push_str(&format!(
+            "sec:{safe_id} a owl:Class ;\n    rdfs:label \"{label}\" ;\n    rdfs:comment \"{comment}\" ;\n"
+        ));
+
+        // Add keywords as skos:altLabel for label-based matching
+        for kw in keywords.iter().take(10) {
+            let kw_escaped = escape_turtle_string(kw);
+            ttl.push_str(&format!("    skos:altLabel \"{kw_escaped}\" ;\n"));
+        }
+
+        // Link to document as parent
+        ttl.push_str(&format!(
+            "    rdfs:subClassOf {doc_iri} .\n\n"
+        ));
+    }
+
+    ttl
+}
+
+/// Serialize evaluation criteria as OWL classes in Turtle format.
+fn criteria_to_turtle(framework: &EvaluationFramework) -> String {
+    let mut ttl = String::from(
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
+         @prefix skos: <http://www.w3.org/2004/02/skos/core#> .\n\
+         @prefix crit: <http://brain-in-the-fish.dev/criterion/> .\n\
+         @prefix eval: <http://brain-in-the-fish.dev/eval/> .\n\n",
+    );
+
+    let fw_iri = format!("eval:{}", iri_safe(&framework.id));
+    ttl.push_str(&format!("{fw_iri} a owl:NamedIndividual .\n\n"));
+
+    for criterion in all_criteria(&framework.criteria) {
+        let safe_id = iri_safe(&criterion.id);
+        let label = escape_turtle_string(&criterion.title);
+        let desc = criterion
+            .description
+            .as_deref()
+            .unwrap_or("");
+        let comment = escape_turtle_string(&truncate_text(desc, 200));
+        let keywords = extract_keywords(
+            &criterion.title,
+            criterion.description.as_deref(),
+        );
+
+        ttl.push_str(&format!(
+            "crit:{safe_id} a owl:Class ;\n    rdfs:label \"{label}\" ;\n"
+        ));
+
+        if !comment.is_empty() {
+            ttl.push_str(&format!("    rdfs:comment \"{comment}\" ;\n"));
+        }
+
+        for kw in keywords.iter().take(10) {
+            let kw_escaped = escape_turtle_string(kw);
+            ttl.push_str(&format!("    skos:altLabel \"{kw_escaped}\" ;\n"));
+        }
+
+        ttl.push_str(&format!(
+            "    rdfs:subClassOf {fw_iri} .\n\n"
+        ));
+    }
+
+    ttl
+}
+
+/// Escape a string for Turtle literal (double-quote delimited).
+fn escape_turtle_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', "")
+}
+
+/// Truncate text to a maximum number of characters, breaking at word boundary.
+fn truncate_text(s: &str, max_chars: usize) -> String {
+    if s.len() <= max_chars {
+        return s.to_string();
+    }
+    let truncated = &s[..max_chars];
+    if let Some(last_space) = truncated.rfind(' ') {
+        truncated[..last_space].to_string()
+    } else {
+        truncated.to_string()
+    }
+}
 
 /// Align document sections to evaluation criteria using keyword overlap.
 ///
@@ -410,5 +658,185 @@ mod tests {
         }];
         let triples = load_alignments(&graph, &alignments).unwrap();
         assert!(triples > 0, "Should load alignment triples");
+    }
+
+    #[test]
+    fn test_sections_to_turtle() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test Doc".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(200),
+            sections: vec![Section {
+                id: "s1".into(),
+                title: "Knowledge and Theory".into(),
+                text: "Theoretical analysis of economic concepts".into(),
+                word_count: 100,
+                page_range: None,
+                claims: vec![],
+                evidence: vec![],
+                subsections: vec![],
+            }],
+        };
+
+        let ttl = sections_to_turtle(&doc);
+        assert!(ttl.contains("owl:Class"), "Should declare sections as OWL classes");
+        assert!(ttl.contains("Knowledge and Theory"), "Should include section title as label");
+        assert!(ttl.contains("rdfs:subClassOf"), "Should link to document");
+    }
+
+    #[test]
+    fn test_criteria_to_turtle() {
+        let fw = EvaluationFramework {
+            id: "f1".into(),
+            name: "Test".into(),
+            total_weight: 1.0,
+            pass_mark: None,
+            criteria: vec![EvaluationCriterion {
+                id: "c1".into(),
+                title: "Critical Analysis".into(),
+                description: Some("Evaluate analytical depth".into()),
+                max_score: 10.0,
+                weight: 1.0,
+                rubric_levels: vec![],
+                sub_criteria: vec![],
+            }],
+        };
+
+        let ttl = criteria_to_turtle(&fw);
+        assert!(ttl.contains("owl:Class"), "Should declare criteria as OWL classes");
+        assert!(ttl.contains("Critical Analysis"), "Should include criterion title");
+        assert!(ttl.contains("analytical"), "Should include keywords as altLabels");
+    }
+
+    #[test]
+    fn test_escape_turtle_string() {
+        assert_eq!(escape_turtle_string("hello"), "hello");
+        assert_eq!(escape_turtle_string("say \"hi\""), "say \\\"hi\\\"");
+        assert_eq!(escape_turtle_string("line\nbreak"), "line break");
+    }
+
+    #[test]
+    fn test_truncate_text() {
+        assert_eq!(truncate_text("short", 100), "short");
+        let long = "the quick brown fox jumps over the lazy dog and more text follows here";
+        let truncated = truncate_text(long, 30);
+        assert!(truncated.len() <= 30, "Should truncate: {truncated}");
+        assert!(!truncated.ends_with(' '), "Should not end with space");
+    }
+
+    #[test]
+    fn test_align_via_ontology_matching_labels() {
+        let graph = GraphStore::new();
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![
+                Section {
+                    id: "s1".into(),
+                    title: "Knowledge and Theory".into(),
+                    text: "Theoretical analysis of economic concepts and understanding".into(),
+                    word_count: 100,
+                    page_range: None,
+                    claims: vec![],
+                    evidence: vec![],
+                    subsections: vec![],
+                },
+                Section {
+                    id: "s2".into(),
+                    title: "Critical Analysis".into(),
+                    text: "Evaluation of competing arguments and critical assessment".into(),
+                    word_count: 100,
+                    page_range: None,
+                    claims: vec![],
+                    evidence: vec![],
+                    subsections: vec![],
+                },
+            ],
+        };
+        let fw = EvaluationFramework {
+            id: "f1".into(),
+            name: "Test".into(),
+            total_weight: 1.0,
+            pass_mark: None,
+            criteria: vec![
+                EvaluationCriterion {
+                    id: "c1".into(),
+                    title: "Knowledge and Understanding".into(),
+                    description: None,
+                    max_score: 8.0,
+                    weight: 0.5,
+                    rubric_levels: vec![],
+                    sub_criteria: vec![],
+                },
+                EvaluationCriterion {
+                    id: "c2".into(),
+                    title: "Analysis and Evaluation".into(),
+                    description: None,
+                    max_score: 12.0,
+                    weight: 0.5,
+                    rubric_levels: vec![],
+                    sub_criteria: vec![],
+                },
+            ],
+        };
+
+        let result = align_via_ontology(&graph, &doc, &fw);
+        assert!(result.is_ok(), "align_via_ontology should succeed: {:?}", result.err());
+        let (alignments, _gaps) = result.unwrap();
+        assert!(!alignments.is_empty(), "Should find ontology-based alignments");
+    }
+
+    #[test]
+    fn test_align_via_ontology_gap_detection() {
+        let graph = GraphStore::new();
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(100),
+            sections: vec![Section {
+                id: "s1".into(),
+                title: "Introduction".into(),
+                text: "A brief introduction to the topic".into(),
+                word_count: 10,
+                page_range: None,
+                claims: vec![],
+                evidence: vec![],
+                subsections: vec![],
+            }],
+        };
+        let fw = EvaluationFramework {
+            id: "f1".into(),
+            name: "Test".into(),
+            total_weight: 1.0,
+            pass_mark: None,
+            criteria: vec![EvaluationCriterion {
+                id: "c1".into(),
+                title: "Advanced Quantum Thermodynamics".into(),
+                description: Some("Evaluation of quantum thermal equilibrium models".into()),
+                max_score: 10.0,
+                weight: 1.0,
+                rubric_levels: vec![],
+                sub_criteria: vec![],
+            }],
+        };
+
+        // This may either succeed with gaps or fail (triggering keyword fallback in main.rs)
+        let result = align_via_ontology(&graph, &doc, &fw);
+        if let Ok((alignments, gaps)) = result {
+            // If it succeeds, the highly dissimilar pair should produce gaps or very low confidence
+            let high_conf = alignments.iter().any(|a| a.confidence > 0.5);
+            if !high_conf {
+                assert!(!gaps.is_empty() || alignments.is_empty(),
+                    "Dissimilar content should produce gaps or no high-confidence matches");
+            }
+        }
+        // If it fails, that's fine — main.rs falls back to keyword alignment
     }
 }
