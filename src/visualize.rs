@@ -1539,22 +1539,23 @@ body {
     border-top: 1px solid var(--border);
     display: flex;
     align-items: center;
-    padding: 0 20px;
-    gap: 4px;
+    padding: 4px 20px;
+    gap: 6px;
     overflow-x: auto;
     z-index: 20;
+    min-height: 52px;
 }
 
 .legend-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 10px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
     border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-secondary);
+    background: var(--bg-primary);
+    color: var(--text-primary);
     cursor: pointer;
     white-space: nowrap;
     transition: all 0.15s;
@@ -1705,15 +1706,22 @@ lineageData.forEach(ev => {
 });
 
 // ---- Legend Buttons ----
-const nodeTypes = [...new Set(graphData.nodes.map(n => n.node_type))];
+// Priority order: important evaluation types first, structural types last
+const typePriority = ['Agent', 'Criterion', 'Score', 'Moderated', 'Need', 'Document', 'Section', 'Claim', 'Evidence', 'Framework', 'RubricLevel', 'Challenge', 'Trust', 'default'];
+const existingTypes = new Set(graphData.nodes.map(n => n.node_type));
+const nodeTypes = typePriority.filter(t => existingTypes.has(t));
+// Add any types not in the priority list
+existingTypes.forEach(t => { if (!nodeTypes.includes(t)) nodeTypes.push(t); });
+
 const hiddenTypes = new Set();
 const legendContainer = document.getElementById('legend-buttons');
 
 nodeTypes.forEach(type => {
+    const count = graphData.nodes.filter(n => n.node_type === type).length;
     const btn = document.createElement('button');
     btn.className = 'legend-btn';
     btn.dataset.type = type;
-    btn.innerHTML = `<span class="legend-dot" style="background:${getColor(type)}"></span>${type}`;
+    btn.innerHTML = `<span class="legend-dot" style="background:${getColor(type)}"></span><strong>${type}</strong> <span style="opacity:0.5">(${count})</span>`;
     btn.addEventListener('click', () => toggleType(type, btn));
     legendContainer.appendChild(btn);
 });
