@@ -123,6 +123,12 @@ pub struct EvalServer {
     session: Arc<Mutex<SessionState>>,
 }
 
+impl Default for EvalServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EvalServer {
     /// Create a new EvalServer with a fresh graph store.
     pub fn new() -> Self {
@@ -223,7 +229,7 @@ impl EvalServer {
 
         let framework = match framework_name.as_str() {
             "academic" => crate::criteria::academic_essay_framework(),
-            "tender" | "generic" | _ => crate::criteria::generic_quality_framework(),
+            _ => crate::criteria::generic_quality_framework(),
         };
 
         // Load criteria ontology into graph store

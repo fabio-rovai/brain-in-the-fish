@@ -526,7 +526,7 @@ fn spawn_generic_agents() -> Vec<EvaluatorAgent> {
 
 /// Wire up trust weights between all agents in the panel.
 /// Moderator gets 0.6 trust toward all others; non-moderators get 0.5 toward all others.
-fn wire_trust_weights(agents: &mut Vec<EvaluatorAgent>) {
+fn wire_trust_weights(agents: &mut [EvaluatorAgent]) {
     let ids_and_roles: Vec<(String, String)> = agents
         .iter()
         .map(|a| (a.id.clone(), a.role.clone()))

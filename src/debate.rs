@@ -187,7 +187,7 @@ pub fn record_challenge(
     challenge: &Challenge,
 ) -> anyhow::Result<usize> {
     let turtle = challenge_to_turtle(challenge);
-    graph.load_turtle(&turtle, None).map_err(Into::into)
+    graph.load_turtle(&turtle, None)
 }
 
 /// Generate Turtle RDF for a Challenge.
@@ -343,28 +343,24 @@ pub fn update_trust_weights(
             if let Some(target) = agents
                 .iter_mut()
                 .find(|a| a.id == challenge.target_agent_id)
-            {
-                if let Some(tw) = target
+                && let Some(tw) = target
                     .trust_weights
                     .iter_mut()
                     .find(|t| t.target_agent_id == challenge.challenger_id)
-                {
-                    tw.trust_level = (tw.trust_level + 0.1).min(1.0);
-                }
+            {
+                tw.trust_level = (tw.trust_level + 0.1).min(1.0);
             }
         } else {
             // Score maintained — slight trust decrease
             if let Some(target) = agents
                 .iter_mut()
                 .find(|a| a.id == challenge.target_agent_id)
-            {
-                if let Some(tw) = target
+                && let Some(tw) = target
                     .trust_weights
                     .iter_mut()
                     .find(|t| t.target_agent_id == challenge.challenger_id)
-                {
-                    tw.trust_level = (tw.trust_level - 0.05).max(0.0);
-                }
+            {
+                tw.trust_level = (tw.trust_level - 0.05).max(0.0);
             }
         }
     }

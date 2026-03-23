@@ -263,8 +263,8 @@ pub fn generate_recommendations(
         }
 
         // Suggest next rubric level
-        if let Some(crit) = criterion {
-            if !crit.rubric_levels.is_empty() {
+        if let Some(crit) = criterion
+            && !crit.rubric_levels.is_empty() {
                 // Find the first rubric level above current score conceptually
                 // We list the next level up as a target
                 s.push_str("**Target rubric level:**\n\n");
@@ -276,7 +276,6 @@ pub fn generate_recommendations(
                 }
                 s.push('\n');
             }
-        }
     }
 
     if !found_any {

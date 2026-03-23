@@ -100,7 +100,7 @@ pub fn split_into_sections(text: &str) -> Vec<RawSection> {
                 let after = lines[i + 2].trim();
                 if next.is_empty() && after.len() > trimmed.len() {
                     // Only if this looks like a heading (starts with uppercase or is short enough)
-                    if trimmed.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    if trimmed.chars().next().is_some_and(|c| c.is_uppercase()) {
                         headings.push((i, trimmed.to_string(), 0));
                     }
                 }
@@ -133,9 +133,7 @@ pub fn split_into_sections(text: &str) -> Vec<RawSection> {
         };
 
         let section_text: String = lines[content_start..content_end]
-            .iter()
-            .copied()
-            .collect::<Vec<&str>>()
+            .to_vec()
             .join("\n")
             .trim()
             .to_string();
