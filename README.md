@@ -5,7 +5,7 @@
 <h1 align="center">Brain in the Fish</h1>
 
 <p align="center">
-  <strong>Evaluate anything. Predict everything. Hallucinate nothing.</strong>
+  <strong>Evaluate anything. Predict anything. Hallucinate nothing.</strong>
   <br>
   <em>The brain that MiroFish was missing — SNN-verified evaluation & prediction credibility for any document, any domain, any language.</em>
 </p>
