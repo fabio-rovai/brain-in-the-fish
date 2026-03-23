@@ -27,3 +27,8 @@ uuid = { version = "1", features = ["v4"] }
 pdf-extract = "0.8"
 regex = "1"
 schemars = "1"
+dirs = "6"
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

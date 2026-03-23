@@ -400,9 +400,10 @@ Evaluate the following document content against this criterion:
 
 1. Read the document content carefully
 2. Assess how well it meets the criterion
-3. Identify specific evidence that supports your score
-4. Identify gaps or weaknesses
-5. Provide your score and detailed justification
+3. Reference specific rubric levels in your justification. State which level the document meets and what would be needed to reach the next level.
+4. Identify specific evidence that supports your score
+5. Identify gaps or weaknesses
+6. Provide your score and detailed justification
 
 Respond in this JSON format:
 {{
@@ -421,6 +422,172 @@ Respond in this JSON format:
         rubric_text = format_rubric(&criterion.rubric_levels),
         section_content = format_sections(sections),
     )
+}
+
+// ============================================================================
+// What-if re-evaluation
+// ============================================================================
+
+/// Result of a what-if text change simulation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WhatIfResult {
+    pub criterion_id: String,
+    pub criterion_title: String,
+    pub current_score: f64,
+    pub estimated_new_score: f64,
+    pub delta: f64,
+    pub reasoning: String,
+}
+
+/// Simulate a "what if" text change — estimate how replacing a section's text
+/// would affect scores on aligned criteria.
+///
+/// Uses simple text-quality heuristics (word count, claim density, evidence
+/// patterns) to estimate score deltas without calling an LLM.
+pub fn what_if_rescore(
+    session: &EvaluationSession,
+    section_id: &str,
+    new_text: &str,
+    alignments: &[AlignmentMapping],
+) -> Vec<WhatIfResult> {
+    // Find which criteria this section maps to
+    let affected_criteria: Vec<&str> = alignments
+        .iter()
+        .filter(|a| a.section_id == section_id)
+        .map(|a| a.criterion_id.as_str())
+        .collect();
+
+    if affected_criteria.is_empty() {
+        return Vec::new();
+    }
+
+    // Find the original section text
+    let original_text = session
+        .document
+        .sections
+        .iter()
+        .find(|s| s.id == section_id)
+        .map(|s| s.text.as_str())
+        .unwrap_or("");
+
+    // Compute text quality signals for old and new text
+    let old_metrics = TextMetrics::from_text(original_text);
+    let new_metrics = TextMetrics::from_text(new_text);
+
+    let mut results = Vec::new();
+
+    for crit_id in &affected_criteria {
+        // Find current score and criterion details
+        let current_score = session
+            .final_scores
+            .iter()
+            .find(|ms| ms.criterion_id == *crit_id)
+            .map(|ms| ms.consensus_score)
+            .unwrap_or(0.0);
+
+        let criterion = session
+            .framework
+            .criteria
+            .iter()
+            .find(|c| c.id == *crit_id);
+
+        let (title, max_score) = criterion
+            .map(|c| (c.title.clone(), c.max_score))
+            .unwrap_or_else(|| (crit_id.to_string(), 10.0));
+
+        // Estimate score change based on text quality delta
+        let quality_delta = new_metrics.quality_signal() - old_metrics.quality_signal();
+        let estimated_change = quality_delta * max_score * 0.3; // 30% weight to text quality
+        let estimated_new = (current_score + estimated_change).clamp(0.0, max_score);
+
+        let reasoning = format!(
+            "Word count: {} -> {} ({:+}). Evidence keywords: {} -> {} ({:+}). \
+             Specificity markers: {} -> {} ({:+}). \
+             Estimated quality delta: {:.2}",
+            old_metrics.word_count,
+            new_metrics.word_count,
+            new_metrics.word_count as i64 - old_metrics.word_count as i64,
+            old_metrics.evidence_keywords,
+            new_metrics.evidence_keywords,
+            new_metrics.evidence_keywords as i64 - old_metrics.evidence_keywords as i64,
+            old_metrics.specificity_markers,
+            new_metrics.specificity_markers,
+            new_metrics.specificity_markers as i64 - old_metrics.specificity_markers as i64,
+            quality_delta,
+        );
+
+        results.push(WhatIfResult {
+            criterion_id: crit_id.to_string(),
+            criterion_title: title,
+            current_score,
+            estimated_new_score: estimated_new,
+            delta: estimated_new - current_score,
+            reasoning,
+        });
+    }
+
+    results
+}
+
+/// Simple text quality metrics for what-if estimation.
+struct TextMetrics {
+    word_count: usize,
+    evidence_keywords: usize,
+    specificity_markers: usize,
+}
+
+impl TextMetrics {
+    fn from_text(text: &str) -> Self {
+        let word_count = text.split_whitespace().count();
+        let lower = text.to_lowercase();
+
+        // Count evidence-related keywords
+        let evidence_words = [
+            "evidence", "data", "study", "research", "survey", "report",
+            "analysis", "finding", "result", "outcome", "demonstrated",
+            "measured", "achieved", "improved", "reduced", "increased",
+        ];
+        let evidence_keywords = evidence_words
+            .iter()
+            .map(|w| lower.matches(w).count())
+            .sum();
+
+        // Count specificity markers (numbers, percentages, dates)
+        let specificity_markers = text
+            .split_whitespace()
+            .filter(|w| {
+                w.contains('%')
+                    || w.parse::<f64>().is_ok()
+                    || (w.len() == 4 && w.parse::<u32>().map(|y| (1900..=2100).contains(&y)).unwrap_or(false))
+            })
+            .count();
+
+        Self {
+            word_count,
+            evidence_keywords,
+            specificity_markers,
+        }
+    }
+
+    /// Normalised quality signal in [0.0, 1.0].
+    fn quality_signal(&self) -> f64 {
+        // Word count component (diminishing returns after 500 words)
+        let wc = (self.word_count as f64 / 500.0).min(1.0);
+        // Evidence density (per 100 words)
+        let ev = if self.word_count > 0 {
+            (self.evidence_keywords as f64 / (self.word_count as f64 / 100.0)).min(1.0)
+        } else {
+            0.0
+        };
+        // Specificity density (per 100 words)
+        let sp = if self.word_count > 0 {
+            (self.specificity_markers as f64 / (self.word_count as f64 / 100.0)).min(1.0)
+        } else {
+            0.0
+        };
+        // Weighted average
+        wc * 0.3 + ev * 0.4 + sp * 0.3
+    }
 }
 
 fn format_rubric(levels: &[RubricLevel]) -> String {
@@ -807,5 +974,124 @@ mod tests {
         assert!((r1[0].score - 6.0).abs() < 1e-10);
         assert!((r2[0].score - 7.0).abs() < 1e-10);
         assert!((r3[0].score - 8.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_what_if_rescore_improved_text() {
+        let session = EvaluationSession {
+            id: "sess-1".into(),
+            document: EvalDocument {
+                id: "doc-1".into(),
+                title: "Test".into(),
+                doc_type: "essay".into(),
+                total_pages: None,
+                total_word_count: None,
+                sections: vec![Section {
+                    id: "sec-1".into(),
+                    title: "Intro".into(),
+                    text: "Short text.".into(),
+                    word_count: 2,
+                    page_range: None,
+                    claims: vec![],
+                    evidence: vec![],
+                    subsections: vec![],
+                }],
+            },
+            framework: EvaluationFramework {
+                id: "fw-1".into(),
+                name: "Test FW".into(),
+                total_weight: 1.0,
+                pass_mark: None,
+                criteria: vec![EvaluationCriterion {
+                    id: "crit-1".into(),
+                    title: "Quality".into(),
+                    description: None,
+                    max_score: 10.0,
+                    weight: 1.0,
+                    rubric_levels: vec![],
+                    sub_criteria: vec![],
+                }],
+            },
+            agents: vec![],
+            alignments: vec![],
+            gaps: vec![],
+            rounds: vec![],
+            final_scores: vec![ModeratedScore {
+                criterion_id: "crit-1".into(),
+                consensus_score: 5.0,
+                panel_mean: 5.0,
+                panel_std_dev: 0.5,
+                dissents: vec![],
+            }],
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+
+        let alignments = vec![AlignmentMapping {
+            section_id: "sec-1".into(),
+            criterion_id: "crit-1".into(),
+            confidence: 0.9,
+        }];
+
+        let new_text = "This is a much longer and more detailed section. \
+            The research evidence demonstrates that outcomes improved by 25% \
+            in the 2024 study. Data analysis showed measured results with \
+            quantified findings across multiple surveys.";
+
+        let results = what_if_rescore(&session, "sec-1", new_text, &alignments);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].criterion_id, "crit-1");
+        // Better text should produce a positive delta
+        assert!(results[0].delta > 0.0, "Expected positive delta, got {}", results[0].delta);
+    }
+
+    #[test]
+    fn test_what_if_rescore_no_alignment() {
+        let session = EvaluationSession {
+            id: "sess-1".into(),
+            document: EvalDocument {
+                id: "doc-1".into(),
+                title: "Test".into(),
+                doc_type: "essay".into(),
+                total_pages: None,
+                total_word_count: None,
+                sections: vec![],
+            },
+            framework: EvaluationFramework {
+                id: "fw-1".into(),
+                name: "Test FW".into(),
+                total_weight: 1.0,
+                pass_mark: None,
+                criteria: vec![],
+            },
+            agents: vec![],
+            alignments: vec![],
+            gaps: vec![],
+            rounds: vec![],
+            final_scores: vec![],
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+
+        let results = what_if_rescore(&session, "sec-1", "new text", &[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_scoring_prompt_includes_rubric_reference_instruction() {
+        let agent = make_test_agent();
+        let criterion = make_test_criterion();
+        let sections = vec![];
+        let prompt = generate_scoring_prompt(&agent, &criterion, &sections, 1);
+        assert!(
+            prompt.contains("Reference specific rubric levels"),
+            "Prompt should instruct agents to reference rubric levels"
+        );
+        assert!(
+            prompt.contains("which level the document meets"),
+            "Prompt should ask which level is met"
+        );
+        assert!(
+            prompt.contains("needed to reach the next level"),
+            "Prompt should ask what's needed for next level"
+        );
     }
 }

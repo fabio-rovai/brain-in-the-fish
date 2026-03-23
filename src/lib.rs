@@ -12,3 +12,4 @@ pub mod llm;
 pub mod research;
 pub mod server;
 pub mod snn;
+pub mod memory;
