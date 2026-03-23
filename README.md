@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://github.com/fabio-rovai/brain-in-the-fish/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/tests-224%20passing-brightgreen" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-223%20passing-brightgreen" alt="Tests" />
   <img src="https://img.shields.io/badge/rust-edition%202024-orange" alt="Rust" />
 </p>
 
@@ -328,7 +328,7 @@ All modules compile into a single binary. No microservices, no Python, no networ
 | `main` | CLI entry point (clap), evaluate and serve subcommands, full pipeline orchestration | 737 |
 | `snn` | Spiking neural network scoring — deterministic evidence-grounded verification | 752 |
 | `llm` | Claude API client for subagent-enhanced scoring (optional) | 320 |
-| `alignment` | Ontology alignment between document sections and evaluation criteria (7 structural signals) | 842 |
+| `alignment` | Ontology alignment between document sections and evaluation criteria (7 structural signals) | 843 |
 | `research` | Research pipeline for evidence gathering and synthesis | 493 |
 | `memory` | Agent memory persistence across evaluation rounds | 315 |
 | `visualize` | Evaluation visualization, interactive graph HTML, chart generation | 2,520 |
@@ -397,7 +397,7 @@ The validation pipeline runs 15 deterministic checks on every document before sc
 
 ## Testing
 
-224 tests covering all 24 modules: ingestion, criteria loading, agent spawning, scoring, debate mechanics, moderation, report generation, SNN verification, alignment, validation, belief dynamics, epistemology, philosophy, orchestration, batch processing, and MCP server tools.
+223 tests covering all 24 modules: ingestion, criteria loading, agent spawning, scoring, debate mechanics, moderation, report generation, SNN verification, alignment, validation, belief dynamics, epistemology, philosophy, orchestration, batch processing, and MCP server tools.
 
 ```bash
 cargo test
