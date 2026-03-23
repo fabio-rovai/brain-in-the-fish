@@ -79,6 +79,65 @@ The evaluation pipeline runs in 9 stages:
 
 9. **Report** -- Generate a structured Markdown report with executive summary, scorecard table, gap analysis, full debate trail, improvement recommendations, and panel summary. Export the complete evaluation as Turtle RDF for cross-session analysis.
 
+## Anti-Hallucination: SNN Verification Layer
+
+MiroFish's core weakness is that agent scores are LLM outputs — plausible text with no mathematical grounding. An agent can "justify" a 9/10 score for a criterion that has no supporting evidence in the document. This is hallucination with a confidence score attached.
+
+Brain in the Fish solves this with a **Spiking Neural Network (SNN)** verification layer that sits between the ontology evidence and the LLM scoring. The SNN is deterministic: given the same evidence, it always produces the same score. The LLM is stochastic: it provides qualitative judgment. Combined, they make hallucination detectable.
+
+### How the SNN works
+
+Each evaluator agent has a neural network with one **neuron per criterion**. Evidence from the document ontology generates **input spikes**:
+
+| Evidence type | Spike strength | Example |
+| ------------- | -------------- | ------- |
+| Quantified data | 0.8-1.0 | "FTSE 100 rose 45%" |
+| Verifiable claim | 0.6-0.8 | "Bank of England purchased £895bn in assets" |
+| Citation | 0.5-0.7 | "(Bernanke, 2009)" |
+| General claim | 0.3-0.5 | "QE was effective as a stabilisation tool" |
+| Section alignment | 0.2-0.4 | Section title matches criterion |
+
+Neurons use **leaky integrate-and-fire** dynamics:
+
+- Spikes accumulate in the membrane potential
+- Potential decays over time (leak)
+- When potential exceeds **threshold** (derived from rubric) → neuron fires
+- Firing rate maps to score
+- No evidence in the graph = no spikes = no firing = score of zero
+
+### Blended scoring: SNN + LLM
+
+The final score blends both layers, weighted by SNN confidence:
+
+```text
+final_score = snn_score × snn_weight + llm_score × llm_weight
+```
+
+When SNN confidence is high (abundant evidence), the SNN dominates. When low (sparse evidence), the LLM fills in — but a **hallucination flag** is raised if the LLM scores significantly higher than the evidence supports.
+
+```text
+LLM says 9/10. SNN says 2/10 (only 2 weak spikes received).
+→ hallucination_risk = true
+→ "WARNING: LLM scored significantly higher than evidence supports."
+```
+
+### Debate as lateral inhibition
+
+During debate rounds, challenges from other agents apply **lateral inhibition** to the target agent's neurons. This reduces the membrane potential, requiring more evidence to maintain a high score. Trust weights modulate spike transmission between agents — highly trusted challengers produce stronger inhibitory signals.
+
+### Theoretical grounding: ARIA Safeguarded AI
+
+This architecture aligns with [ARIA's £59M Safeguarded AI programme](https://www.aria.org.uk/programme-safeguarded-ai/) (led by davidad, co-authored with Yoshua Bengio, Stuart Russell, and Max Tegmark). Their thesis in ["Towards Guaranteed Safe AI"](https://arxiv.org/abs/2405.06624): **don't make the LLM deterministic — make the verification deterministic.**
+
+| ARIA framework | Brain in the Fish |
+| -------------- | ----------------- |
+| World model (formal description of reality) | Ontology (OWL knowledge graph) |
+| Safety specification (acceptable outputs) | Rubric levels + SNN thresholds |
+| Deterministic verifier (proof checker) | SNN (same spikes → same score, always) |
+| Proof certificate (reasoning trace) | Spike log + onto_lineage (auditable evidence path) |
+
+The LLM generates qualitative judgment. The SNN provides a deterministic, auditable verification gate. The ontology provides the formal world model. Together, they implement ARIA's "gatekeeper" architecture for document evaluation.
+
 ## Quick Start
 
 ```bash
@@ -142,9 +201,10 @@ All modules compile into a single binary. No microservices, no Python, no networ
 | `report` | Markdown report generation, Turtle RDF session export | 714 |
 | `server` | MCP server with 10 eval_* tools (rmcp, stdio + HTTP transport) | 737 |
 | `main` | CLI entry point (clap), evaluate and serve subcommands | 200 |
+| `snn` | Spiking neural network scoring — deterministic evidence-grounded verification | 752 |
 | `lib` | Module declarations | 9 |
 
-**Total: ~6,100 lines of Rust.**
+**Total: ~6,850 lines of Rust.**
 
 ## MCP Tools
 
