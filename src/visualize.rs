@@ -590,6 +590,14 @@ pub fn extract_graph_data(session: &EvaluationSession) -> GraphData {
             agent_connected.push(trust.target_agent_id.clone());
         }
 
+        // Connect agent to framework (bridges evaluation cluster to framework)
+        edges.push(GraphEdge {
+            source: agent.id.clone(),
+            target: fw_id.clone(),
+            label: "evaluatesFor".into(),
+            edge_type: "relation".into(),
+        });
+
         nodes.push(GraphNode {
             id: agent.id.clone(),
             label: agent.name.clone(),
@@ -707,11 +715,23 @@ pub fn extract_graph_data(session: &EvaluationSession) -> GraphData {
                 edge_type: "scores".into(),
             });
             edges.push(GraphEdge {
-                source: score_id,
+                source: score_id.clone(),
                 target: score.criterion_id.clone(),
                 label: "on".into(),
                 edge_type: "scores".into(),
             });
+
+            // Connect score to aligned document sections (bridges the two clusters)
+            for alignment in &session.alignments {
+                if alignment.criterion_id == score.criterion_id {
+                    edges.push(GraphEdge {
+                        source: score_id.clone(),
+                        target: alignment.section_id.clone(),
+                        label: format!("evidence({:.0}%)", alignment.confidence * 100.0),
+                        edge_type: "evaluates".into(),
+                    });
+                }
+            }
         }
 
         for challenge in &round.challenges {
@@ -1770,12 +1790,10 @@ graphData.edges.forEach(e => {
 
 // Force simulation
 const simulation = d3.forceSimulation(graphData.nodes)
-    .force('link', d3.forceLink(graphData.edges).id(d => d.id).distance(80).strength(0.7))
+    .force('link', d3.forceLink(graphData.edges).id(d => d.id).distance(60).strength(0.8))
     .force('charge', d3.forceManyBody().strength(-300))
-    .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('collision', d3.forceCollide().radius(d => getSize(d.node_type) + 8))
-    .force('x', d3.forceX(width / 2).strength(0.03))
-    .force('y', d3.forceY(height / 2).strength(0.03));
+    .force('center', d3.forceCenter(width / 2, height / 2).strength(0.1))
+    .force('collision', d3.forceCollide().radius(d => getSize(d.node_type) + 8));
 
 // Edges (as groups with path + label)
 const linkGroups = g.append('g').attr('class', 'links')
