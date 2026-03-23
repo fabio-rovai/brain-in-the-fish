@@ -42,6 +42,15 @@ enum Commands {
         /// Output directory for the evaluation report
         #[arg(long)]
         output: Option<PathBuf>,
+
+        /// Open the graph visualization in browser after evaluation
+        #[arg(long)]
+        open: bool,
+    },
+    /// Open the knowledge graph visualization
+    Graph {
+        /// Path to an evaluation output directory (defaults to most recent)
+        path: Option<PathBuf>,
     },
     /// Start the MCP server for Claude subagent orchestration
     Serve {
@@ -63,8 +72,11 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Evaluate { document, intent, criteria, output } => {
-            run_evaluate(document, intent, criteria, output).await
+        Commands::Evaluate { document, intent, criteria, output, open } => {
+            run_evaluate(document, intent, criteria, output, open).await
+        }
+        Commands::Graph { path } => {
+            run_graph(path)
         }
         Commands::Serve { host, port } => {
             run_serve(host, port).await
@@ -72,11 +84,82 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+fn run_graph(path: Option<PathBuf>) -> anyhow::Result<()> {
+    let graph_file = if let Some(dir) = path {
+        let f = dir.join("evaluation-graph.html");
+        if !f.exists() {
+            // Maybe they passed the HTML file directly
+            if dir.extension().map(|e| e == "html").unwrap_or(false) && dir.exists() {
+                dir
+            } else {
+                anyhow::bail!("No graph found at {}", f.display());
+            }
+        } else {
+            f
+        }
+    } else {
+        // Find the most recent evaluation from memory store
+        if let Ok(store) = memory::MemoryStore::open() {
+            if let Ok(records) = store.load_all() {
+                if let Some(last) = records.last() {
+                    // Check common output locations
+                    let candidates = [
+                        PathBuf::from(".").join("evaluation-graph.html"),
+                        PathBuf::from("/tmp").join(&last.id).join("evaluation-graph.html"),
+                    ];
+                    if let Some(found) = candidates.iter().find(|p| p.exists()) {
+                        found.clone()
+                    } else {
+                        // Search /tmp for any evaluation-graph.html
+                        let mut latest: Option<(PathBuf, std::time::SystemTime)> = None;
+                        if let Ok(entries) = std::fs::read_dir("/tmp") {
+                            for entry in entries.flatten() {
+                                let gpath = entry.path().join("evaluation-graph.html");
+                                if gpath.exists() {
+                                    if let Ok(meta) = gpath.metadata() {
+                                        if let Ok(modified) = meta.modified() {
+                                            if latest.as_ref().map_or(true, |(_, t)| modified > *t) {
+                                                latest = Some((gpath, modified));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let Some((found, _)) = latest {
+                            found
+                        } else {
+                            anyhow::bail!("No graph found. Run 'brain-in-the-fish evaluate' first.");
+                        }
+                    }
+                } else {
+                    anyhow::bail!("No evaluations in memory. Run 'brain-in-the-fish evaluate' first.");
+                }
+            } else {
+                anyhow::bail!("Could not read evaluation history.");
+            }
+        } else {
+            anyhow::bail!("Could not open memory store. Run 'brain-in-the-fish evaluate' first.");
+        }
+    };
+
+    println!("Opening graph: {}", graph_file.display());
+    #[cfg(target_os = "macos")]
+    { let _ = std::process::Command::new("open").arg(&graph_file).spawn(); }
+    #[cfg(target_os = "linux")]
+    { let _ = std::process::Command::new("xdg-open").arg(&graph_file).spawn(); }
+    #[cfg(target_os = "windows")]
+    { let _ = std::process::Command::new("cmd").args(["/c", "start"]).arg(&graph_file).spawn(); }
+
+    Ok(())
+}
+
 async fn run_evaluate(
     document: PathBuf,
     intent: String,
     criteria_path: Option<PathBuf>,
     output: Option<PathBuf>,
+    open_graph: bool,
 ) -> anyhow::Result<()> {
     // Resolve output_dir early (needed for state DB)
     let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
@@ -570,6 +653,9 @@ async fn run_evaluate(
     let graph_path = output_dir.join("evaluation-graph.html");
     std::fs::write(&graph_path, &graph_html)?;
     println!("   Graph: {}", graph_path.display());
+    if open_graph {
+        let _ = std::process::Command::new("open").arg(&graph_path).spawn();
+    }
 
     // 12. Save to cross-evaluation memory
     println!("12. Saving to memory...");
