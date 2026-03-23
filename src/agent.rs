@@ -4,9 +4,10 @@
 //! into Turtle/RDF. Agent mental states are OWL, not just JSON.
 
 use crate::ingest::{iri_safe, turtle_escape};
-use crate::types::{EvaluatorAgent, MaslowLevel, Score};
+use crate::types::{EvaluationFramework, EvaluatorAgent, MaslowLevel, MaslowNeed, Score, TrustRelation};
 use open_ontologies::graph::GraphStore;
 use std::fmt::Write;
+use uuid::Uuid;
 
 /// Helper to convert MaslowLevel to its OWL class name.
 fn maslow_class(level: &MaslowLevel) -> &'static str {
@@ -140,6 +141,411 @@ pub fn load_score(
     let turtle = score_to_turtle(score);
     let triples = graph.load_turtle(&turtle, None)?;
     Ok(triples)
+}
+
+// ============================================================================
+// Agent panel spawning
+// ============================================================================
+
+/// Evaluation domain detected from intent keywords.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EvalDomain {
+    Academic,
+    Tender,
+    Policy,
+    Survey,
+    Legal,
+    Generic,
+}
+
+/// Detect the evaluation domain from an intent string using keyword matching.
+pub fn detect_domain(intent: &str) -> EvalDomain {
+    let lower = intent.to_lowercase();
+    // Order matters: check more specific domains first
+    if ["essay", "mark", "thesis", "coursework", "assignment", "grade", "dissertation"]
+        .iter()
+        .any(|kw| lower.contains(kw))
+    {
+        EvalDomain::Academic
+    } else if ["bid", "tender", "proposal", "itt", "procurement", "score"]
+        .iter()
+        .any(|kw| lower.contains(kw))
+    {
+        EvalDomain::Tender
+    } else if ["policy", "strategy", "impact", "assessment"]
+        .iter()
+        .any(|kw| lower.contains(kw))
+    {
+        EvalDomain::Policy
+    } else if ["survey", "research", "methodology", "questionnaire"]
+        .iter()
+        .any(|kw| lower.contains(kw))
+    {
+        EvalDomain::Survey
+    } else if ["contract", "legal", "compliance", "terms"]
+        .iter()
+        .any(|kw| lower.contains(kw))
+    {
+        EvalDomain::Legal
+    } else {
+        EvalDomain::Generic
+    }
+}
+
+/// Generate an evaluator panel based on the evaluation intent and criteria.
+/// Returns 3-5 agents appropriate for the domain, plus always a Moderator.
+pub fn spawn_panel(intent: &str, _framework: &EvaluationFramework) -> Vec<EvaluatorAgent> {
+    let domain = detect_domain(intent);
+    let mut agents = match domain {
+        EvalDomain::Academic => spawn_academic_agents(),
+        EvalDomain::Tender => spawn_tender_agents(),
+        EvalDomain::Policy => spawn_policy_agents(),
+        EvalDomain::Survey => spawn_survey_agents(),
+        EvalDomain::Legal => spawn_legal_agents(),
+        EvalDomain::Generic => spawn_generic_agents(),
+    };
+
+    // Always add the moderator
+    agents.push(make_moderator());
+
+    // Wire up trust weights between all agents
+    wire_trust_weights(&mut agents);
+
+    agents
+}
+
+/// Build a single agent with the given archetype details.
+fn make_agent(
+    name: &str,
+    role: &str,
+    domain: &str,
+    persona: &str,
+    needs: Vec<MaslowNeed>,
+) -> EvaluatorAgent {
+    EvaluatorAgent {
+        id: Uuid::new_v4().to_string(),
+        name: name.to_string(),
+        role: role.to_string(),
+        domain: domain.to_string(),
+        years_experience: Some(10),
+        persona_description: persona.to_string(),
+        needs,
+        trust_weights: vec![], // wired up after all agents are created
+    }
+}
+
+fn make_need(level: MaslowLevel, expression: &str, salience: f64) -> MaslowNeed {
+    MaslowNeed {
+        need_type: level,
+        expression: expression.to_string(),
+        salience,
+        satisfied: false,
+    }
+}
+
+fn make_moderator() -> EvaluatorAgent {
+    make_agent(
+        "Dr. Carla Mendez",
+        "Panel Moderator",
+        "Evaluation Moderation",
+        "Experienced panel chair who synthesises diverse expert perspectives into \
+         balanced, defensible consensus scores. Challenges outlier opinions with \
+         evidence-based reasoning and ensures every criterion receives fair attention.",
+        vec![
+            make_need(
+                MaslowLevel::SelfActualisation,
+                "Achieving fair and balanced consensus",
+                0.9,
+            ),
+            make_need(
+                MaslowLevel::Safety,
+                "Ensuring all criteria are addressed",
+                0.85,
+            ),
+        ],
+    )
+}
+
+fn spawn_academic_agents() -> Vec<EvaluatorAgent> {
+    vec![
+        make_agent(
+            "Prof. Eleanor Harding",
+            "Subject Expert",
+            "Academic Subject Matter",
+            "Professor with deep domain knowledge across multiple disciplines. \
+             Focuses on accuracy of claims, depth of understanding, and appropriate \
+             use of primary and secondary sources.",
+            vec![
+                make_need(MaslowLevel::Esteem, "Recognition of scholarly rigour", 0.8),
+                make_need(MaslowLevel::SelfActualisation, "Advancing knowledge in the field", 0.7),
+            ],
+        ),
+        make_agent(
+            "Dr. Marcus Chen",
+            "Academic Writing Specialist",
+            "Academic Writing",
+            "Expert in academic writing conventions, essay structure, and clear \
+             argumentation. Evaluates logical flow, paragraph cohesion, and \
+             whether the writing meets the expected academic register.",
+            vec![
+                make_need(MaslowLevel::Esteem, "Maintaining high writing standards", 0.8),
+                make_need(MaslowLevel::Belonging, "Upholding academic community norms", 0.6),
+            ],
+        ),
+        make_agent(
+            "Dr. Amira Osei",
+            "Critical Thinking Assessor",
+            "Critical Analysis",
+            "Specialist in evaluating higher-order thinking skills: analysis, \
+             synthesis, and evaluation. Looks for original thought, logical \
+             coherence, and well-supported argumentation beyond mere description.",
+            vec![
+                make_need(MaslowLevel::SelfActualisation, "Identifying genuine original insight", 0.85),
+                make_need(MaslowLevel::Esteem, "Distinguishing surface from deep analysis", 0.7),
+            ],
+        ),
+    ]
+}
+
+fn spawn_tender_agents() -> Vec<EvaluatorAgent> {
+    vec![
+        make_agent(
+            "Sarah Mitchell",
+            "Procurement Lead",
+            "Procurement & Compliance",
+            "Senior procurement professional who ensures submissions comply with \
+             all mandatory requirements, documentation standards, and process \
+             rules. Flags non-compliant bids before quality scoring begins.",
+            vec![
+                make_need(MaslowLevel::Safety, "Ensuring process compliance and audit trail", 0.9),
+                make_need(MaslowLevel::Physiological, "All mandatory documents present and complete", 0.85),
+            ],
+        ),
+        make_agent(
+            "Dr. James Okonkwo",
+            "Domain Expert",
+            "Technical Delivery",
+            "Technical specialist who assesses feasibility, methodology soundness, \
+             and whether the proposed approach will actually deliver the required \
+             outcomes. Looks for realistic timelines and proven methods.",
+            vec![
+                make_need(MaslowLevel::Esteem, "Recognising technically sound approaches", 0.8),
+                make_need(MaslowLevel::Safety, "Identifying delivery risks early", 0.75),
+            ],
+        ),
+        make_agent(
+            "Priya Sharma",
+            "Social Value Champion",
+            "Social Value & Sustainability",
+            "Specialist in evaluating community impact, TOMs measures, and \
+             sustainability commitments. Ensures social value proposals are \
+             measurable, deliverable, and genuinely additional.",
+            vec![
+                make_need(MaslowLevel::Belonging, "Ensuring community voices are represented", 0.85),
+                make_need(MaslowLevel::SelfActualisation, "Driving meaningful social change through procurement", 0.8),
+            ],
+        ),
+        make_agent(
+            "Robert Tanaka",
+            "Finance Assessor",
+            "Financial Analysis",
+            "Chartered accountant who scrutinises pricing models, cost breakdowns, \
+             and value-for-money calculations. Identifies hidden costs, unsustainable \
+             pricing, and commercial risk in financial submissions.",
+            vec![
+                make_need(MaslowLevel::Safety, "Protecting against financial risk and unsustainable bids", 0.85),
+                make_need(MaslowLevel::Esteem, "Ensuring transparent and defensible pricing", 0.7),
+            ],
+        ),
+    ]
+}
+
+fn spawn_policy_agents() -> Vec<EvaluatorAgent> {
+    vec![
+        make_agent(
+            "Dr. Helena Voss",
+            "Policy Analyst",
+            "Policy Analysis",
+            "Senior policy analyst who evaluates strategic coherence, evidence base, \
+             and alignment with stated objectives. Examines whether policy proposals \
+             are grounded in data and achievable within constraints.",
+            vec![
+                make_need(MaslowLevel::Esteem, "Producing rigorous, evidence-based analysis", 0.85),
+                make_need(MaslowLevel::SelfActualisation, "Contributing to better public outcomes", 0.7),
+            ],
+        ),
+        make_agent(
+            "Maria Santos",
+            "Stakeholder Representative",
+            "Community & Stakeholder Engagement",
+            "Advocate for affected communities and stakeholder groups. Ensures that \
+             policy proposals consider diverse perspectives, address equity concerns, \
+             and include meaningful engagement mechanisms.",
+            vec![
+                make_need(MaslowLevel::Belonging, "Ensuring affected groups have a voice", 0.9),
+                make_need(MaslowLevel::Safety, "Protecting vulnerable populations from harm", 0.8),
+            ],
+        ),
+        make_agent(
+            "Tom Brennan",
+            "Implementation Expert",
+            "Programme Delivery",
+            "Experienced programme manager who assesses delivery feasibility, \
+             resource requirements, risk mitigation, and implementation timelines. \
+             Focuses on whether proposals can move from paper to practice.",
+            vec![
+                make_need(MaslowLevel::Safety, "Identifying implementation risks before they materialise", 0.85),
+                make_need(MaslowLevel::Esteem, "Ensuring realistic and deliverable plans", 0.7),
+            ],
+        ),
+    ]
+}
+
+fn spawn_survey_agents() -> Vec<EvaluatorAgent> {
+    vec![
+        make_agent(
+            "Prof. Yuki Nakamura",
+            "Statistician",
+            "Statistical Methods",
+            "Expert in sampling design, statistical validity, and reliability analysis. \
+             Evaluates whether the methodology will produce robust, generalisable \
+             findings with appropriate confidence levels.",
+            vec![
+                make_need(MaslowLevel::Esteem, "Ensuring methodological soundness", 0.85),
+                make_need(MaslowLevel::SelfActualisation, "Advancing best practice in research methods", 0.7),
+            ],
+        ),
+        make_agent(
+            "Dr. Fiona Adebayo",
+            "Domain Expert",
+            "Research Design",
+            "Research design specialist who evaluates question construction, survey \
+             flow, and relevance to research objectives. Identifies leading questions, \
+             gaps in coverage, and response burden issues.",
+            vec![
+                make_need(MaslowLevel::Esteem, "Crafting questions that yield actionable data", 0.8),
+                make_need(MaslowLevel::Belonging, "Representing respondent experience accurately", 0.7),
+            ],
+        ),
+        make_agent(
+            "Dr. Isaac Lowe",
+            "Ethics Reviewer",
+            "Research Ethics",
+            "Research ethics specialist who evaluates consent procedures, data \
+             protection, representation, and potential for bias or harm. Ensures \
+             the research meets ethical standards and protects participants.",
+            vec![
+                make_need(MaslowLevel::Safety, "Protecting research participants from harm", 0.9),
+                make_need(MaslowLevel::Belonging, "Ensuring fair representation of all groups", 0.8),
+            ],
+        ),
+    ]
+}
+
+fn spawn_legal_agents() -> Vec<EvaluatorAgent> {
+    vec![
+        make_agent(
+            "Catherine Park",
+            "Legal Reviewer",
+            "Legal Analysis",
+            "Senior solicitor who analyses contractual clauses, identifies legal \
+             risks, and assesses enforceability. Examines liability allocation, \
+             indemnities, and dispute resolution mechanisms.",
+            vec![
+                make_need(MaslowLevel::Safety, "Identifying and mitigating legal risk", 0.9),
+                make_need(MaslowLevel::Esteem, "Providing precise and defensible legal analysis", 0.8),
+            ],
+        ),
+        make_agent(
+            "David Okoye",
+            "Compliance Officer",
+            "Regulatory Compliance",
+            "Regulatory compliance expert who checks alignment with applicable \
+             laws, standards, and industry regulations. Ensures documents meet \
+             all statutory and sector-specific requirements.",
+            vec![
+                make_need(MaslowLevel::Safety, "Ensuring full regulatory alignment", 0.9),
+                make_need(MaslowLevel::Physiological, "All mandatory compliance elements present", 0.8),
+            ],
+        ),
+        make_agent(
+            "Laura Fleming",
+            "Commercial Analyst",
+            "Commercial Terms",
+            "Commercial analyst who evaluates financial terms, liability caps, \
+             payment structures, and overall commercial balance. Identifies \
+             terms that create undue exposure or imbalance.",
+            vec![
+                make_need(MaslowLevel::Safety, "Protecting against commercial exposure", 0.85),
+                make_need(MaslowLevel::Esteem, "Achieving fair and balanced commercial terms", 0.7),
+            ],
+        ),
+    ]
+}
+
+fn spawn_generic_agents() -> Vec<EvaluatorAgent> {
+    vec![
+        make_agent(
+            "Dr. Rachel Kim",
+            "Quality Assessor",
+            "Quality Evaluation",
+            "Generalist quality assessor who evaluates overall clarity, completeness, \
+             and fitness for purpose. Provides a holistic view of document quality \
+             across structure, content, and presentation.",
+            vec![
+                make_need(MaslowLevel::Esteem, "Maintaining consistent quality standards", 0.8),
+                make_need(MaslowLevel::Safety, "Ensuring completeness and accuracy", 0.75),
+            ],
+        ),
+        make_agent(
+            "Dr. Samuel Grant",
+            "Evidence Reviewer",
+            "Evidence Assessment",
+            "Evidence specialist who evaluates specificity, data quality, and \
+             citation practices. Distinguishes between assertion and evidence, \
+             and checks that claims are properly supported.",
+            vec![
+                make_need(MaslowLevel::Esteem, "Upholding evidence-based standards", 0.85),
+                make_need(MaslowLevel::SelfActualisation, "Distinguishing genuine evidence from rhetoric", 0.7),
+            ],
+        ),
+        make_agent(
+            "Prof. Nadia Petrova",
+            "Domain Expert",
+            "Subject Matter Expertise",
+            "Broad subject matter expert who assesses accuracy of domain-specific \
+             claims, appropriate use of terminology, and depth of subject knowledge \
+             demonstrated in the document.",
+            vec![
+                make_need(MaslowLevel::Esteem, "Recognition of deep domain knowledge", 0.8),
+                make_need(MaslowLevel::SelfActualisation, "Identifying insights that advance the field", 0.7),
+            ],
+        ),
+    ]
+}
+
+/// Wire up trust weights between all agents in the panel.
+/// Moderator gets 0.6 trust toward all others; non-moderators get 0.5 toward all others.
+fn wire_trust_weights(agents: &mut Vec<EvaluatorAgent>) {
+    let ids_and_roles: Vec<(String, String)> = agents
+        .iter()
+        .map(|a| (a.id.clone(), a.role.clone()))
+        .collect();
+
+    for agent in agents.iter_mut() {
+        let is_moderator = agent.role == "Panel Moderator";
+        let trust_level = if is_moderator { 0.6 } else { 0.5 };
+
+        agent.trust_weights = ids_and_roles
+            .iter()
+            .filter(|(id, _)| *id != agent.id)
+            .map(|(id, role)| TrustRelation {
+                target_agent_id: id.clone(),
+                domain: role.clone(),
+                trust_level,
+            })
+            .collect();
+    }
 }
 
 #[cfg(test)]
@@ -281,5 +687,93 @@ mod tests {
         assert!(turtle.contains("Dr. \\\"Quotes\\\" O'Brien"));
         assert!(turtle.contains("Lead\\nReviewer"));
         assert!(turtle.contains("Handles \\\"edge cases\\\"\\nwell"));
+    }
+
+    // ========================================================================
+    // Agent spawner tests
+    // ========================================================================
+
+    #[test]
+    fn test_spawn_academic_panel() {
+        let framework = crate::criteria::academic_essay_framework();
+        let panel = spawn_panel("mark this essay", &framework);
+        assert!(panel.len() >= 4, "Academic panel should have >= 4 agents, got {}", panel.len());
+        assert!(panel.iter().any(|a| a.role == "Panel Moderator"));
+    }
+
+    #[test]
+    fn test_spawn_tender_panel() {
+        let framework = crate::criteria::generic_quality_framework();
+        let panel = spawn_panel("score this tender bid against ITT criteria", &framework);
+        assert!(panel.len() >= 5, "Tender panel should have >= 5 agents, got {}", panel.len());
+        assert!(panel.iter().any(|a| a.role == "Panel Moderator"));
+    }
+
+    #[test]
+    fn test_detect_domain() {
+        assert_eq!(detect_domain("mark this essay for A-level economics"), EvalDomain::Academic);
+        assert_eq!(detect_domain("score this tender bid"), EvalDomain::Tender);
+        assert_eq!(detect_domain("audit this policy document"), EvalDomain::Policy);
+        assert_eq!(detect_domain("review this survey methodology"), EvalDomain::Survey);
+        assert_eq!(detect_domain("check this contract for issues"), EvalDomain::Legal);
+        assert_eq!(detect_domain("evaluate this random thing"), EvalDomain::Generic);
+    }
+
+    #[test]
+    fn test_panel_has_trust_weights() {
+        let framework = crate::criteria::generic_quality_framework();
+        let panel = spawn_panel("evaluate this", &framework);
+        for agent in &panel {
+            if agent.role != "Panel Moderator" {
+                assert!(!agent.trust_weights.is_empty(),
+                    "Agent {} should have trust weights", agent.name);
+            }
+        }
+    }
+
+    #[test]
+    fn test_panel_agents_have_needs() {
+        let framework = crate::criteria::generic_quality_framework();
+        let panel = spawn_panel("evaluate this", &framework);
+        for agent in &panel {
+            assert!(!agent.needs.is_empty(), "Agent {} should have needs", agent.name);
+        }
+    }
+
+    #[test]
+    fn test_moderator_trust_level() {
+        let framework = crate::criteria::generic_quality_framework();
+        let panel = spawn_panel("evaluate this", &framework);
+        let moderator = panel.iter().find(|a| a.role == "Panel Moderator").unwrap();
+        for tw in &moderator.trust_weights {
+            assert!((tw.trust_level - 0.6).abs() < 1e-10,
+                "Moderator trust should be 0.6, got {}", tw.trust_level);
+        }
+    }
+
+    #[test]
+    fn test_non_moderator_trust_level() {
+        let framework = crate::criteria::generic_quality_framework();
+        let panel = spawn_panel("evaluate this", &framework);
+        for agent in panel.iter().filter(|a| a.role != "Panel Moderator") {
+            for tw in &agent.trust_weights {
+                assert!((tw.trust_level - 0.5).abs() < 1e-10,
+                    "Non-moderator trust should be 0.5, got {}", tw.trust_level);
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_agents_have_unique_ids() {
+        let framework = crate::criteria::generic_quality_framework();
+        let panel = spawn_panel("mark this essay", &framework);
+        let ids: Vec<&str> = panel.iter().map(|a| a.id.as_str()).collect();
+        for (i, id) in ids.iter().enumerate() {
+            for (j, other) in ids.iter().enumerate() {
+                if i != j {
+                    assert_ne!(id, other, "Agent IDs must be unique");
+                }
+            }
+        }
     }
 }
