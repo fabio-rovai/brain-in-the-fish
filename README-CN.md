@@ -5,7 +5,7 @@
 <h1 align="center">Brain in the Fish</h1>
 
 <p align="center">
-  <strong>基于 Rust 的 MCP 服务器，用于通用文档评估——认知建模的 AI 智能体，以 OWL 本体为骨架，配合 SNN 反幻觉验证。</strong>
+  <strong>通用文档评估与预测可信度 MCP 服务器——SNN 反幻觉验证 + OWL 本体骨架 + 贝叶斯校准。MiroFish 缺失的大脑。</strong>
 </p>
 
 <p align="center">

@@ -115,14 +115,12 @@ fn run_graph(path: Option<PathBuf>) -> anyhow::Result<()> {
                         if let Ok(entries) = std::fs::read_dir("/tmp") {
                             for entry in entries.flatten() {
                                 let gpath = entry.path().join("evaluation-graph.html");
-                                if gpath.exists() {
-                                    if let Ok(meta) = gpath.metadata() {
-                                        if let Ok(modified) = meta.modified() {
-                                            if latest.as_ref().map_or(true, |(_, t)| modified > *t) {
-                                                latest = Some((gpath, modified));
-                                            }
-                                        }
-                                    }
+                                if gpath.exists()
+                                    && let Ok(meta) = gpath.metadata()
+                                    && let Ok(modified) = meta.modified()
+                                    && latest.as_ref().is_none_or(|(_, t)| modified > *t)
+                                {
+                                    latest = Some((gpath, modified));
                                 }
                             }
                         }

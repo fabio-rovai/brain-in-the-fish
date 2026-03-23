@@ -5,7 +5,7 @@
 <h1 align="center">Brain in the Fish</h1>
 
 <p align="center">
-  <strong>A Rust-native MCP server for universal document evaluation — cognitively-modelled AI agents with OWL ontology backbone and SNN anti-hallucination verification.</strong>
+  <strong>Universal document evaluation & prediction credibility MCP server — SNN anti-hallucination verification + OWL ontology backbone + Bayesian calibration. The brain that MiroFish was missing.</strong>
 </p>
 
 <p align="center">
