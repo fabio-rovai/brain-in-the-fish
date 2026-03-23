@@ -15,6 +15,10 @@
   <img src="https://img.shields.io/badge/rust-edition%202024-orange" alt="Rust" />
 </p>
 
+<p align="center">
+  <a href="README.md">English</a> | <a href="README-CN.md">中文</a>
+</p>
+
 ---
 
 ## The Problem
