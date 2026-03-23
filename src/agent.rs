@@ -155,6 +155,7 @@ pub enum EvalDomain {
     Policy,
     Survey,
     Legal,
+    Clinical,
     Generic,
 }
 
@@ -187,6 +188,11 @@ pub fn detect_domain(intent: &str) -> EvalDomain {
         .any(|kw| lower.contains(kw))
     {
         EvalDomain::Legal
+    } else if ["nhs", "clinical", "governance", "patient"]
+        .iter()
+        .any(|kw| lower.contains(kw))
+    {
+        EvalDomain::Clinical
     } else {
         EvalDomain::Generic
     }
@@ -202,6 +208,7 @@ pub fn spawn_panel(intent: &str, _framework: &EvaluationFramework) -> Vec<Evalua
         EvalDomain::Policy => spawn_policy_agents(),
         EvalDomain::Survey => spawn_survey_agents(),
         EvalDomain::Legal => spawn_legal_agents(),
+        EvalDomain::Clinical => spawn_clinical_agents(),
         EvalDomain::Generic => spawn_generic_agents(),
     };
 
@@ -483,6 +490,47 @@ fn spawn_legal_agents() -> Vec<EvaluatorAgent> {
     ]
 }
 
+fn spawn_clinical_agents() -> Vec<EvaluatorAgent> {
+    vec![
+        make_agent(
+            "Dr. Helen Cartwright",
+            "Clinical Governance Lead",
+            "Patient Safety & Governance",
+            "Senior clinical governance lead with extensive experience in patient safety, \
+             incident investigation, and risk management. Evaluates whether safety systems \
+             are proactive, reporting is comprehensive, and safeguarding is robust.",
+            vec![
+                make_need(MaslowLevel::Safety, "Ensuring patient safety above all else", 0.95),
+                make_need(MaslowLevel::Esteem, "Maintaining the highest governance standards", 0.8),
+            ],
+        ),
+        make_agent(
+            "Prof. Rajan Mehta",
+            "Clinical Effectiveness Reviewer",
+            "Evidence-Based Practice",
+            "Consultant physician and clinical audit lead who assesses adherence to \
+             evidence-based practice, quality of clinical audit programmes, and whether \
+             outcomes data demonstrates continuous improvement.",
+            vec![
+                make_need(MaslowLevel::SelfActualisation, "Driving evidence-based improvement in care", 0.85),
+                make_need(MaslowLevel::Esteem, "Ensuring clinical decisions are grounded in best evidence", 0.8),
+            ],
+        ),
+        make_agent(
+            "Janet Okafor",
+            "Patient Experience Advocate",
+            "Patient Voice & Complaints",
+            "Patient experience manager who ensures the patient voice is central to \
+             governance assessments. Evaluates feedback mechanisms, complaints handling \
+             timeliness, dignity in care, and whether learning from complaints drives change.",
+            vec![
+                make_need(MaslowLevel::Belonging, "Amplifying the patient voice in governance", 0.9),
+                make_need(MaslowLevel::Safety, "Protecting patient dignity and rights", 0.85),
+            ],
+        ),
+    ]
+}
+
 fn spawn_generic_agents() -> Vec<EvaluatorAgent> {
     vec![
         make_agent(
@@ -716,7 +764,20 @@ mod tests {
         assert_eq!(detect_domain("audit this policy document"), EvalDomain::Policy);
         assert_eq!(detect_domain("review this survey methodology"), EvalDomain::Survey);
         assert_eq!(detect_domain("check this contract for issues"), EvalDomain::Legal);
+        assert_eq!(detect_domain("assess nhs clinical governance"), EvalDomain::Clinical);
+        assert_eq!(detect_domain("review patient safety"), EvalDomain::Clinical);
         assert_eq!(detect_domain("evaluate this random thing"), EvalDomain::Generic);
+    }
+
+    #[test]
+    fn test_spawn_clinical_panel() {
+        let framework = crate::criteria::nhs_clinical_governance_framework();
+        let panel = spawn_panel("assess nhs clinical governance", &framework);
+        assert!(panel.len() >= 4, "Clinical panel should have >= 4 agents, got {}", panel.len());
+        assert!(panel.iter().any(|a| a.role == "Panel Moderator"));
+        assert!(panel.iter().any(|a| a.role == "Clinical Governance Lead"));
+        assert!(panel.iter().any(|a| a.role == "Clinical Effectiveness Reviewer"));
+        assert!(panel.iter().any(|a| a.role == "Patient Experience Advocate"));
     }
 
     #[test]
