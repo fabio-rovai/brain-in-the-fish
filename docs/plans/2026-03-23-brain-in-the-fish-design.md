@@ -72,7 +72,8 @@ The system generates appropriate ontologies for both.
 │    └──────────────────┘   └──────────────────┘          │
 │                                                          │
 ├─────────────────────────────────────────────────────────┤
-│  External: Claude API (LLM calls for agent reasoning)    │
+│  Agents: Claude Agent SDK subagents (each agent is a    │
+│  real Claude instance with full context + MCP tools)     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -645,7 +646,7 @@ NL: "How does this essay compare to the last batch I marked?"
 | **Ontology ops** | open-ontologies as library crate | Direct `Arc<GraphStore>` — zero network overhead |
 | **Embeddings** | tract-onnx + BGE-small | Same as open-ontologies, in-process |
 | **PDF parsing** | lopdf + pdftotext (or pdf-extract-api) | Pure Rust PDF extraction |
-| **LLM** | Claude API via reqwest | Agent reasoning, claim extraction, debate |
+| **LLM** | Claude Agent SDK (subagents) | Each evaluator agent is a real Claude subagent with full context + MCP tool access |
 | **MCP transport** | rmcp 1.1.1 (stdio + HTTP) | Expose evaluation tools to Claude Code/Desktop |
 | **Desktop UI** | Tauri 2 + Vue 3 + D3.js | Matches open-ontologies Studio pattern |
 | **State/audit** | SQLite via rusqlite | Lineage, feedback, versioning |

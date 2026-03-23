@@ -158,11 +158,15 @@ pub fn split_into_sections(text: &str) -> Vec<RawSection> {
     sections
 }
 
-/// Build an EvalDocument from a PDF file (text extraction + section splitting only).
+/// Build an EvalDocument from a file (PDF or plain text).
 ///
-/// Claim and Evidence extraction happens later via LLM (Task 4).
+/// Claim and Evidence extraction happens later via LLM.
 pub fn ingest_pdf(path: &Path, _intent: &str) -> anyhow::Result<(EvalDocument, Vec<RawSection>)> {
-    let text = extract_pdf_text(path)?;
+    let text = match path.extension().and_then(|e| e.to_str()) {
+        Some("pdf") => extract_pdf_text(path)?,
+        _ => std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?,
+    };
     let raw_sections = split_into_sections(&text);
 
     let total_words: u32 = raw_sections.iter().map(|s| s.word_count).sum();
