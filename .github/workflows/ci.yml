@@ -13,20 +13,33 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
+
       - name: Checkout open-ontologies dependency
         uses: actions/checkout@v4
         with:
           repository: fabio-rovai/open-ontologies
           path: open-ontologies
-      - name: Fix dependency path
-        run: sed -i 's|path = "../open-ontologies"|path = "open-ontologies"|' Cargo.toml
+
+      - name: Fix dependency paths for CI
+        run: |
+          # Workspace crates reference ../../../open-ontologies — in CI it's at ./open-ontologies
+          sed -i 's|path = "../../../open-ontologies"|path = "../../open-ontologies"|' crates/core/Cargo.toml
+          sed -i 's|path = "../../../open-ontologies"|path = "../../open-ontologies"|' crates/cli/Cargo.toml
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Build
-        run: cargo build
+        run: cargo build --workspace
+
       - name: Test
-        run: cargo test
+        run: cargo test --workspace
+
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Benchmark (synthetic)
+        run: cargo run --bin brain-in-the-fish -- benchmark

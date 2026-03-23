@@ -3,3 +3,8 @@
 .env
 Cargo.lock
 docs/plans/
+
+# Large raw datasets (keep only processed samples)
+data/*.parquet
+data/*.tsv
+data/*.csv
