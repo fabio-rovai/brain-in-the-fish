@@ -368,6 +368,94 @@ pub fn academic_essay_framework() -> EvaluationFramework {
     }
 }
 
+// ── File-based criteria parsing ──────────────────────────────────────────────
+
+/// Raw framework format for deserialization from YAML/JSON files.
+#[derive(Debug, serde::Deserialize)]
+struct RawFramework {
+    name: String,
+    #[serde(default)]
+    pass_mark: Option<f64>,
+    criteria: Vec<RawCriterion>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RawCriterion {
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    max_score: f64,
+    weight: f64,
+    #[serde(default)]
+    rubric: Vec<RawRubricLevel>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RawRubricLevel {
+    level: String,
+    score_range: String,
+    descriptor: String,
+}
+
+impl RawFramework {
+    fn into_framework(self) -> EvaluationFramework {
+        let total_weight: f64 = self.criteria.iter().map(|c| c.weight).sum();
+        let criteria = self
+            .criteria
+            .into_iter()
+            .map(|c| {
+                let rubric_levels = c
+                    .rubric
+                    .into_iter()
+                    .map(|r| RubricLevel {
+                        level: r.level,
+                        score_range: r.score_range,
+                        descriptor: r.descriptor,
+                    })
+                    .collect();
+                EvaluationCriterion {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: c.title,
+                    description: c.description,
+                    max_score: c.max_score,
+                    weight: c.weight,
+                    rubric_levels,
+                    sub_criteria: vec![],
+                }
+            })
+            .collect();
+
+        EvaluationFramework {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: self.name,
+            total_weight,
+            pass_mark: self.pass_mark,
+            criteria,
+        }
+    }
+}
+
+/// Parse an evaluation framework from a YAML or JSON file.
+pub fn parse_framework_from_file(path: &std::path::Path) -> anyhow::Result<EvaluationFramework> {
+    let content = std::fs::read_to_string(path)?;
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    match ext {
+        "yaml" | "yml" => {
+            let raw: RawFramework = serde_yaml::from_str(&content)?;
+            Ok(raw.into_framework())
+        }
+        "json" => {
+            let raw: RawFramework = serde_json::from_str(&content)?;
+            Ok(raw.into_framework())
+        }
+        _ => anyhow::bail!(
+            "Unsupported criteria file format '{}'. Use .yaml, .yml, or .json",
+            ext
+        ),
+    }
+}
+
 /// Built-in HM Treasury Green Book impact assessment framework.
 pub fn policy_greenbook_framework() -> EvaluationFramework {
     let rubric = |desc_outstanding: &str, desc_good: &str, desc_adequate: &str, desc_inadequate: &str| -> Vec<RubricLevel> {
@@ -1193,6 +1281,63 @@ mod tests {
             assert_eq!(criterion.rubric_levels[0].level, "Band 5");
             assert_eq!(criterion.rubric_levels[4].level, "Band 1");
         }
+    }
+
+    #[test]
+    fn test_parse_yaml_framework() {
+        let yaml = r#"
+name: "Test Framework"
+pass_mark: 60.0
+criteria:
+  - title: "Quality"
+    max_score: 10
+    weight: 0.5
+    rubric:
+      - level: "Good"
+        score_range: "7-10"
+        descriptor: "High quality"
+  - title: "Clarity"
+    max_score: 10
+    weight: 0.5
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yaml");
+        std::fs::write(&path, yaml).unwrap();
+
+        let fw = parse_framework_from_file(&path).unwrap();
+        assert_eq!(fw.name, "Test Framework");
+        assert_eq!(fw.criteria.len(), 2);
+        assert_eq!(fw.pass_mark, Some(60.0));
+        assert_eq!(fw.criteria[0].rubric_levels.len(), 1);
+        assert_eq!(fw.criteria[1].rubric_levels.len(), 0);
+        assert!((fw.total_weight - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_parse_json_framework() {
+        let json = r#"{"name": "JSON Test", "criteria": [{"title": "X", "max_score": 10, "weight": 1.0}]}"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.json");
+        std::fs::write(&path, json).unwrap();
+
+        let fw = parse_framework_from_file(&path).unwrap();
+        assert_eq!(fw.name, "JSON Test");
+        assert_eq!(fw.criteria.len(), 1);
+        assert_eq!(fw.pass_mark, None);
+    }
+
+    #[test]
+    fn test_parse_unsupported_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        std::fs::write(&path, "not a framework").unwrap();
+
+        let result = parse_framework_from_file(&path);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Unsupported"),
+            "Should report unsupported format"
+        );
     }
 
     #[test]

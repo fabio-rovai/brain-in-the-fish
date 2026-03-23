@@ -1,0 +1,74 @@
+name: "Custom Essay Rubric"
+pass_mark: 50.0
+criteria:
+  - title: "Argument Quality"
+    description: "Strength and coherence of the central argument"
+    max_score: 10
+    weight: 0.30
+    rubric:
+      - level: "Excellent"
+        score_range: "9-10"
+        descriptor: "Compelling, well-structured argument with clear thesis supported throughout"
+      - level: "Good"
+        score_range: "6-8"
+        descriptor: "Clear argument with mostly consistent support"
+      - level: "Adequate"
+        score_range: "4-5"
+        descriptor: "Argument present but inconsistently developed"
+      - level: "Poor"
+        score_range: "0-3"
+        descriptor: "No clear argument or contradictory reasoning"
+
+  - title: "Use of Evidence"
+    description: "Quality and relevance of supporting evidence"
+    max_score: 10
+    weight: 0.25
+    rubric:
+      - level: "Excellent"
+        score_range: "9-10"
+        descriptor: "Multiple relevant, recent sources with quantified data"
+      - level: "Good"
+        score_range: "6-8"
+        descriptor: "Several relevant sources cited appropriately"
+      - level: "Adequate"
+        score_range: "4-5"
+        descriptor: "Some evidence but limited range or relevance"
+      - level: "Poor"
+        score_range: "0-3"
+        descriptor: "Little or no evidence cited"
+
+  - title: "Critical Analysis"
+    description: "Depth of analysis and evaluation"
+    max_score: 10
+    weight: 0.25
+    rubric:
+      - level: "Excellent"
+        score_range: "9-10"
+        descriptor: "Sophisticated evaluation of competing perspectives with original insight"
+      - level: "Good"
+        score_range: "6-8"
+        descriptor: "Engages with multiple viewpoints, shows analytical depth"
+      - level: "Adequate"
+        score_range: "4-5"
+        descriptor: "Some analysis but largely descriptive"
+      - level: "Poor"
+        score_range: "0-3"
+        descriptor: "No analytical engagement, purely descriptive"
+
+  - title: "Writing Quality"
+    description: "Clarity, structure, and academic style"
+    max_score: 10
+    weight: 0.20
+    rubric:
+      - level: "Excellent"
+        score_range: "9-10"
+        descriptor: "Exceptionally clear, well-structured with precise academic language"
+      - level: "Good"
+        score_range: "6-8"
+        descriptor: "Clear writing with appropriate academic register"
+      - level: "Adequate"
+        score_range: "4-5"
+        descriptor: "Generally clear but inconsistent style"
+      - level: "Poor"
+        score_range: "0-3"
+        descriptor: "Unclear, poorly structured, inappropriate register"
