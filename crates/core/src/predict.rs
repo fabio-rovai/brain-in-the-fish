@@ -1,4 +1,7 @@
-//! Prediction credibility assessment.
+//! Prediction credibility assessment — two-stage pipeline.
+//!
+//! Stage 1: Subagent extraction (LLM-powered via extraction_prompt, with rule-based fallback)
+//! Stage 2: SNN verification (checks evidence actually exists and supports the prediction)
 //!
 //! Extracts predictions, forecasts, targets, and commitments from documents
 //! and assesses their credibility based on the evidence presented.
@@ -7,8 +10,10 @@
 //! whether predictions WITHIN the document are supported by evidence
 //! WITHIN the document. Grounded, deterministic, auditable.
 
+use crate::extract::{ExtractedItem, ExtractedType};
 use crate::types::*;
 use serde::Serialize;
+use std::collections::HashSet;
 
 /// A prediction or forecast found in the document.
 #[derive(Debug, Clone, Serialize)]
@@ -53,7 +58,128 @@ pub enum CredibilityVerdict {
     OverClaimed,        // Claims exceed what evidence supports
 }
 
-/// Extract predictions from a document.
+/// Result of SNN verification for a prediction.
+#[derive(Debug, Clone, Serialize)]
+pub struct VerificationResult {
+    pub prediction_id: String,
+    pub evidence_found: usize,
+    pub evidence_strength: f64,
+    pub counter_evidence: usize,
+    pub verification_score: f64,
+    pub verified: bool,
+    pub flag: Option<String>,
+}
+
+// ============================================================================
+// Stage 1: Subagent extraction prompt (for LLM-powered extraction)
+// ============================================================================
+
+/// Generate a prompt for Claude to extract predictions from a document section.
+/// Used when the module is called via MCP with Claude orchestrating.
+pub fn extraction_prompt(text: &str) -> String {
+    format!(
+        "Extract every prediction, target, forecast, commitment, and future claim from this text.\n\
+         \n\
+         For each, provide:\n\
+         - text: the exact prediction (first 100 chars)\n\
+         - type: QuantitativeTarget | QualitativeGoal | CostEstimate | Timeline | Commitment | ComparisonClaim\n\
+         - target_value: the specific number/percentage if any\n\
+         - timeframe: when it should be achieved\n\
+         - credibility: 0-100 based ONLY on evidence IN THIS DOCUMENT\n\
+         - verdict: WellSupported | PartiallySupported | Aspirational | Unsupported\n\
+         - supporting_evidence: what in the document supports this\n\
+         - risk_factors: what undermines this prediction\n\
+         - reason: one-line explanation of the credibility score\n\
+         \n\
+         RULES:\n\
+         - Only include FORWARD-LOOKING claims, not historical facts\n\
+         - 'Complaints increased 340%' is a FACT, not a prediction\n\
+         - 'Will reduce complaints by 50%' IS a prediction\n\
+         - Be skeptical: high credibility requires specific evidence, not just assertions\n\
+         - No duplicates\n\
+         \n\
+         Text:\n{}\n\
+         \n\
+         Return as JSON array.",
+        text
+    )
+}
+
+// ============================================================================
+// Stage 1: Rule-based extraction (fallback when no LLM available)
+// ============================================================================
+
+/// Past-tense verbs that indicate a fact, not a prediction.
+const PAST_TENSE_MARKERS: &[&str] = &[
+    "increased", "decreased", "was", "were", "showed", "found",
+    "demonstrated", "revealed", "rose", "fell", "dropped", "grew",
+    "declined", "surged", "doubled", "tripled", "halved",
+    "experienced", "recorded", "reported", "observed",
+];
+
+/// Check if a sentence is a past-tense fact rather than a prediction.
+fn is_past_tense_fact(lower: &str) -> bool {
+    // Must contain a past-tense marker AND not contain a future-tense marker
+    let has_past = PAST_TENSE_MARKERS.iter().any(|m| {
+        // Match whole words to avoid false positives
+        lower.split(|c: char| !c.is_alphanumeric()).any(|w| w == *m)
+    });
+    let has_future = lower.contains("will ")
+        || lower.contains("shall ")
+        || lower.contains("aims to")
+        || lower.contains("plan to")
+        || lower.contains("is expected to")
+        || lower.contains("is projected to");
+
+    has_past && !has_future
+}
+
+/// Compute Jaccard similarity between two strings (word-level).
+fn jaccard_similarity(a: &str, b: &str) -> f64 {
+    let a_words: HashSet<&str> = a.split_whitespace()
+        .filter(|w| w.len() > 2)
+        .collect();
+    let b_words: HashSet<&str> = b.split_whitespace()
+        .filter(|w| w.len() > 2)
+        .collect();
+    if a_words.is_empty() || b_words.is_empty() {
+        return 0.0;
+    }
+    let intersection = a_words.intersection(&b_words).count();
+    let union = a_words.union(&b_words).count();
+    intersection as f64 / union as f64
+}
+
+/// Deduplicate predictions by text similarity (>35% Jaccard = duplicate).
+/// A lower threshold catches semantically equivalent predictions phrased differently
+/// (e.g. "reduce complaints by 50% within 24 months" vs "reduce AI complaints by 50% in 24 months").
+/// Combined with same prediction_type, this avoids false deduplication of unrelated predictions.
+fn deduplicate_predictions(predictions: &mut Vec<Prediction>) {
+    let mut keep_indices: Vec<usize> = Vec::new();
+
+    for i in 0..predictions.len() {
+        let dominated = keep_indices.iter().any(|&j| {
+            let same_type = predictions[j].prediction_type == predictions[i].prediction_type;
+            let sim = jaccard_similarity(
+                &predictions[j].text.to_lowercase(),
+                &predictions[i].text.to_lowercase(),
+            );
+            // Same type + moderate text overlap = duplicate
+            (same_type && sim > 0.35) || sim > 0.8
+        });
+        if !dominated {
+            keep_indices.push(i);
+        }
+    }
+
+    let kept: Vec<Prediction> = keep_indices.into_iter()
+        .map(|i| predictions[i].clone())
+        .collect();
+    *predictions = kept;
+}
+
+/// Extract predictions from a document (rule-based, with bug fixes).
+/// Filters out past-tense facts and deduplicates results.
 pub fn extract_predictions(doc: &EvalDocument) -> Vec<Prediction> {
     let mut predictions = Vec::new();
 
@@ -62,6 +188,11 @@ pub fn extract_predictions(doc: &EvalDocument) -> Vec<Prediction> {
 
         for sentence in &sentences {
             let lower = sentence.to_lowercase();
+
+            // Filter: skip past-tense facts
+            if is_past_tense_fact(&lower) {
+                continue;
+            }
 
             // Quantitative targets: "reduce X by Y%", "achieve X%", "save £Y"
             if let Some(pred) = detect_quantitative_target(sentence, &lower, section) {
@@ -99,6 +230,9 @@ pub fn extract_predictions(doc: &EvalDocument) -> Vec<Prediction> {
             }
         }
     }
+
+    // Deduplicate: same sentence matched by multiple detectors or near-identical text
+    deduplicate_predictions(&mut predictions);
 
     predictions
 }
@@ -250,6 +384,10 @@ fn detect_commitment(sentence: &str, lower: &str, section: &Section) -> Option<P
     }
 }
 
+// ============================================================================
+// Stage 1b: Credibility assessment (rule-based)
+// ============================================================================
+
 /// Assess credibility of each prediction based on document evidence.
 pub fn assess_credibility(predictions: &mut [Prediction], doc: &EvalDocument) {
     let all_evidence: Vec<&Evidence> = all_sections(&doc.sections)
@@ -367,8 +505,100 @@ pub fn assess_credibility(predictions: &mut [Prediction], doc: &EvalDocument) {
     }
 }
 
-/// Generate a prediction credibility report section.
+// ============================================================================
+// Stage 2: SNN Verification
+// ============================================================================
+
+/// Verify a prediction's credibility using the SNN evidence graph.
+/// Checks if the claimed supporting evidence actually exists in the document
+/// and if evidence text actually supports what the prediction claims.
+pub fn verify_with_snn(
+    prediction: &Prediction,
+    _doc: &EvalDocument,
+    extracted_items: &[ExtractedItem],
+) -> VerificationResult {
+    let pred_keywords = extract_keywords(&prediction.text.to_lowercase());
+
+    // Check 1: Does supporting evidence exist in the document?
+    let mut evidence_found = 0;
+    let mut evidence_strength = 0.0;
+    for item in extracted_items {
+        if item.item_type == ExtractedType::Statistic
+            || item.item_type == ExtractedType::Citation
+            || item.item_type == ExtractedType::Evidence
+        {
+            let item_keywords = extract_keywords(&item.text.to_lowercase());
+            let overlap = keyword_overlap(&pred_keywords, &item_keywords);
+            if overlap > 0.15 {
+                evidence_found += 1;
+                evidence_strength += item.confidence * overlap;
+            }
+        }
+    }
+
+    // Check 2: Is there counter-evidence?
+    let mut counter_evidence = 0;
+    for item in extracted_items {
+        if item.item_type == ExtractedType::Claim {
+            let item_keywords = extract_keywords(&item.text.to_lowercase());
+            let overlap = keyword_overlap(&pred_keywords, &item_keywords);
+            if overlap > 0.2 {
+                // Same topic but different claim -- possible counter-evidence
+                counter_evidence += 1;
+            }
+        }
+    }
+
+    // Compute verification score
+    let evidence_score = (evidence_strength / 2.0).min(1.0);
+    let counter_penalty = (counter_evidence as f64 * 0.1).min(0.3);
+    let verification_score = (evidence_score - counter_penalty).max(0.0);
+
+    let verified = evidence_found > 0;
+    let flag = if !verified && prediction.credibility.score > 0.5 {
+        Some("UNVERIFIABLE: Subagent rated high credibility but SNN found no supporting evidence".into())
+    } else if verified && prediction.credibility.score < 0.2 {
+        Some("SNN CONFIRMS: Evidence exists but credibility rated low -- may be understated".into())
+    } else {
+        None
+    };
+
+    VerificationResult {
+        prediction_id: prediction.id.clone(),
+        evidence_found,
+        evidence_strength,
+        counter_evidence,
+        verification_score,
+        verified,
+        flag,
+    }
+}
+
+/// Run SNN verification on all predictions against extracted items.
+pub fn verify_all(
+    predictions: &[Prediction],
+    doc: &EvalDocument,
+    extracted_items: &[ExtractedItem],
+) -> Vec<VerificationResult> {
+    predictions.iter()
+        .map(|p| verify_with_snn(p, doc, extracted_items))
+        .collect()
+}
+
+// ============================================================================
+// Report generation
+// ============================================================================
+
+/// Generate a prediction credibility report section (with verification column).
 pub fn prediction_report(predictions: &[Prediction]) -> String {
+    prediction_report_with_verification(predictions, &[])
+}
+
+/// Generate a prediction credibility report section with SNN verification results.
+pub fn prediction_report_with_verification(
+    predictions: &[Prediction],
+    verifications: &[VerificationResult],
+) -> String {
     if predictions.is_empty() {
         return "## Prediction Credibility\n\nNo predictions, forecasts, or targets found in the document.\n\n".into();
     }
@@ -376,11 +606,21 @@ pub fn prediction_report(predictions: &[Prediction]) -> String {
     let mut r = String::from("## Prediction Credibility\n\n");
     r.push_str(&format!("{} predictions/targets extracted from the document.\n\n", predictions.len()));
 
-    r.push_str("| Prediction | Type | Credibility | Verdict |\n|---|---|---|---|\n");
+    r.push_str("| Prediction | Type | Credibility | Verdict | SNN Verified | Flag |\n|---|---|---|---|---|---|\n");
     for pred in predictions {
         let text = truncate(&pred.text, 60);
-        r.push_str(&format!("| {} | {:?} | {:.0}% | {:?} |\n",
-            text, pred.prediction_type, pred.credibility.score * 100.0, pred.credibility.verdict));
+        let verification = verifications.iter().find(|v| v.prediction_id == pred.id);
+        let verified_str = match verification {
+            Some(v) => if v.verified { "Yes" } else { "No" },
+            None => "N/A",
+        };
+        let flag_str = match verification {
+            Some(v) => v.flag.as_deref().unwrap_or("--"),
+            None => "--",
+        };
+        r.push_str(&format!("| {} | {:?} | {:.0}% | {:?} | {} | {} |\n",
+            text, pred.prediction_type, pred.credibility.score * 100.0, pred.credibility.verdict,
+            verified_str, flag_str));
     }
 
     r.push_str("\n### Details\n\n");
@@ -393,6 +633,17 @@ pub fn prediction_report(predictions: &[Prediction]) -> String {
             r.push_str(&format!("- Timeframe: {}\n", tf));
         }
         r.push_str(&format!("- Credibility: {:.0}% ({:?})\n", pred.credibility.score * 100.0, pred.credibility.verdict));
+
+        // Add SNN verification info
+        if let Some(v) = verifications.iter().find(|v| v.prediction_id == pred.id) {
+            r.push_str(&format!("- SNN Verified: {} (score: {:.2}, evidence items: {}, counter-evidence: {})\n",
+                if v.verified { "Yes" } else { "No" },
+                v.verification_score, v.evidence_found, v.counter_evidence));
+            if let Some(flag) = &v.flag {
+                r.push_str(&format!("- **FLAG:** {}\n", flag));
+            }
+        }
+
         if !pred.credibility.supporting_evidence.is_empty() {
             r.push_str("- Supporting evidence:\n");
             for ev in &pred.credibility.supporting_evidence {
@@ -451,7 +702,9 @@ impl Default for CredibilityAssessment {
     }
 }
 
+// ============================================================================
 // Helpers
+// ============================================================================
 
 fn all_sections(sections: &[Section]) -> Vec<&Section> {
     let mut result = Vec::new();
@@ -486,18 +739,45 @@ fn extract_number_with_unit(text: &str) -> Option<String> {
     if result.len() >= 2 { Some(result) } else { None }
 }
 
-fn extract_timeframe(lower: &str) -> Option<String> {
+/// Extract a timeframe from lowercased text.
+/// Fixed: "by X" patterns must start with temporal words, not percentages.
+pub fn extract_timeframe(lower: &str) -> Option<String> {
     // "within 24 months"
     if let Some(pos) = lower.find("within") {
         let rest = &lower[pos..];
         let end = rest.find('.').or_else(|| rest.find(',')).unwrap_or(rest.len().min(40));
         return Some(rest[..end].to_string());
     }
-    // "by March 2027"
+    // "by March 2027" — but NOT "by 340%" (percentage is not a timeframe)
     if let Some(pos) = lower.find("by ") {
-        let rest = &lower[pos..];
-        let end = rest.find('.').or_else(|| rest.find(',')).unwrap_or(rest.len().min(30));
-        return Some(rest[..end].to_string());
+        let rest = &lower[pos + 3..]; // skip "by "
+        let trimmed = rest.trim_start();
+        // Must start with a month name, year, or temporal word — not a digit followed by %
+        let starts_temporal = trimmed.starts_with("march")
+            || trimmed.starts_with("april")
+            || trimmed.starts_with("may")
+            || trimmed.starts_with("june")
+            || trimmed.starts_with("july")
+            || trimmed.starts_with("august")
+            || trimmed.starts_with("september")
+            || trimmed.starts_with("october")
+            || trimmed.starts_with("november")
+            || trimmed.starts_with("december")
+            || trimmed.starts_with("january")
+            || trimmed.starts_with("february")
+            || trimmed.starts_with("20") // year like 2025, 2027
+            || trimmed.starts_with("the end of")
+            || trimmed.starts_with("end of")
+            || trimmed.starts_with("q1")
+            || trimmed.starts_with("q2")
+            || trimmed.starts_with("q3")
+            || trimmed.starts_with("q4");
+
+        if starts_temporal {
+            let full_rest = &lower[pos..];
+            let end = full_rest.find('.').or_else(|| full_rest.find(',')).unwrap_or(full_rest.len().min(30));
+            return Some(full_rest[..end].to_string());
+        }
     }
     // "months 1-6", "months 7-12"
     if let Some(pos) = lower.find("months") {
@@ -508,7 +788,7 @@ fn extract_timeframe(lower: &str) -> Option<String> {
     None
 }
 
-fn extract_keywords(text: &str) -> Vec<String> {
+pub fn extract_keywords(text: &str) -> Vec<String> {
     let stops = ["the","a","an","and","or","of","in","on","to","for","is","are","was","were","be",
         "will","would","could","should","may","might","this","that","with","from","by","as","it","not"];
     text.split(|c: char| !c.is_alphanumeric())
@@ -517,7 +797,7 @@ fn extract_keywords(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn keyword_overlap(a: &[String], b: &[String]) -> f64 {
+pub fn keyword_overlap(a: &[String], b: &[String]) -> f64 {
     if a.is_empty() || b.is_empty() { return 0.0; }
     let matches = a.iter().filter(|w| b.contains(w)).count();
     matches as f64 / a.len() as f64
@@ -526,6 +806,10 @@ fn keyword_overlap(a: &[String], b: &[String]) -> f64 {
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max { s.to_string() } else { format!("{}...", &s[..max]) }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -603,6 +887,8 @@ mod tests {
         let report = prediction_report(&preds);
         assert!(report.contains("Prediction Credibility"));
         assert!(report.contains("Credibility"));
+        // New: report should contain SNN Verified column
+        assert!(report.contains("SNN Verified"));
     }
 
     #[test]
@@ -620,5 +906,181 @@ mod tests {
         assert_eq!(extract_timeframe("reduce complaints within 24 months"), Some("within 24 months".into()));
         assert_eq!(extract_timeframe("achieve compliance by march 2027"), Some("by march 2027".into()));
         assert_eq!(extract_timeframe("no timeframe here"), None);
+    }
+
+    // ---- New tests ----
+
+    #[test]
+    fn test_fact_filtering() {
+        // "complaints increased by 340%" should NOT be extracted as a prediction
+        let doc = EvalDocument {
+            id: "d1".into(), title: "Test".into(), doc_type: "policy".into(),
+            total_pages: None, total_word_count: Some(100),
+            sections: vec![Section {
+                id: "s1".into(), title: "Facts".into(),
+                text: "Between 2023 and 2025, AI-related complaints increased by 340%.".into(),
+                word_count: 10, page_range: None,
+                claims: vec![], evidence: vec![], subsections: vec![],
+            }],
+        };
+        let preds = extract_predictions(&doc);
+        assert!(preds.is_empty(), "Past-tense facts should not be predictions, got {} predictions", preds.len());
+    }
+
+    #[test]
+    fn test_deduplication() {
+        let doc = EvalDocument {
+            id: "d1".into(), title: "Test".into(), doc_type: "policy".into(),
+            total_pages: None, total_word_count: Some(100),
+            sections: vec![Section {
+                id: "s1".into(), title: "Goals".into(),
+                text: "This policy will reduce complaints by 50% within 24 months. \
+                       The objective is to reduce AI complaints by 50% in 24 months.".into(),
+                word_count: 20, page_range: None,
+                claims: vec![], evidence: vec![], subsections: vec![],
+            }],
+        };
+        let preds = extract_predictions(&doc);
+        assert_eq!(preds.len(), 1, "Near-duplicate predictions should be merged, got {}", preds.len());
+    }
+
+    #[test]
+    fn test_timeframe_not_percentage() {
+        let text = "complaints increased by 340% between 2023 and 2025";
+        let tf = extract_timeframe(text);
+        // Should NOT return "by 340%" as a timeframe
+        assert!(tf.is_none() || !tf.as_ref().unwrap().contains("340"),
+            "Timeframe should not capture percentages, got: {:?}", tf);
+    }
+
+    #[test]
+    fn test_verification_no_evidence() {
+        // Create a prediction and check SNN verification with no evidence
+        let pred = Prediction {
+            id: "p1".into(),
+            text: "reduce costs by 50%".into(),
+            section_id: "s1".into(),
+            section_title: "Goals".into(),
+            prediction_type: PredictionType::QuantitativeTarget,
+            target_value: Some("50%".into()),
+            timeframe: Some("within 12 months".into()),
+            credibility: CredibilityAssessment {
+                score: 0.8, confidence: 0.5,
+                supporting_evidence: vec![], risk_factors: vec![],
+                verdict: CredibilityVerdict::WellSupported,
+                explanation: String::new(),
+            },
+        };
+        let doc = EvalDocument {
+            id: "d1".into(), title: "Test".into(), doc_type: "policy".into(),
+            total_pages: None, total_word_count: Some(100),
+            sections: vec![],
+        };
+        let items: Vec<ExtractedItem> = vec![]; // No evidence
+        let result = verify_with_snn(&pred, &doc, &items);
+        assert!(!result.verified, "Should not be verified with no evidence");
+        assert!(result.flag.is_some(), "Should flag as unverifiable");
+        assert!(result.flag.as_ref().unwrap().contains("UNVERIFIABLE"),
+            "Flag should mention UNVERIFIABLE");
+    }
+
+    #[test]
+    fn test_verification_with_evidence() {
+        let pred = Prediction {
+            id: "p1".into(),
+            text: "reduce costs by 50% through automation".into(),
+            section_id: "s1".into(),
+            section_title: "Goals".into(),
+            prediction_type: PredictionType::QuantitativeTarget,
+            target_value: Some("50%".into()),
+            timeframe: Some("within 12 months".into()),
+            credibility: CredibilityAssessment {
+                score: 0.6, confidence: 0.5,
+                supporting_evidence: vec![], risk_factors: vec![],
+                verdict: CredibilityVerdict::PartiallySupported,
+                explanation: String::new(),
+            },
+        };
+        let doc = EvalDocument {
+            id: "d1".into(), title: "Test".into(), doc_type: "policy".into(),
+            total_pages: None, total_word_count: Some(100),
+            sections: vec![],
+        };
+        let items = vec![
+            ExtractedItem {
+                id: "e1".into(),
+                item_type: ExtractedType::Statistic,
+                text: "Automation reduced costs by 40% in the pilot programme".into(),
+                source_span: None,
+                extraction_method: crate::extract::ExtractionMethod::Rule,
+                confidence: 0.9,
+            },
+        ];
+        let result = verify_with_snn(&pred, &doc, &items);
+        assert!(result.verified, "Should be verified with matching evidence");
+        assert!(result.evidence_found >= 1);
+    }
+
+    #[test]
+    fn test_extraction_prompt_content() {
+        let prompt = extraction_prompt("Some document text about AI policy.");
+        assert!(prompt.contains("FORWARD-LOOKING"), "Prompt should mention forward-looking");
+        assert!(prompt.contains("FACT"), "Prompt should distinguish facts from predictions");
+        assert!(prompt.contains("JSON array"), "Prompt should request JSON output");
+    }
+
+    #[test]
+    fn test_past_tense_fact_detection() {
+        assert!(is_past_tense_fact("complaints increased by 340%"));
+        assert!(is_past_tense_fact("costs rose significantly last year"));
+        assert!(!is_past_tense_fact("we will reduce costs by 50%"));
+        assert!(!is_past_tense_fact("the plan aims to reduce costs"));
+    }
+
+    #[test]
+    fn test_jaccard_similarity() {
+        let sim = jaccard_similarity(
+            "reduce complaints by 50% within 24 months",
+            "reduce AI complaints by 50% in 24 months",
+        );
+        assert!(sim > 0.5, "Similar sentences should have high Jaccard, got {}", sim);
+
+        let sim2 = jaccard_similarity(
+            "reduce complaints by 50%",
+            "improve public trust in services",
+        );
+        assert!(sim2 < 0.3, "Different sentences should have low Jaccard, got {}", sim2);
+    }
+
+    #[test]
+    fn test_report_with_verification() {
+        let pred = Prediction {
+            id: "p1".into(),
+            text: "reduce costs by 50%".into(),
+            section_id: "s1".into(),
+            section_title: "Goals".into(),
+            prediction_type: PredictionType::QuantitativeTarget,
+            target_value: Some("50%".into()),
+            timeframe: None,
+            credibility: CredibilityAssessment {
+                score: 0.5, confidence: 0.5,
+                supporting_evidence: vec![], risk_factors: vec![],
+                verdict: CredibilityVerdict::PartiallySupported,
+                explanation: "test".into(),
+            },
+        };
+        let verification = VerificationResult {
+            prediction_id: "p1".into(),
+            evidence_found: 0,
+            evidence_strength: 0.0,
+            counter_evidence: 0,
+            verification_score: 0.0,
+            verified: false,
+            flag: Some("UNVERIFIABLE: test".into()),
+        };
+        let report = prediction_report_with_verification(&[pred], &[verification]);
+        assert!(report.contains("UNVERIFIABLE"));
+        assert!(report.contains("SNN Verified"));
+        assert!(report.contains("FLAG"));
     }
 }

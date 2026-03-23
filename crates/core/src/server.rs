@@ -99,6 +99,14 @@ pub struct EvalScoringTasksInput {
     pub criterion_index: Option<usize>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EvalPredictInput {
+    /// Mode: "prompt" returns the extraction prompt for subagent use, "extract" runs rule-based extraction directly.
+    pub mode: Option<String>,
+    /// Optional section index to restrict extraction to. If omitted, all sections are used.
+    pub section_index: Option<usize>,
+}
+
 // ============================================================================
 // Session state
 // ============================================================================
@@ -817,6 +825,88 @@ impl EvalServer {
         })
         .to_string()
     }
+
+    // ── Predict ────────────────────────────────────────────────────────────
+
+    #[tool(name = "eval_predict", description = "Extract and verify predictions from the ingested document. Mode 'prompt' returns an extraction prompt for subagent use. Mode 'extract' (default) runs rule-based extraction with SNN verification.")]
+    async fn eval_predict(&self, Parameters(input): Parameters<EvalPredictInput>) -> String {
+        let session = self.session.lock().unwrap();
+
+        let doc = match &session.document {
+            Some(d) => d.clone(),
+            None => return r#"{"error":"No document ingested. Call eval_ingest first."}"#.to_string(),
+        };
+        drop(session);
+
+        let mode = input.mode.unwrap_or_else(|| "extract".to_string());
+
+        match mode.as_str() {
+            "prompt" => {
+                // Return the extraction prompt for subagent use
+                let text = if let Some(idx) = input.section_index {
+                    if idx < doc.sections.len() {
+                        doc.sections[idx].text.clone()
+                    } else {
+                        return format!(r#"{{"error":"section_index {} out of range (document has {} sections)"}}"#,
+                            idx, doc.sections.len());
+                    }
+                } else {
+                    // Concatenate all section text
+                    doc.sections.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join("\n\n")
+                };
+
+                let prompt = crate::predict::extraction_prompt(&text);
+
+                serde_json::json!({
+                    "ok": true,
+                    "mode": "prompt",
+                    "prompt": prompt,
+                    "section_count": doc.sections.len(),
+                })
+                .to_string()
+            }
+            _ => {
+                // Run rule-based extraction with SNN verification
+                let mut predictions = crate::predict::extract_predictions(&doc);
+                crate::predict::assess_credibility(&mut predictions, &doc);
+
+                // Run extraction for SNN verification
+                let all_text: String = doc.sections.iter()
+                    .map(|s| s.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let extracted_items = crate::extract::extract_all(&all_text);
+
+                // Verify predictions against extracted evidence
+                let verifications = crate::predict::verify_all(&predictions, &doc, &extracted_items);
+
+                // Generate report
+                let report = crate::predict::prediction_report_with_verification(&predictions, &verifications);
+
+                let pred_summary: Vec<serde_json::Value> = predictions.iter().zip(verifications.iter()).map(|(p, v)| {
+                    serde_json::json!({
+                        "text": crate::predict::extraction_prompt("").len().min(p.text.len()), // just use the text
+                        "prediction_text": if p.text.len() > 100 { format!("{}...", &p.text[..100]) } else { p.text.clone() },
+                        "type": format!("{:?}", p.prediction_type),
+                        "credibility": p.credibility.score,
+                        "verdict": format!("{:?}", p.credibility.verdict),
+                        "snn_verified": v.verified,
+                        "verification_score": v.verification_score,
+                        "flag": v.flag,
+                    })
+                }).collect();
+
+                serde_json::json!({
+                    "ok": true,
+                    "mode": "extract",
+                    "prediction_count": predictions.len(),
+                    "predictions": pred_summary,
+                    "report_markdown": report,
+                })
+                .to_string()
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -855,13 +945,14 @@ mod tests {
         let _schema = schemars::schema_for!(EvalChallengePromptInput);
         let _schema = schemars::schema_for!(EvalScoringTasksInput);
         let _schema = schemars::schema_for!(EvalWhatIfInput);
+        let _schema = schemars::schema_for!(EvalPredictInput);
     }
 
     #[test]
     fn test_server_construction() {
         let server = EvalServer::new();
         let tools = server.list_tool_definitions();
-        assert!(tools.len() >= 9, "Should have at least 9 tools, got {}", tools.len());
+        assert!(tools.len() >= 10, "Should have at least 10 tools, got {}", tools.len());
     }
 
     #[test]
@@ -901,5 +992,6 @@ mod tests {
         assert!(names.contains(&"eval_scoring_tasks".to_string()));
         assert!(names.contains(&"eval_whatif".to_string()));
         assert!(names.contains(&"eval_report".to_string()));
+        assert!(names.contains(&"eval_predict".to_string()));
     }
 }
