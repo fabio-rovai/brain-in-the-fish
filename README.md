@@ -5,7 +5,7 @@
 <h1 align="center">Brain in the Fish</h1>
 
 <p align="center">
-  <strong>A Rust-native universal document evaluation engine where cognitively-modelled AI agents evaluate any document for any purpose — with their entire mental state living inside an OWL ontology.</strong>
+  <strong>A Rust-native MCP server for universal document evaluation — cognitively-modelled AI agents with OWL ontology backbone and SNN anti-hallucination verification.</strong>
 </p>
 
 <p align="center">
@@ -189,28 +189,57 @@ The LLM generates qualitative judgment. The SNN provides a deterministic, audita
 - [open-ontologies](https://github.com/fabio-rovai/open-ontologies) cloned alongside this repo
 
 ```bash
-# Clone both repos side by side
 git clone https://github.com/fabio-rovai/open-ontologies.git
 git clone https://github.com/fabio-rovai/brain-in-the-fish.git
 cd brain-in-the-fish
-```
-
-### Build
-
-```bash
 cargo build --release
 ```
 
-### Configure (optional)
+### Connect to Claude
 
-Copy the example environment file to enable real LLM scoring:
+Brain in the Fish is an MCP server. Add it to your Claude Code or Claude Desktop configuration:
 
-```bash
-cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
+**Claude Code (~/.claude.json):**
+
+```json
+{
+  "mcpServers": {
+    "brain-in-the-fish": {
+      "command": "/path/to/brain-in-the-fish",
+      "args": ["serve"]
+    }
+  }
+}
 ```
 
-Without an API key, the system runs in **demo mode** with deterministic placeholder scores. All other features (SNN verification, alignment, debate, reporting) work fully.
+**Claude Desktop (claude_desktop_config.json):**
+
+```json
+{
+  "mcpServers": {
+    "brain-in-the-fish": {
+      "command": "/path/to/brain-in-the-fish",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+Then ask Claude:
+
+> "Evaluate this policy document against Green Book standards"
+
+Claude will orchestrate the evaluation by dispatching subagents that call the eval_* MCP tools. Each subagent scores as a specialist persona. The SNN verification layer validates every score against evidence in the knowledge graph.
+
+### Standalone mode (no Claude)
+
+For deterministic-only evaluation without LLM judgment:
+
+```bash
+brain-in-the-fish evaluate document.pdf --intent "mark this essay for A-level"
+```
+
+This runs the SNN scoring pipeline — evidence-grounded, deterministic, no API key needed. Output includes the Markdown report, Turtle RDF export, interactive graph, and orchestration tasks that Claude can pick up later.
 
 ### Verify
 
@@ -218,26 +247,42 @@ Without an API key, the system runs in **demo mode** with deterministic placehol
 cargo test
 ```
 
-## Quick Start
+## Usage
+
+### As MCP server (recommended)
 
 ```bash
-cargo build
-
-# Evaluate an essay
-brain-in-the-fish evaluate essay.pdf --intent "mark this essay"
-
-# Evaluate a policy document
-brain-in-the-fish evaluate policy.pdf --intent "assess this policy against Green Book criteria"
-
-# Evaluate a contract
-brain-in-the-fish evaluate contract.pdf --intent "review this contract for compliance risks"
-
-# With custom criteria and output directory
-brain-in-the-fish evaluate document.pdf --intent "evaluate this document" --criteria rubric.yaml --output ./results
-
-# Start the MCP server (stdio transport)
+# Start the MCP server
 brain-in-the-fish serve
+
+# Claude handles the rest — just ask:
+# "Evaluate this essay for A-level economics"
+# "Review this contract for GDPR compliance"
+# "Assess this NHS clinical governance report"
+# "Audit this survey methodology"
 ```
+
+### As CLI tool (deterministic mode)
+
+```bash
+# Evaluate with SNN scoring (no LLM needed)
+brain-in-the-fish evaluate essay.pdf --intent "mark this economics essay"
+
+# With custom criteria
+brain-in-the-fish evaluate policy.pdf --intent "evaluate against Green Book" --criteria rubric.yaml
+
+# Output to specific directory
+brain-in-the-fish evaluate report.pdf --intent "audit this clinical report" --output ./results
+```
+
+### Output files
+
+| File | Description |
+|------|-------------|
+| `evaluation-report.md` | Full scorecard, gap analysis, debate trail, recommendations |
+| `evaluation.ttl` | Turtle RDF export for cross-evaluation analysis |
+| `evaluation-graph.html` | Interactive hierarchical knowledge graph |
+| `orchestration.json` | Subagent tasks for Claude-enhanced scoring |
 
 ## Universal Evaluation
 
@@ -282,7 +327,7 @@ All modules compile into a single binary. No microservices, no Python, no networ
 | `server` | MCP server with 12 eval_* tools (rmcp, stdio + HTTP transport) | 905 |
 | `main` | CLI entry point (clap), evaluate and serve subcommands, full pipeline orchestration | 737 |
 | `snn` | Spiking neural network scoring — deterministic evidence-grounded verification | 752 |
-| `llm` | LLM client abstraction (Anthropic API, demo mode fallback) | 320 |
+| `llm` | Claude API client for subagent-enhanced scoring (optional) | 320 |
 | `alignment` | Ontology alignment between document sections and evaluation criteria (7 structural signals) | 842 |
 | `research` | Research pipeline for evidence gathering and synthesis | 493 |
 | `memory` | Agent memory persistence across evaluation rounds | 315 |
