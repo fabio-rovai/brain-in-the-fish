@@ -2,6 +2,9 @@
 name = "brain-in-the-fish"
 version = "0.1.0"
 edition = "2024"
+description = "Universal document evaluation engine — a swarm of cognitively-modelled AI agents evaluate any document, with mental states as OWL ontology"
+license = "MIT"
+repository = "https://github.com/fabio-rovai/brain-in-the-fish"
 
 [[bin]]
 name = "brain-in-the-fish"
