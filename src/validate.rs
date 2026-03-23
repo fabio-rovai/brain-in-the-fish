@@ -39,6 +39,14 @@ pub enum SignalType {
     ReadingLevel,
     DuplicateContent,
     EvidenceQuality,
+    LogicalFallacy,
+    HedgingBalance,
+    TopicSentence,
+    CounterArgument,
+    TransitionQuality,
+    Specificity,
+    ReferencingConsistency,
+    ArgumentFlow,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -62,6 +70,14 @@ pub fn validate_document(
     signals.extend(check_reading_level(doc));
     signals.extend(check_duplicate_content(doc));
     signals.extend(check_evidence_quality(doc));
+    signals.extend(check_logical_fallacies(doc));
+    signals.extend(check_hedging_language(doc));
+    signals.extend(check_topic_sentences(doc));
+    signals.extend(check_counter_arguments(doc));
+    signals.extend(check_transition_quality(doc));
+    signals.extend(check_specificity(doc));
+    signals.extend(check_referencing_consistency(doc));
+    signals.extend(check_argument_flow(doc));
 
     signals
 }
@@ -742,6 +758,753 @@ fn check_evidence_quality(doc: &EvalDocument) -> Vec<ValidationSignal> {
 }
 
 // ============================================================================
+// Logical fallacies
+// ============================================================================
+
+/// Detect common logical fallacies in the text.
+fn check_logical_fallacies(doc: &EvalDocument) -> Vec<ValidationSignal> {
+    let mut signals = Vec::new();
+
+    let fallacy_patterns: Vec<(&str, &[&str], &str)> = vec![
+        (
+            "Ad hominem",
+            &["they are wrong because", "critics fail to", "opponents are"],
+            "Attacking the person rather than the argument weakens the reasoning.",
+        ),
+        (
+            "Appeal to authority",
+            &["experts agree", "studies show", "it is well known", "everyone knows"],
+            "Unnamed authority claims lack verifiability. Name the source.",
+        ),
+        (
+            "False dichotomy",
+            &["either we", "the only option", "we must choose between", "there are only two"],
+            "Presenting only two options ignores alternatives.",
+        ),
+        (
+            "Slippery slope",
+            &["inevitably", "will lead to", "slippery slope", "domino effect", "if we allow"],
+            "Asserting an inevitable chain of consequences without evidence.",
+        ),
+        (
+            "Hasty generalisation",
+            &["all of them", "every single", "always without exception", "never once"],
+            "Absolute claims from limited evidence are rarely defensible.",
+        ),
+        (
+            "Straw man",
+            &["some people foolishly claim", "opponents naively believe"],
+            "Misrepresenting an opposing view weakens the argument.",
+        ),
+        (
+            "Circular reasoning",
+            &["this is true because it is true", "as we already proved"],
+            "The conclusion restates the premise without new evidence.",
+        ),
+    ];
+
+    for section in all_sections(&doc.sections) {
+        let lower = section.text.to_lowercase();
+        for (fallacy_name, markers, explanation) in &fallacy_patterns {
+            for marker in *markers {
+                if lower.contains(marker) {
+                    signals.push(ValidationSignal {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        signal_type: SignalType::LogicalFallacy,
+                        severity: Severity::Warning,
+                        section_id: Some(section.id.clone()),
+                        criterion_id: None,
+                        title: format!("Possible {}: '{}'", fallacy_name, marker),
+                        description: format!(
+                            "Section '{}' contains '{}'. {}",
+                            section.title, marker, explanation
+                        ),
+                        spike_effect: -0.15,
+                    });
+                }
+            }
+        }
+    }
+
+    signals
+}
+
+// ============================================================================
+// Hedging language balance
+// ============================================================================
+
+/// Detect over-hedging or under-hedging in the document.
+fn check_hedging_language(doc: &EvalDocument) -> Vec<ValidationSignal> {
+    let mut signals = Vec::new();
+
+    let hedge_words: &[&str] = &[
+        "might", "could", "perhaps", "possibly", "seems", "appears",
+        "suggests", "may", "arguably", "potentially", "likely",
+    ];
+    let strong_words: &[&str] = &[
+        "clearly", "obviously", "undoubtedly", "certainly",
+        "proves", "demonstrates conclusively", "without question",
+        "undeniably", "irrefutably",
+    ];
+
+    for section in all_sections(&doc.sections) {
+        let words: Vec<&str> = section.text.split_whitespace().collect();
+        let word_count = words.len();
+        if word_count < 30 {
+            continue;
+        }
+
+        let lower = section.text.to_lowercase();
+        let hedge_count = hedge_words
+            .iter()
+            .map(|h| lower.matches(h).count())
+            .sum::<usize>();
+        let strong_count = strong_words
+            .iter()
+            .map(|s| lower.matches(s).count())
+            .sum::<usize>();
+
+        let hedge_pct = hedge_count as f64 / word_count as f64 * 100.0;
+        let strong_pct = strong_count as f64 / word_count as f64 * 100.0;
+
+        if hedge_pct > 8.0 {
+            signals.push(ValidationSignal {
+                id: uuid::Uuid::new_v4().to_string(),
+                signal_type: SignalType::HedgingBalance,
+                severity: Severity::Warning,
+                section_id: Some(section.id.clone()),
+                criterion_id: None,
+                title: format!("Over-hedged section ({:.1}% hedging)", hedge_pct),
+                description: format!(
+                    "Section '{}' has {:.1}% hedging words. Excessive hedging weakens \
+                     the argument. Ideal range is 3-8%.",
+                    section.title, hedge_pct
+                ),
+                spike_effect: -0.1,
+            });
+        } else if hedge_pct < 1.0 && strong_pct > 3.0 {
+            signals.push(ValidationSignal {
+                id: uuid::Uuid::new_v4().to_string(),
+                signal_type: SignalType::HedgingBalance,
+                severity: Severity::Warning,
+                section_id: Some(section.id.clone()),
+                criterion_id: None,
+                title: format!("Under-hedged section ({:.1}% strong assertions)", strong_pct),
+                description: format!(
+                    "Section '{}' has many strong assertions ({:.1}%) but little hedging ({:.1}%). \
+                     This may indicate overclaiming.",
+                    section.title, strong_pct, hedge_pct
+                ),
+                spike_effect: -0.1,
+            });
+        } else if (3.0..=8.0).contains(&hedge_pct) {
+            signals.push(ValidationSignal {
+                id: uuid::Uuid::new_v4().to_string(),
+                signal_type: SignalType::HedgingBalance,
+                severity: Severity::Info,
+                section_id: Some(section.id.clone()),
+                criterion_id: None,
+                title: format!("Well-balanced hedging ({:.1}%)", hedge_pct),
+                description: format!(
+                    "Section '{}' shows appropriate hedging balance ({:.1}%).",
+                    section.title, hedge_pct
+                ),
+                spike_effect: 0.05,
+            });
+        }
+    }
+
+    signals
+}
+
+// ============================================================================
+// Topic sentences
+// ============================================================================
+
+/// Check paragraph structure: topic sentences and paragraph length.
+fn check_topic_sentences(doc: &EvalDocument) -> Vec<ValidationSignal> {
+    let mut signals = Vec::new();
+
+    for section in all_sections(&doc.sections) {
+        let paragraphs: Vec<&str> = section
+            .text
+            .split("\n\n")
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        for para in &paragraphs {
+            let sentences: Vec<&str> = split_sentences(para);
+
+            // Check paragraph length
+            if sentences.len() > 10 {
+                signals.push(ValidationSignal {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    signal_type: SignalType::TopicSentence,
+                    severity: Severity::Info,
+                    section_id: Some(section.id.clone()),
+                    criterion_id: None,
+                    title: "Long paragraph (>10 sentences)".into(),
+                    description: format!(
+                        "A paragraph in '{}' has {} sentences. Consider splitting \
+                         for readability.",
+                        section.title,
+                        sentences.len()
+                    ),
+                    spike_effect: -0.05,
+                });
+            }
+
+            // Check topic sentence cohesion (need at least 4 sentences)
+            if sentences.len() >= 4 {
+                let first_words: HashSet<String> = sentences[0]
+                    .split_whitespace()
+                    .map(|w| w.to_lowercase().trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+                    .filter(|w| w.len() > 3)
+                    .collect();
+
+                if first_words.is_empty() {
+                    continue;
+                }
+
+                let rest = &sentences[1..];
+                let matching = rest
+                    .iter()
+                    .filter(|s| {
+                        let s_words: HashSet<String> = s
+                            .split_whitespace()
+                            .map(|w| w.to_lowercase().trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+                            .filter(|w| w.len() > 3)
+                            .collect();
+                        first_words.intersection(&s_words).next().is_some()
+                    })
+                    .count();
+
+                let overlap_ratio = matching as f64 / rest.len() as f64;
+                if overlap_ratio < 0.3 {
+                    signals.push(ValidationSignal {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        signal_type: SignalType::TopicSentence,
+                        severity: Severity::Info,
+                        section_id: Some(section.id.clone()),
+                        criterion_id: None,
+                        title: "Weak topic sentence".into(),
+                        description: format!(
+                            "In '{}', a paragraph's opening sentence shares few keywords \
+                             with subsequent sentences ({:.0}% overlap). The topic sentence \
+                             may not introduce the paragraph's main idea.",
+                            section.title,
+                            overlap_ratio * 100.0
+                        ),
+                        spike_effect: -0.05,
+                    });
+                }
+            }
+        }
+    }
+
+    signals
+}
+
+// ============================================================================
+// Counter-arguments
+// ============================================================================
+
+/// Detect engagement with opposing views.
+fn check_counter_arguments(doc: &EvalDocument) -> Vec<ValidationSignal> {
+    let mut signals = Vec::new();
+
+    let counter_markers: &[&str] = &[
+        "however", "on the other hand", "critics argue", "alternatively",
+        "despite this", "conversely", "nevertheless", "opponents suggest",
+        "a counter-argument", "it could be objected", "some may argue",
+        "an alternative view",
+    ];
+
+    // Skip non-argumentative document types
+    if matches!(doc.doc_type.as_str(), "contract" | "legal") {
+        return signals;
+    }
+
+    let total_words: u32 = all_sections(&doc.sections).iter().map(|s| s.word_count).sum();
+    if total_words < 500 {
+        return signals;
+    }
+
+    let mut total_counter = 0usize;
+
+    for section in all_sections(&doc.sections) {
+        if section.word_count < 200 {
+            continue;
+        }
+        let lower = section.text.to_lowercase();
+        let section_counter: usize = counter_markers
+            .iter()
+            .map(|m| lower.matches(m).count())
+            .sum();
+        total_counter += section_counter;
+
+        if section_counter == 0 && section.word_count >= 200 {
+            signals.push(ValidationSignal {
+                id: uuid::Uuid::new_v4().to_string(),
+                signal_type: SignalType::CounterArgument,
+                severity: Severity::Info,
+                section_id: Some(section.id.clone()),
+                criterion_id: None,
+                title: format!("No counter-argument engagement in '{}'", section.title),
+                description: format!(
+                    "Section '{}' ({} words) contains no counter-argument markers. \
+                     Engaging with opposing views strengthens academic arguments.",
+                    section.title, section.word_count
+                ),
+                spike_effect: -0.05,
+            });
+        }
+    }
+
+    if total_counter == 0 {
+        signals.push(ValidationSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            signal_type: SignalType::CounterArgument,
+            severity: Severity::Warning,
+            section_id: None,
+            criterion_id: None,
+            title: "No counter-argument engagement in entire document".into(),
+            description: format!(
+                "The document ({} words) contains no counter-argument markers. \
+                 One-sided arguments are weaker in academic and policy contexts.",
+                total_words
+            ),
+            spike_effect: -0.15,
+        });
+    } else if total_counter >= 3 {
+        signals.push(ValidationSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            signal_type: SignalType::CounterArgument,
+            severity: Severity::Info,
+            section_id: None,
+            criterion_id: None,
+            title: format!("Good counter-argument engagement ({} instances)", total_counter),
+            description: "The document engages with opposing views, strengthening its argument.".into(),
+            spike_effect: 0.1,
+        });
+    }
+
+    signals
+}
+
+// ============================================================================
+// Transition quality
+// ============================================================================
+
+/// Assess quality of transitions between sections and paragraphs.
+fn check_transition_quality(doc: &EvalDocument) -> Vec<ValidationSignal> {
+    let mut signals = Vec::new();
+
+    let transition_words: &[&str] = &[
+        "furthermore", "moreover", "additionally", "in addition",
+        "however", "nevertheless", "although", "despite",
+        "therefore", "consequently", "as a result", "because",
+        "firstly", "secondly", "finally", "subsequently",
+        "similarly", "likewise", "in contrast", "conversely",
+        "building on", "turning to", "having established",
+        "this section", "the following", "as discussed",
+    ];
+
+    let sections = all_sections(&doc.sections);
+    let mut abrupt_count = 0usize;
+    let mut smooth_count = 0usize;
+
+    // Check transitions at section boundaries (skip first section)
+    for section in sections.iter().skip(1) {
+        let first_sentence = split_sentences(&section.text)
+            .into_iter()
+            .next()
+            .unwrap_or("");
+        let lower_first = first_sentence.to_lowercase();
+
+        let has_transition = transition_words
+            .iter()
+            .any(|t| lower_first.contains(t));
+
+        if has_transition {
+            smooth_count += 1;
+        } else {
+            abrupt_count += 1;
+            signals.push(ValidationSignal {
+                id: uuid::Uuid::new_v4().to_string(),
+                signal_type: SignalType::TransitionQuality,
+                severity: Severity::Info,
+                section_id: Some(section.id.clone()),
+                criterion_id: None,
+                title: format!("Abrupt transition into '{}'", section.title),
+                description: format!(
+                    "Section '{}' begins without transitional language. \
+                     Adding a transition improves flow and coherence.",
+                    section.title
+                ),
+                spike_effect: -0.03,
+            });
+        }
+    }
+
+    if sections.len() >= 3 && abrupt_count == 0 && smooth_count >= 2 {
+        signals.push(ValidationSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            signal_type: SignalType::TransitionQuality,
+            severity: Severity::Info,
+            section_id: None,
+            criterion_id: None,
+            title: "All section transitions are smooth".into(),
+            description: format!(
+                "All {} section boundaries use transitional language. Good coherence.",
+                smooth_count
+            ),
+            spike_effect: 0.05,
+        });
+    }
+
+    signals
+}
+
+// ============================================================================
+// Specificity
+// ============================================================================
+
+/// Flag vague or generic language.
+fn check_specificity(doc: &EvalDocument) -> Vec<ValidationSignal> {
+    let mut signals = Vec::new();
+
+    let vague_markers: &[&str] = &[
+        "things", "stuff", "aspects", "various", "a number of",
+        "several", "a lot of", "good", "bad", "interesting",
+        "important", "significant", "nice", "great",
+    ];
+
+    for section in all_sections(&doc.sections) {
+        let words: Vec<&str> = section.text.split_whitespace().collect();
+        let word_count = words.len();
+        if word_count < 20 {
+            continue;
+        }
+
+        let lower = section.text.to_lowercase();
+        let vague_count: usize = vague_markers
+            .iter()
+            .map(|m| {
+                lower
+                    .match_indices(m)
+                    .filter(|(pos, _)| {
+                        let before = if *pos > 0 { lower.as_bytes()[pos - 1] } else { b' ' };
+                        let after_pos = pos + m.len();
+                        let after = if after_pos < lower.len() { lower.as_bytes()[after_pos] } else { b' ' };
+                        !before.is_ascii_alphanumeric() && !after.is_ascii_alphanumeric()
+                    })
+                    .count()
+            })
+            .sum();
+
+        let per_100 = vague_count as f64 / word_count as f64 * 100.0;
+
+        if per_100 > 5.0 {
+            signals.push(ValidationSignal {
+                id: uuid::Uuid::new_v4().to_string(),
+                signal_type: SignalType::Specificity,
+                severity: Severity::Warning,
+                section_id: Some(section.id.clone()),
+                criterion_id: None,
+                title: format!("High vagueness density in '{}'", section.title),
+                description: format!(
+                    "Section '{}' has {:.1} vague terms per 100 words ({} in {} words). \
+                     Replace generic language with specific details.",
+                    section.title, per_100, vague_count, word_count
+                ),
+                spike_effect: -0.1,
+            });
+        } else if per_100 < 1.0 && word_count >= 50 {
+            signals.push(ValidationSignal {
+                id: uuid::Uuid::new_v4().to_string(),
+                signal_type: SignalType::Specificity,
+                severity: Severity::Info,
+                section_id: Some(section.id.clone()),
+                criterion_id: None,
+                title: format!("Specific language in '{}'", section.title),
+                description: format!(
+                    "Section '{}' uses precise language with few vague terms ({:.1} per 100 words).",
+                    section.title, per_100
+                ),
+                spike_effect: 0.05,
+            });
+        }
+    }
+
+    signals
+}
+
+// ============================================================================
+// Referencing consistency
+// ============================================================================
+
+/// Check citation style consistency throughout the document.
+fn check_referencing_consistency(doc: &EvalDocument) -> Vec<ValidationSignal> {
+    let mut signals = Vec::new();
+    let mut harvard_count = 0usize; // (Author, Year)
+    let mut numeric_count = 0usize; // [1], [2]
+    let mut footnote_count = 0usize; // superscript or footnote markers
+
+    for section in all_sections(&doc.sections) {
+        let text = &section.text;
+
+        // Harvard-style: (Author, 2020) or (Author et al., 2020)
+        harvard_count += extract_citations(text).len();
+
+        // Numeric-style: [1], [2], [12]
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '['
+                && let Some(close) = chars[i..].iter().position(|&c| c == ']')
+            {
+                let inner: String = chars[i + 1..i + close].iter().collect();
+                if inner.trim().parse::<u32>().is_ok() {
+                    numeric_count += 1;
+                }
+                i += close + 1;
+                continue;
+            }
+            i += 1;
+        }
+
+        // Footnote markers: detect common patterns like ¹ ² ³ or ^1 ^2
+        for ch in text.chars() {
+            if "\u{00b9}\u{00b2}\u{00b3}\u{2074}\u{2075}\u{2076}\u{2077}\u{2078}\u{2079}".contains(ch) {
+                footnote_count += 1;
+            }
+        }
+        // Also count ^N patterns
+        let words: Vec<&str> = text.split_whitespace().collect();
+        for w in &words {
+            if w.starts_with('^') && w[1..].parse::<u32>().is_ok() {
+                footnote_count += 1;
+            }
+        }
+    }
+
+    let styles_used: Vec<(&str, usize)> = vec![
+        ("Harvard (Author, Year)", harvard_count),
+        ("Numeric [N]", numeric_count),
+        ("Footnote", footnote_count),
+    ]
+    .into_iter()
+    .filter(|(_, c)| *c > 0)
+    .collect();
+
+    if styles_used.len() > 1 {
+        let style_list: Vec<String> = styles_used
+            .iter()
+            .map(|(name, count)| format!("{}: {} instances", name, count))
+            .collect();
+        signals.push(ValidationSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            signal_type: SignalType::ReferencingConsistency,
+            severity: Severity::Warning,
+            section_id: None,
+            criterion_id: None,
+            title: "Mixed citation styles detected".into(),
+            description: format!(
+                "Multiple citation styles found: {}. Use one style consistently.",
+                style_list.join("; ")
+            ),
+            spike_effect: -0.15,
+        });
+    } else if styles_used.len() == 1 && styles_used[0].1 >= 3 {
+        signals.push(ValidationSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            signal_type: SignalType::ReferencingConsistency,
+            severity: Severity::Info,
+            section_id: None,
+            criterion_id: None,
+            title: format!("Consistent {} citation style", styles_used[0].0),
+            description: format!(
+                "All {} citations use {} style. Good consistency.",
+                styles_used[0].1, styles_used[0].0
+            ),
+            spike_effect: 0.05,
+        });
+    }
+
+    signals
+}
+
+// ============================================================================
+// Argument flow
+// ============================================================================
+
+/// Detect logical argument progression across sections.
+fn check_argument_flow(doc: &EvalDocument) -> Vec<ValidationSignal> {
+    let mut signals = Vec::new();
+    let sections = &doc.sections;
+
+    if sections.len() < 3 {
+        return signals;
+    }
+
+    // Identify intro, body, and conclusion by position and title
+    let intro = &sections[0];
+    let conclusion = &sections[sections.len() - 1];
+    let body: Vec<&Section> = sections[1..sections.len() - 1].iter().collect();
+
+    let intro_keywords = extract_content_keywords(&intro.text);
+    let conclusion_keywords = extract_content_keywords(&conclusion.text);
+    let body_keywords: HashSet<String> = body
+        .iter()
+        .flat_map(|s| extract_content_keywords(&s.text))
+        .collect();
+
+    if intro_keywords.is_empty() || conclusion_keywords.is_empty() {
+        return signals;
+    }
+
+    // intro → body overlap
+    let intro_body_overlap = intro_keywords
+        .intersection(&body_keywords)
+        .count() as f64
+        / intro_keywords.len().max(1) as f64;
+
+    // intro → conclusion overlap
+    let intro_conclusion_overlap = intro_keywords
+        .intersection(&conclusion_keywords)
+        .count() as f64
+        / intro_keywords.len().max(1) as f64;
+
+    if intro_body_overlap < 0.2 {
+        signals.push(ValidationSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            signal_type: SignalType::ArgumentFlow,
+            severity: Severity::Warning,
+            section_id: None,
+            criterion_id: None,
+            title: "Weak intro-to-body connection".into(),
+            description: format!(
+                "Only {:.0}% of introduction keywords appear in the body. \
+                 The body may not develop the themes introduced.",
+                intro_body_overlap * 100.0
+            ),
+            spike_effect: -0.1,
+        });
+    }
+
+    if intro_conclusion_overlap < 0.2 {
+        signals.push(ValidationSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            signal_type: SignalType::ArgumentFlow,
+            severity: Severity::Warning,
+            section_id: None,
+            criterion_id: None,
+            title: "Weak intro-to-conclusion connection".into(),
+            description: format!(
+                "Only {:.0}% of introduction keywords appear in the conclusion. \
+                 The conclusion may not address the original objectives.",
+                intro_conclusion_overlap * 100.0
+            ),
+            spike_effect: -0.1,
+        });
+    }
+
+    // Check if conclusion introduces new concepts
+    let new_in_conclusion: HashSet<&String> = conclusion_keywords
+        .difference(&intro_keywords)
+        .filter(|k| !body_keywords.contains(*k))
+        .collect();
+    let new_ratio = new_in_conclusion.len() as f64 / conclusion_keywords.len().max(1) as f64;
+
+    if new_ratio > 0.5 {
+        signals.push(ValidationSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            signal_type: SignalType::ArgumentFlow,
+            severity: Severity::Warning,
+            section_id: Some(conclusion.id.clone()),
+            criterion_id: None,
+            title: "Conclusion introduces new concepts".into(),
+            description: format!(
+                "{:.0}% of conclusion keywords do not appear in the introduction or body. \
+                 A conclusion should synthesise, not introduce new material.",
+                new_ratio * 100.0
+            ),
+            spike_effect: -0.1,
+        });
+    }
+
+    if intro_body_overlap >= 0.4 && intro_conclusion_overlap >= 0.4 && new_ratio <= 0.3 {
+        signals.push(ValidationSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            signal_type: SignalType::ArgumentFlow,
+            severity: Severity::Info,
+            section_id: None,
+            criterion_id: None,
+            title: "Strong argument flow".into(),
+            description: "Introduction, body, and conclusion share consistent themes. \
+                         The argument progresses logically."
+                .into(),
+            spike_effect: 0.1,
+        });
+    }
+
+    signals
+}
+
+/// Extract significant content keywords (nouns/verbs, >4 chars, not stopwords).
+fn extract_content_keywords(text: &str) -> HashSet<String> {
+    let stopwords: HashSet<&str> = [
+        "about", "above", "after", "again", "against", "along", "among",
+        "around", "because", "before", "being", "below", "between", "beyond",
+        "could", "would", "should", "these", "those", "their", "there",
+        "through", "under", "until", "which", "while", "where", "other",
+        "another", "every", "further", "having", "itself", "might", "since",
+        "still", "than", "that", "them", "then", "this", "very", "what",
+        "when", "with", "within", "without", "also", "been", "does", "from",
+        "have", "here", "into", "just", "more", "most", "much", "must",
+        "only", "over", "same", "some", "such", "will", "your",
+    ]
+    .iter()
+    .copied()
+    .collect();
+
+    text.split_whitespace()
+        .map(|w| {
+            w.to_lowercase()
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_string()
+        })
+        .filter(|w| w.len() > 4 && !stopwords.contains(w.as_str()))
+        .collect()
+}
+
+/// Split text into sentences (simple heuristic).
+fn split_sentences(text: &str) -> Vec<&str> {
+    let mut sentences = Vec::new();
+    let mut start = 0;
+    let bytes = text.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if (b == b'.' || b == b'!' || b == b'?')
+            && (i + 1 >= bytes.len() || bytes[i + 1] == b' ' || bytes[i + 1] == b'\n')
+        {
+            let s = text[start..=i].trim();
+            if !s.is_empty() {
+                sentences.push(s);
+            }
+            start = i + 1;
+        }
+    }
+    // Remainder
+    let remainder = text[start..].trim();
+    if !remainder.is_empty() && sentences.is_empty() {
+        sentences.push(remainder);
+    }
+    sentences
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -953,6 +1716,399 @@ mod tests {
         assert!(signals
             .iter()
             .any(|s| s.title.contains("introduction and conclusion")));
+    }
+
+    // ================================================================
+    // Tests for 8 new validation checks
+    // ================================================================
+
+    fn make_section(id: &str, title: &str, text: &str, word_count: u32) -> Section {
+        Section {
+            id: id.into(),
+            title: title.into(),
+            text: text.into(),
+            word_count,
+            page_range: None,
+            claims: vec![],
+            evidence: vec![],
+            subsections: vec![],
+        }
+    }
+
+    #[test]
+    fn test_check_logical_fallacies_detects_appeal_to_authority() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![make_section(
+                "s1",
+                "Body",
+                "Studies show that this policy works. It is well known that GDP grows.",
+                100,
+            )],
+        };
+        let signals = check_logical_fallacies(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::LogicalFallacy
+                && s.title.contains("Appeal to authority")),
+            "Should detect appeal to authority, got: {:?}",
+            signals.iter().map(|s| &s.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_check_logical_fallacies_no_false_positives() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![make_section(
+                "s1",
+                "Body",
+                "According to Smith (2023), the policy had measurable effects on employment rates.",
+                100,
+            )],
+        };
+        let signals = check_logical_fallacies(&doc);
+        assert!(
+            signals.is_empty(),
+            "Clean text should not trigger fallacy detection"
+        );
+    }
+
+    #[test]
+    fn test_check_hedging_over_hedged() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![make_section(
+                "s1",
+                "Analysis",
+                "This might possibly suggest that it could perhaps be the case that \
+                 it may potentially seem to appear that the results arguably could \
+                 suggest a trend that might possibly exist in the data.",
+                40,
+            )],
+        };
+        let signals = check_hedging_language(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::HedgingBalance
+                && s.title.contains("Over-hedged")),
+            "Should detect over-hedging, got: {:?}",
+            signals.iter().map(|s| &s.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_check_topic_sentences_long_paragraph() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![make_section(
+                "s1",
+                "Body",
+                "First sentence. Second sentence. Third sentence. Fourth sentence. \
+                 Fifth sentence. Sixth sentence. Seventh sentence. Eighth sentence. \
+                 Ninth sentence. Tenth sentence. Eleventh sentence here.",
+                100,
+            )],
+        };
+        let signals = check_topic_sentences(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::TopicSentence
+                && s.title.contains("Long paragraph")),
+            "Should flag long paragraph"
+        );
+    }
+
+    #[test]
+    fn test_check_counter_arguments_absent() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(600),
+            sections: vec![make_section(
+                "s1",
+                "Analysis",
+                "The policy is effective. The evidence supports this claim. \
+                 Data shows positive outcomes. Results are clear. The approach works. \
+                 Implementation was successful. Outcomes exceeded expectations. \
+                 Performance metrics improved substantially across all measured dimensions \
+                 during the evaluation period under review.",
+                600,
+            )],
+        };
+        let signals = check_counter_arguments(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::CounterArgument
+                && s.spike_effect < 0.0),
+            "Should flag missing counter-arguments"
+        );
+    }
+
+    #[test]
+    fn test_check_counter_arguments_present() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(600),
+            sections: vec![make_section(
+                "s1",
+                "Analysis",
+                "The policy appears effective. However, critics argue that the sample \
+                 size was small. Nevertheless, the results are statistically significant. \
+                 On the other hand, implementation costs were high. Despite this, the \
+                 long-term benefits outweigh costs. Furthermore additional data is needed \
+                 to draw definitive conclusions from the available evidence base.",
+                600,
+            )],
+        };
+        let signals = check_counter_arguments(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::CounterArgument
+                && s.spike_effect > 0.0),
+            "Should reward counter-argument engagement"
+        );
+    }
+
+    #[test]
+    fn test_check_transition_quality_abrupt() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![
+                make_section("s1", "Introduction", "The topic is important.", 50),
+                make_section("s2", "Analysis", "Data was collected from participants.", 200),
+            ],
+        };
+        let signals = check_transition_quality(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::TransitionQuality
+                && s.title.contains("Abrupt")),
+            "Should flag abrupt transition"
+        );
+    }
+
+    #[test]
+    fn test_check_transition_quality_smooth() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![
+                make_section("s1", "Introduction", "The topic is important.", 50),
+                make_section("s2", "Analysis", "Furthermore, the data reveals trends.", 200),
+                make_section("s3", "Conclusion", "Therefore, the evidence supports the thesis.", 100),
+            ],
+        };
+        let signals = check_transition_quality(&doc);
+        assert!(
+            signals.iter().any(|s| s.title.contains("smooth")),
+            "Should reward smooth transitions"
+        );
+    }
+
+    #[test]
+    fn test_check_specificity_vague() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![make_section(
+                "s1",
+                "Body",
+                "Various things are important and interesting. Several aspects are good \
+                 and significant. A lot of stuff is nice and great for various reasons.",
+                30,
+            )],
+        };
+        let signals = check_specificity(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::Specificity
+                && s.spike_effect < 0.0),
+            "Should flag vague language, got: {:?}",
+            signals.iter().map(|s| &s.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_check_specificity_precise() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![make_section(
+                "s1",
+                "Methodology",
+                "The randomised controlled trial enrolled 342 participants across \
+                 12 NHS trusts between January and March 2025. The primary endpoint \
+                 was 30-day readmission rate measured via Hospital Episode Statistics. \
+                 Secondary endpoints included patient-reported outcome measures using \
+                 the EQ-5D-5L instrument administered at baseline and 90 days. \
+                 Participants were stratified by age and comorbidity status. \
+                 Statistical analysis used Cox proportional hazards regression \
+                 with pre-specified covariates including deprivation quintile.",
+                80,
+            )],
+        };
+        let signals = check_specificity(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::Specificity
+                && s.spike_effect > 0.0),
+            "Should reward precise language, got: {:?}",
+            signals.iter().map(|s| (&s.title, s.spike_effect)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_check_referencing_consistency_mixed() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![make_section(
+                "s1",
+                "Body",
+                "According to (Smith, 2020), results were positive. \
+                 Other research [1] agrees. Further evidence [2] supports this. \
+                 (Jones, 2021) also found similar outcomes.",
+                50,
+            )],
+        };
+        let signals = check_referencing_consistency(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::ReferencingConsistency
+                && s.title.contains("Mixed")),
+            "Should flag mixed citation styles"
+        );
+    }
+
+    #[test]
+    fn test_check_referencing_consistency_consistent() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![make_section(
+                "s1",
+                "Body",
+                "According to (Smith, 2020), results were positive. \
+                 (Jones, 2021) agrees. (Brown, 2022) supports this.",
+                50,
+            )],
+        };
+        let signals = check_referencing_consistency(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::ReferencingConsistency
+                && s.title.contains("Consistent")),
+            "Should reward consistent citation style"
+        );
+    }
+
+    #[test]
+    fn test_check_argument_flow_disconnected() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![
+                make_section(
+                    "s1",
+                    "Introduction",
+                    "This essay examines monetary policy and quantitative easing effects.",
+                    50,
+                ),
+                make_section(
+                    "s2",
+                    "Analysis",
+                    "Climate change affects biodiversity and ecosystem services worldwide.",
+                    200,
+                ),
+                make_section(
+                    "s3",
+                    "Conclusion",
+                    "Healthcare spending should increase to address demographic ageing.",
+                    100,
+                ),
+            ],
+        };
+        let signals = check_argument_flow(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::ArgumentFlow
+                && s.spike_effect < 0.0),
+            "Should flag disconnected argument flow"
+        );
+    }
+
+    #[test]
+    fn test_check_argument_flow_coherent() {
+        let doc = EvalDocument {
+            id: "d1".into(),
+            title: "Test".into(),
+            doc_type: "essay".into(),
+            total_pages: None,
+            total_word_count: Some(500),
+            sections: vec![
+                make_section(
+                    "s1",
+                    "Introduction",
+                    "This essay examines quantitative easing and monetary policy transmission.",
+                    50,
+                ),
+                make_section(
+                    "s2",
+                    "Analysis",
+                    "Quantitative easing works through the portfolio rebalancing channel. \
+                     Monetary policy transmission depends on bank lending. The easing measures \
+                     affected asset prices and monetary conditions significantly.",
+                    200,
+                ),
+                make_section(
+                    "s3",
+                    "Conclusion",
+                    "Quantitative easing improved monetary policy transmission through \
+                     portfolio rebalancing and bank lending channels.",
+                    100,
+                ),
+            ],
+        };
+        let signals = check_argument_flow(&doc);
+        assert!(
+            signals.iter().any(|s| s.signal_type == SignalType::ArgumentFlow
+                && s.spike_effect > 0.0),
+            "Should reward coherent argument flow, got: {:?}",
+            signals.iter().map(|s| (&s.title, s.spike_effect)).collect::<Vec<_>>()
+        );
     }
 
     #[test]
