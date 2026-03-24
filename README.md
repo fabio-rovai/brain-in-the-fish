@@ -7,7 +7,7 @@
 <p align="center">
   <strong>Evaluate anything. Predict everything. Hallucinate nothing.</strong>
   <br>
-  <em>SNN-verified document evaluation & prediction credibility — the brain that MiroFish was missing.</em>
+  <em>Evidence-verified document evaluation & prediction credibility — the brain that MiroFish was missing.</em>
 </p>
 
 <p align="center">
@@ -44,13 +44,13 @@
 
 ## What It Does
 
-A Rust MCP server that evaluates any document against any criteria using Claude subagents, with a Spiking Neural Network that makes hallucination mathematically detectable. Feed it a PDF and an intent — it returns structured scores, weakness analysis, prediction credibility, and a full audit trail.
+A Rust MCP server that evaluates any document against any criteria using Claude subagents, with an Evidence Density Scorer (EDS) that makes hallucination mathematically detectable. Feed it a PDF and an intent — it returns structured scores, weakness analysis, and a full audit trail. Document evaluation is the core differentiator: BITF scores 2.8pp from expert scores where raw Claude drifts ~15pp. An optional prediction credibility module provides structured extraction with evidence-based verification.
 
 ```bash
 # As MCP server (recommended — Claude orchestrates subagent evaluation)
 brain-in-the-fish serve
 
-# As CLI (deterministic SNN scoring, no API key needed)
+# As CLI (deterministic evidence scoring, no API key needed)
 brain-in-the-fish evaluate policy.pdf --intent "evaluate against Green Book standards" --open
 ```
 
@@ -82,7 +82,7 @@ Raw Claude scores writing quality. BITF scores substance against criteria — ca
 
 | Method | Pearson r | QWK | MAE |
 | ------ | --------- | --- | --- |
-| SNN-only (deterministic) | 0.442 | 0.258 | 1.08 |
+| EDS-only (deterministic) | 0.442 | 0.258 | 1.08 |
 | Raw Claude | 0.937 | — | 0.39 |
 | **BITF subagent** | **0.955** | **0.902** | **0.32** |
 
@@ -92,9 +92,11 @@ QWK of 0.902 exceeds the 0.80 threshold for "reliable" inter-rater agreement. St
 
 | Method | Correct directional calls |
 | ------ | ------------------------ |
-| BITF subagent | **5/5** |
+| BITF subagent | 5/5 |
 | Raw Claude | 5/5 |
 | BITF rule-based | 1/5 |
+
+Subagent prediction matches raw Claude performance (both 5/5). The value of this module is structured extraction (prediction types, timeframes, evidence mapping) + SNN verification + audit trail, not improved accuracy over the base model. The rule-based fallback was replaced after proving actively harmful.
 
 ---
 
@@ -114,7 +116,7 @@ graph TB
         CRI[4. Load Criteria]
         ALI[5. Align — 7 structural signals]
         SPA[6. Spawn Agent Panel]
-        SNN[7. SNN Scoring]
+        SNN[7. Evidence Scoring]
         DEB[8. Debate]
         MOD[9. Moderation]
         REP[10. Report]
@@ -184,7 +186,7 @@ graph LR
     A2 -.->|scores| CR2
 ```
 
-### SNN Verification Layer
+### Evidence Verification Layer
 
 ```mermaid
 graph LR
@@ -195,14 +197,14 @@ graph LR
         GC[General Claim — 0.3-0.5]
     end
 
-    subgraph "SNN Neuron"
+    subgraph "Evidence Scorer Neuron"
         MP[Membrane Potential]
         TH[Threshold]
         FR[Firing Rate → Score]
     end
 
     subgraph "Blended Output"
-        SS[SNN Score]
+        SS[Evidence Score]
         LS[LLM Score]
         FS[Final Score]
         HF[Hallucination Flag]
@@ -212,7 +214,7 @@ graph LR
     MP -->|exceeds| TH -->|fires| FR
     FR --> SS
     SS & LS --> FS
-    SS -->|"SNN low + LLM high"| HF
+    SS -->|"Evidence low + LLM high"| HF
 ```
 
 ---
@@ -223,7 +225,7 @@ Systematic ablation studies — toggle each component on/off, measure accuracy �
 
 | Component | Result | Action |
 | --------- | ------ | ------ |
-| **SNN scoring** | Essential — without it, Pearson drops to 0.000 | **Core** |
+| **Evidence scoring** | Essential — without it, Pearson drops to 0.000 | **Core** |
 | **Ontology alignment** | Essential — without it, Pearson drops from 0.684 to 0.592 | **Core** |
 | **Validation signals** | Hurts accuracy — removing them improves Pearson 0.684→0.786 | Capped at -0.05, inhibition reduced |
 | **Hedging check** | Harmful — penalises correct academic hedging | Removed from core |
@@ -233,10 +235,10 @@ Systematic ablation studies — toggle each component on/off, measure accuracy �
 | **Multi-round debate** | No impact in deterministic mode | Only active with LLM subagents |
 | **Philosophy module** | Interesting, not useful for accuracy (316 lines, ~0 ROI) | Opt-in (`--philosophy`) |
 | **Epistemology module** | Academic exercise, no accuracy improvement | Opt-in (`--epistemology`) |
-| **Rule-based predictions** | Actively harmful — 3/11 found, duplicates, misparses | Replaced with subagent + SNN |
+| **Rule-based predictions** | Actively harmful — 3/11 found, duplicates, misparses | Replaced with subagent + evidence scorer |
 | **Number checker (old)** | 111 false positives per document (years as "inconsistencies") | Fixed — filtered years/dates, down to 14 FPs |
 
-**Key insight:** SNN and ontology alignment are the only two components that provably improve accuracy. Everything else either has zero impact or hurts. The 10-stage core pipeline reflects this.
+**Key insight:** Evidence scoring and ontology alignment are the only two components that provably improve accuracy. Everything else either has zero impact or hurts. The 10-stage core pipeline reflects this.
 
 ---
 
@@ -250,7 +252,7 @@ Systematic ablation studies — toggle each component on/off, measure accuracy �
 4. **Load Criteria** — 7 built-in frameworks + YAML/JSON custom rubrics
 5. **Align** — Map sections ↔ criteria via 7 structural signals (AlignmentEngine)
 6. **Spawn Agents** — Domain-specialist panel + moderator with cognitive model
-7. **SNN Score** — Evidence-grounded deterministic scoring (no evidence = score zero)
+7. **Evidence Score** — Evidence-grounded deterministic scoring (no evidence = score zero)
 8. **Debate** — Disagreement detection, challenge/response, convergence
 9. **Moderate** — Trust-weighted consensus with outlier detection
 10. **Report** — Markdown + Turtle RDF + interactive graph HTML
@@ -267,19 +269,19 @@ Systematic ablation studies — toggle each component on/off, measure accuracy �
 
 ---
 
-## Anti-Hallucination: Why SNN
+## Anti-Hallucination: Evidence Verification Layer
 
 MiroFish agents can "justify" a 9/10 score for a criterion with no supporting evidence. This is hallucination with a confidence score attached.
 
-The SNN makes this detectable. Each agent has one neuron per criterion. Evidence from the ontology generates spikes. No evidence = no spikes = no firing = score of zero. When the LLM says 9/10 but the SNN says 2/10, the system flags it:
+The evidence scorer makes this detectable. Each agent has one neuron per criterion. Evidence from the ontology generates spikes. No evidence = no spikes = no firing = score of zero. When the LLM says 9/10 but the evidence scorer says 2/10, the system flags it:
 
 ```text
-LLM says 9/10. SNN says 2/10 (only 2 weak spikes received).
+LLM says 9/10. Evidence scorer says 2/10 (only 2 weak spikes received).
 → hallucination_risk = true
 → "WARNING: LLM scored significantly higher than evidence supports."
 ```
 
-The final score blends both: `final = snn × snn_weight + llm × llm_weight`. SNN dominates when evidence is abundant. LLM fills in when sparse — but the hallucination flag is raised.
+The final score blends both: `final = eds × eds_weight + llm × llm_weight`. The scorer is deterministic: given the same evidence, it always produces the same score. This is the verification property that matters. The evidence scorer dominates when evidence is abundant. LLM fills in when sparse — but the hallucination flag is raised.
 
 ### ARIA Alignment
 
@@ -288,8 +290,8 @@ This implements the gatekeeper architecture from [ARIA's Safeguarded AI programm
 | ARIA framework | Brain in the Fish |
 | -------------- | ----------------- |
 | World model | OWL ontology (knowledge graph) |
-| Safety specification | Rubric levels + SNN thresholds |
-| Deterministic verifier | SNN (same evidence → same score, always) |
+| Safety specification | Rubric levels + evidence scorer thresholds |
+| Deterministic verifier | Evidence scorer (same evidence → same score, always) |
 | Proof certificate | Spike log + onto_lineage |
 
 ---

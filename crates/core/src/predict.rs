@@ -1,10 +1,14 @@
-//! Prediction credibility assessment — two-stage pipeline.
-//!
-//! Stage 1: Subagent extraction (LLM-powered via extraction_prompt, with rule-based fallback)
-//! Stage 2: SNN verification (checks evidence actually exists and supports the prediction)
+//! Prediction credibility assessment.
 //!
 //! Extracts predictions, forecasts, targets, and commitments from documents
 //! and assesses their credibility based on the evidence presented.
+//!
+//! NOTE: Benchmark shows subagent prediction matches raw Claude performance.
+//! The value of this module is structured extraction + SNN verification +
+//! audit trail, not improved accuracy over the base model.
+//!
+//! Stage 1: Subagent extraction (LLM-powered via extraction_prompt, with rule-based fallback)
+//! Stage 2: SNN verification (checks evidence actually exists and supports the prediction)
 //!
 //! This is NOT forecasting (MiroFish-style hallucination). It evaluates
 //! whether predictions WITHIN the document are supported by evidence
