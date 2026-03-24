@@ -7,7 +7,7 @@
 <p align="center">
   <strong>评估一切。预测万物。零幻觉。</strong>
   <br>
-  <em>MiroFish 缺失的大脑——SNN 验证的评估与预测可信度，适用于任何文档、任何领域、任何语言。</em>
+  <em>SNN 验证的文档评估与预测可信度——MiroFish 缺失的大脑。</em>
 </p>
 
 <p align="center">
@@ -23,158 +23,236 @@
 
 ---
 
-## 问题所在
+## 功能简介
 
-此前有两个系统尝试过多智能体文档评估，但均未达到理想效果。
+一个 Rust MCP 服务器，使用 Claude 子智能体对任何文档进行任何标准的评估，配备脉冲神经网络（SNN）使幻觉在数学上可被检测。输入一份 PDF 和评估意图——返回结构化评分、弱点分析、预测可信度评估和完整审计轨迹。
 
-**MiroFish** 赋予了鱼群——智能体围绕文档展开辩论并最终收敛至一个预测结果。但 MiroFish 的智能体本质上是无状态的 LLM 提示词。它们在轮次间没有记忆、没有结构化认知，评阅内容与评分之间也缺乏形式化的关联。基于 LLM 集群的预测天然容易产生幻觉：智能体编造看似合理的理由，却未将其锚定在文档的实际内容上。当 MiroFish 的智能体预测"该政策将减少 50% 的投诉"时，不会进行任何证据检查——预测的可信度取决于 LLM 的温度参数设置。
+```bash
+# 作为 MCP 服务器（推荐——Claude 编排子智能体评估）
+brain-in-the-fish serve
 
-**AgentSociety** 赋予了智能体心智——马斯洛需求、计划行为理论、信任动态。但这套认知模型存储在 Python 字典中，对推理过程不透明，无法用 SPARQL 查询，无法在辩论轮次间进行差异比对，也无法与任何外部知识系统互操作。心智确实存在，但无人能审视它。
+# 作为 CLI（确定性 SNN 评分，无需 API 密钥）
+brain-in-the-fish evaluate policy.pdf --intent "根据绿皮书标准评估" --open
+```
 
-两个系统有一个更深层的共同缺陷：在所提问题与所发现证据之间，缺乏结构化、可审计的映射关系。分数凭空出现，但从文档内容到评估标准再到智能体判断的推理链条是隐式的、不可复现的。
-
-## 解决方案
-
-Brain in the Fish 为心智赋予了骨架——一个结构化、可查询、可比对的 OWL 本体基底，智能体不仅使用它，更存在于其中。
-
-**三套本体，一张图。** 文档本体、评估标准本体和智能体本体以 OWL 三元组的形式共存于 Oxigraph 存储中（通过 [open-ontologies](https://github.com/fabio-rovai/open-ontologies)）。每一个章节、论断、评估标准、评分标准等级、智能体信念、马斯洛需求和信任权重都是一等 RDF 节点。
-
-**评估优于预测。** MiroFish 预测分数应该是多少。Brain in the Fish 则根据显式的评估标准来评估文档实际包含的内容。评估从根本上比预测更可靠，因为证据就是文档本身——它是具体的、在场的、可验证的。系统不做猜测，而是映射、评分、论证。
-
-**智能体认知即本体。** 每个评估智能体的马斯洛需求、信任关系和领域专长都是 OWL 个体。当一个智能体在辩论质疑后对同事的信任发生变化时，这个变化就是一次三元组更新——可查询、可比对、可审计。
-
-**本体对齐将文档映射到评估标准。** `onto_align` 在文档章节与评估标准之间生成数学化的映射。在评分开始前就能识别覆盖缺口。没有任何评估标准会被无声忽略。
-
-**预测可信度，而非预测。** MiroFish 预测未来。Brain in the Fish 评估文档中的预测是否可信。它提取每一个预测目标、承诺和成本估算，然后根据文档自身的证据基础逐一检验。"减少 50% 的投诉"会基于支撑该数字的证据获得可信度评分——而非基于 LLM 认为会发生什么。
-
-**版本化辩论。** 每一轮辩论产生新的评分三元组。轮次间的 `onto_diff` 精确揭示哪些智能体改变了立场、变化幅度多大、以及原因是什么。漂移速度衡量收敛程度。整个审议过程可从图状态完整复现。
-
-## 对比
-
-| 特性 | MiroFish | AgentSociety | Brain in the Fish |
-|------|----------|--------------|-------------------|
-| 智能体认知 | 无状态 LLM 提示词 | Python 字典中的马斯洛 + TPB | Oxigraph 中作为 OWL 个体的马斯洛 + TPB |
-| 证据基础 | LLM 生成论证 | LLM 生成论证 | 通过本体对齐将文档内容映射到评估标准 |
-| 辩论追踪 | 轮次计数器 + 文本日志 | 轮次计数器 + JSON 状态 | 版本化 RDF 三元组 + `onto_diff` + 漂移速度 |
-| 可复现性 | 非确定性 | 非确定性 | 每轮确定性图状态，可用 SPARQL 查询 |
-| 跨评估学习 | 无 | 无 | Turtle 导出支持跨会话分析 |
-| 预测处理 | 智能体凭空预测未来 | 未涉及 | 从文档中提取预测，根据证据评估可信度 |
-| 运行时依赖 | Python + 多个 LLM API | Python + LLM API | 单一二进制文件 Rust，内嵌 Oxigraph |
-| 部署复杂度 | 多服务 Python 技术栈 | 多服务 Python 技术栈 | `cargo build` 生成一个二进制文件 |
+---
 
 ## 性能表现
 
-基于真实专家评分文档的多领域基准测试。
+基于教育、政策、文化遗产、公共卫生、科技和研究等多个领域的真实专家评分文档进行基准测试。
 
-### 文档评估准确性
-
-在教育、政策、文化遗产、公共卫生、科技和研究等领域的 12 份真实专家评估文档上进行测试。
+### 文档评估准确性（12 份真实专家评估文档）
 
 | 指标 | 数值 |
-|------|------|
+| ---- | ---- |
 | **平均评分偏差** | 与专家评分相差 **2.8 个百分点** |
-| **方向准确性** | **12/12**（从未将弱文档评为高分或将强文档评为低分） |
+| **方向准确性** | **12/12** — 从未将弱文档评为高分或将强文档评为低分 |
 | **弱点识别率** | 与真实评审人员评语 **92%** 匹配 |
+| **完美标准级匹配** | 2 份文档的每个评估标准都精确匹配 |
 
 ### BITF 对比原始 Claude
 
 | 方法 | 与专家的平均偏差 | 弱点检测率 | 过度评分 |
-|------|-----------------|-----------|---------|
+| ---- | --------------- | --------- | ------- |
 | **BITF 子智能体** | **2.8pp** | **92%** | 罕见（偏保守） |
 | 原始 Claude（无框架） | ~15pp | ~70% | 系统性偏高 |
 
-### 论文评分（ELLIPSE 语料库）
+原始 Claude 评分基于文字质量。BITF 根据评估标准评分实质内容——能捕捉领域不匹配、证据缺失、事实错误，并校准至真实评分区间。
 
-45 篇真实专家评分的英语学习者论文，1.0-5.0 分制：
+### 论文评分（ELLIPSE 语料库，45 篇论文，1.0–5.0 分制）
 
 | 方法 | Pearson r | QWK | MAE |
-|------|-----------|-----|-----|
+| ---- | --------- | --- | --- |
 | 仅 SNN（确定性） | 0.442 | 0.258 | 1.08 |
 | 原始 Claude | 0.937 | — | 0.39 |
 | **BITF 子智能体** | **0.955** | **0.902** | **0.32** |
 
-QWK 0.902 超过了"可靠"评分者间一致性的 0.80 门槛。最先进的微调 AES 系统 QWK 为 0.75-0.85。
+QWK 0.902 超过了"可靠"评分者间一致性的 0.80 门槛。最先进的微调 AES 系统 QWK 为 0.75–0.85。
 
-### 消融实验：我们尝试了什么，什么没用
+### 预测可信度（5 项英国政策目标，已知结果）
 
-我们进行了系统性消融研究（逐一开关组件，测量准确性），以确定哪些部分值得其复杂度。
+| 方法 | 方向性预测正确数 |
+| ---- | --------------- |
+| BITF 子智能体 | **5/5** |
+| 原始 Claude | 5/5 |
+| BITF 基于规则 | 1/5 |
 
-| 组件 | 消融结果 | 操作 |
-|------|---------|------|
-| **SNN 评分** | 必要——移除后 Pearson 降至 0.000 | **保留（核心）** |
-| **本体对齐** | 必要——移除后 Pearson 从 0.684 降至 0.592 | **保留（核心）** |
-| **验证信号** | **损害准确性**——移除后 Pearson 从 0.684 升至 0.786 | **限制负面信号强度** |
-| **学术审慎用语检查** | **有害**——惩罚正确的学术用语（"或许"、"可能"） | **移至 --deep-validate** |
-| **马斯洛信念动态** | **零可测量影响**——有无马斯洛需求分数完全相同 | **标记为可选** |
-| **多轮辩论** | **确定性模式下无影响**——仅在 LLM 子智能体模式下有意义 | **LLM 模式保留** |
-| **哲学分析** | 有趣但对准确性无帮助——316 行代码几乎无实用价值 | **移至 --philosophy 标志** |
-| **认识论模块** | 学术练习——不提升评估准确性 | **移至 --epistemology 标志** |
-| **基于规则的预测提取** | **主动有害**——找到 3/11 预测，产生重复，解析错误 | **替换为子智能体提取 + SNN 验证** |
-| **数字不一致检查器** | 每份文档 111 个误报——将年份标记为"不一致数字" | **已修复：过滤年份和日期范围，降至 14 个误报** |
+---
 
-**消融的核心洞察：** SNN 和本体对齐是唯二可证明提升准确性的组件。其他一切要么无可测量影响（马斯洛、辩论、哲学），要么主动损害准确性（验证信号、基于规则的提取）。10 阶段核心流水线反映了这一点——仅通过消融验证的组件默认运行。
+## 架构
+
+```mermaid
+graph TB
+    subgraph 输入
+        DOC[文档 PDF/TXT]
+        INT[评估意图]
+    end
+
+    subgraph "核心流水线（10 个阶段）"
+        ING[1. 摄入]
+        EXT[2. 提取 — 混合规则 + LLM]
+        VAL[3. 验证 — 8 项核心检查]
+        CRI[4. 加载评估标准]
+        ALI[5. 对齐 — 7 个结构信号]
+        SPA[6. 生成智能体面板]
+        SNN_S[7. SNN 评分]
+        DEB[8. 辩论]
+        MOD[9. 调停]
+        REP[10. 报告]
+    end
+
+    subgraph "可选扩展"
+        PHI[--philosophy]
+        EPI[--epistemology]
+        PRE[--predict]
+        ORC[--orchestrate]
+        DEP[--deep-validate]
+    end
+
+    subgraph "知识图谱（Oxigraph）"
+        DO[文档本体]
+        CO[评估标准本体]
+        AO[智能体本体]
+    end
+
+    subgraph 输出
+        MD[evaluation-report.md]
+        TTL[evaluation.ttl]
+        HTML[evaluation-graph.html]
+        JSON[orchestration.json]
+    end
+
+    DOC --> ING
+    INT --> ING
+    ING --> EXT --> VAL --> CRI --> ALI --> SPA --> SNN_S --> DEB --> MOD --> REP
+    ING --> DO
+    CRI --> CO
+    SPA --> AO
+    DO & CO & AO --> ALI
+    DO & CO & AO --> SNN_S
+    REP --> MD & TTL & HTML
+    ORC --> JSON
+```
+
+### 三套本体，一张图
+
+```mermaid
+graph LR
+    subgraph "文档本体"
+        D[文档] --> S1[章节 1]
+        D --> S2[章节 2]
+        S1 --> C1[论断]
+        S1 --> E1[证据]
+        S2 --> C2[论断]
+    end
+
+    subgraph "评估标准本体"
+        F[框架] --> CR1[标准 1]
+        F --> CR2[标准 2]
+        CR1 --> R1[等级 4: 7-8]
+        CR1 --> R2[等级 3: 5-6]
+    end
+
+    subgraph "智能体本体"
+        A1[学科专家] --> N1[需求: 尊重]
+        A1 --> T1[信任 → 写作专家: 0.7]
+        A2[写作专家] --> N2[需求: 安全]
+    end
+
+    S1 -.->|onto_align| CR1
+    S2 -.->|onto_align| CR2
+    A1 -.->|评分| CR1
+    A2 -.->|评分| CR2
+```
+
+### SNN 验证层
+
+```mermaid
+graph LR
+    subgraph "图中证据"
+        QD[量化数据 — 0.8-1.0]
+        VC[可验证声明 — 0.6-0.8]
+        CI[引用文献 — 0.5-0.7]
+        GC[一般性声明 — 0.3-0.5]
+    end
+
+    subgraph "SNN 神经元"
+        MP[膜电位]
+        TH[阈值]
+        FR[发放频率 → 分数]
+    end
+
+    subgraph "混合输出"
+        SS[SNN 分数]
+        LS[LLM 分数]
+        FS[最终分数]
+        HF[幻觉标记]
+    end
+
+    QD & VC & CI & GC -->|脉冲| MP
+    MP -->|超过| TH -->|发放| FR
+    FR --> SS
+    SS & LS --> FS
+    SS -->|"SNN 低 + LLM 高"| HF
+```
+
+---
+
+## 消融实验：我们尝试了什么，什么没用
+
+系统性消融研究——逐一开关组件，测量准确性——确定了哪些部分值得其复杂度。
+
+| 组件 | 结果 | 操作 |
+| ---- | ---- | ---- |
+| **SNN 评分** | 必要——移除后 Pearson 降至 0.000 | **核心** |
+| **本体对齐** | 必要——移除后 Pearson 从 0.684 降至 0.592 | **核心** |
+| **验证信号** | 损害准确性——移除后 Pearson 0.684→0.786 | 限制信号强度 |
+| **审慎用语检查** | 有害——惩罚正确的学术用语 | 移出核心 |
+| **具体性检查** | 噪声太大——标记正常学术词汇 | 移出核心 |
+| **过渡词检查** | 高中水平启发式，无准确性提升 | 移出核心 |
+| **马斯洛动态** | 零可测量影响 | 可选 (`--epistemology`) |
+| **多轮辩论** | 确定性模式下无影响 | 仅 LLM 子智能体模式生效 |
+| **哲学模块** | 有趣但无实用价值（316 行，ROI ≈ 0） | 可选 (`--philosophy`) |
+| **认识论模块** | 学术练习，无准确性提升 | 可选 (`--epistemology`) |
+| **基于规则的预测** | 主动有害——3/11 命中，重复，解析错误 | 替换为子智能体 + SNN |
+| **数字不一致（旧版）** | 每文档 111 个误报（年份标为"不一致"） | 已修复——过滤年份/日期，降至 14 个 |
+
+**核心洞察：** SNN 和本体对齐是唯二可证明提升准确性的组件。其余要么无影响要么有害。10 阶段核心流水线仅运行通过消融验证的组件。
 
 ---
 
 ## 工作原理
 
-评估流水线分 10 个核心阶段运行（可选扩展通过命令行标志启用）：
+### 核心流水线（始终运行）
 
-1. **摄入** -- 从 PDF（或纯文本）中提取文本，按标题检测拆分为章节，在 Oxigraph 中构建文档本体的 RDF 三元组。
+1. **摄入** — PDF/文本 → 章节 → 文档本体（Oxigraph 中的 RDF 三元组）
+2. **提取** — 混合规则 + LLM 的论断/证据提取，带置信度评分
+3. **验证** — 8 项核心确定性检查（引用、一致性、结构、阅读难度、重复、证据质量、参考文献格式）
+4. **加载评估标准** — 7 个内置框架 + YAML/JSON 自定义评分标准
+5. **对齐** — 通过 7 个结构信号将章节映射到评估标准（AlignmentEngine）
+6. **生成智能体** — 领域专家面板 + 主持人，配备认知模型
+7. **SNN 评分** — 基于证据的确定性评分（无证据 = 零分）
+8. **辩论** — 分歧检测、质疑/回应、收敛
+9. **调停** — 信任加权共识，离群检测
+10. **报告** — Markdown + Turtle RDF + 交互式图谱 HTML
 
-2. **加载评估标准** -- 选择或生成评估框架（学术评分标准、招标 ITT 标准、通用质量框架）。每个评估标准、评分标准等级和权重都成为评估标准本体中的 OWL 个体。
+### 可选扩展（CLI 标志）
 
-3. **预测提取** -- 提取定量目标、成本估算、时间线、比较声明和承诺。根据文档自身的证据基础评估每项预测的可信度。标记缺乏证据支撑的预测。
+| 标志 | 功能 |
+| ---- | ---- |
+| `--predict` | 提取文档中的预测/目标，根据证据评估可信度 |
+| `--philosophy` | 康德主义、功利主义、美德伦理分析 |
+| `--epistemology` | 基于经验/规范/证言的有根据信念 |
+| `--deep-validate` | 全部 15 项验证检查 |
+| `--orchestrate` | 生成 Claude 子智能体任务文件 |
 
-4. **生成智能体面板** -- 从意图字符串中检测评估领域，生成 3-5 名专家智能体和一名主持人。每个智能体的认知模型（马斯洛需求、信任权重、领域专长）作为智能体本体加载。
+---
 
-5. **对齐** -- 使用关键词重叠（未来将通过 open-ontologies 的语义嵌入）将文档章节映射到评估标准。识别文档内容未覆盖某项评估标准的缺口。
+## 反幻觉：为什么需要 SNN
 
-6. **评分（第 1 轮）** -- 每个智能体独立为每项评估标准打分。评分提示包含智能体角色、评估标准的评分标准以及相关文档章节。分数以 RDF 三元组记录。
+MiroFish 的智能体可以为毫无证据支撑的评估标准"论证"出 9/10 的高分。这是附带置信度的幻觉。
 
-7. **检测分歧** -- 找出分数差异超过阈值的评估标准-智能体对，这些将成为辩论目标。
-
-8. **辩论** -- 质疑方智能体针对目标分数构建基于证据的论证。被质疑方进行辩护或修正。信任权重根据说服结果更新。每一轮产生新的评分三元组。
-
-9. **主持调停** -- 当漂移速度低于阈值（达成收敛）时，主持人计算信任加权的共识分数，识别离群异议，生成最终调停结果。
-
-10. **生成报告** -- 生成结构化的 Markdown 报告，包含执行摘要、评分卡表格、覆盖缺口分析、完整辩论记录、改进建议和面板总结。将完整评估导出为 Turtle RDF 以供跨会话分析。
-
-## 反幻觉：SNN 验证层
-
-MiroFish 的核心弱点在于智能体评分是 LLM 输出——看似合理的文本，却没有数学基础。一个智能体可以为文档中毫无支撑证据的评估标准"论证"出 9/10 的高分。这本质上是附带了置信度分数的幻觉。
-
-Brain in the Fish 通过一个**脉冲神经网络（SNN）**验证层来解决这个问题，该验证层位于本体证据与 LLM 评分之间。SNN 是确定性的：给定相同的证据，它总是产生相同的分数。LLM 是随机的：它提供定性判断。两者结合使得幻觉可以被检测。
-
-### SNN 工作原理
-
-每个评估智能体拥有一个神经网络，每项评估标准对应一个**神经元**。来自文档本体的证据生成**输入脉冲**：
-
-| 证据类型 | 脉冲强度 | 示例 |
-| -------- | -------- | ---- |
-| 量化数据 | 0.8-1.0 | "富时100指数上涨45%" |
-| 可验证声明 | 0.6-0.8 | "英格兰银行购入8950亿英镑资产" |
-| 引用文献 | 0.5-0.7 | "(Bernanke, 2009)" |
-| 一般性声明 | 0.3-0.5 | "量化宽松作为稳定工具是有效的" |
-| 章节对齐 | 0.2-0.4 | 章节标题与评估标准匹配 |
-
-神经元使用**漏积分-发放**动力学：
-
-- 脉冲在膜电位中累积
-- 电位随时间衰减（泄漏）
-- 当电位超过**阈值**（由评分标准派生）→ 神经元发放
-- 发放频率映射为分数
-- 图中无证据 = 无脉冲 = 不发放 = 零分
-
-### 混合评分：SNN + LLM
-
-最终分数混合两个层的输出，按 SNN 置信度加权：
-
-```text
-final_score = snn_score × snn_weight + llm_score × llm_weight
-```
-
-当 SNN 置信度高（证据充分）时，SNN 主导评分。当置信度低（证据稀疏）时，LLM 补充——但如果 LLM 评分显著高于证据支撑的水平，将触发**幻觉标记**。
+SNN 使其可被检测。每个智能体的每项标准对应一个神经元。本体中的证据生成脉冲。无证据 = 无脉冲 = 不发放 = 零分。当 LLM 评 9/10 而 SNN 评 2/10 时，系统会标记：
 
 ```text
 LLM 评分 9/10。SNN 评分 2/10（仅收到 2 个弱脉冲）。
@@ -182,22 +260,20 @@ LLM 评分 9/10。SNN 评分 2/10（仅收到 2 个弱脉冲）。
 → "警告：LLM 评分显著高于证据支撑水平。"
 ```
 
-### 辩论即侧向抑制
+最终分数混合两者：`最终 = snn × snn权重 + llm × llm权重`。证据充分时 SNN 主导。稀疏时 LLM 补充——但幻觉标记会被触发。
 
-在辩论轮次中，来自其他智能体的质疑对目标智能体的神经元施加**侧向抑制**。这降低了膜电位，需要更多证据才能维持高分。信任权重调节智能体间的脉冲传输——高度受信任的质疑者产生更强的抑制信号。
+### ARIA 对齐
 
-### 理论基础：ARIA 安全保障 AI
-
-该架构与 [ARIA 的 5900 万英镑安全保障 AI 计划](https://www.aria.org.uk/programme-safeguarded-ai/)（由 davidad 领导，与 Yoshua Bengio、Stuart Russell 和 Max Tegmark 共同撰写）保持一致。他们在["迈向有保障的安全 AI"](https://arxiv.org/abs/2405.06624)中的论点：**不要让 LLM 变得确定性——而是让验证变得确定性。**
+本项目实现了 [ARIA 安全保障 AI 计划](https://www.aria.org.uk/programme-safeguarded-ai/)（Bengio、Russell、Tegmark）的守门人架构：**不要让 LLM 变得确定性——让验证变得确定性。**
 
 | ARIA 框架 | Brain in the Fish |
 | --------- | ----------------- |
-| 世界模型（现实的形式化描述） | 本体（OWL 知识图谱） |
-| 安全规范（可接受的输出） | 评分标准等级 + SNN 阈值 |
-| 确定性验证器（证明检查器） | SNN（相同脉冲 → 相同分数，始终如此） |
-| 证明证书（推理痕迹） | 脉冲日志 + onto_lineage（可审计的证据路径） |
+| 世界模型 | OWL 本体（知识图谱） |
+| 安全规范 | 评分标准等级 + SNN 阈值 |
+| 确定性验证器 | SNN（相同证据 → 相同分数） |
+| 证明证书 | 脉冲日志 + onto_lineage |
 
-LLM 生成定性判断。SNN 提供确定性、可审计的验证门控。本体提供形式化的世界模型。三者结合，实现了 ARIA 的文档评估"守门人"架构。
+---
 
 ## 快速开始
 
@@ -213,202 +289,156 @@ cd brain-in-the-fish
 cargo build --release
 ```
 
-### 连接 Claude
-
-Brain in the Fish 是一个 MCP 服务器。将其添加到你的 Claude Code 或 Claude Desktop 配置中：
-
-**Claude Code (~/.claude.json):**
-
-```json
-{
-  "mcpServers": {
-    "brain-in-the-fish": {
-      "command": "/path/to/brain-in-the-fish",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-**Claude Desktop (claude_desktop_config.json):**
-
-```json
-{
-  "mcpServers": {
-    "brain-in-the-fish": {
-      "command": "/path/to/brain-in-the-fish",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-然后向 Claude 提问：
-
-> "根据绿皮书标准评估这份政策文件"
-
-Claude 将通过调度子智能体调用 eval_* MCP 工具来编排评估。每个子智能体以专家角色进行评分。SNN 验证层根据知识图谱中的证据验证每一个评分。
-
-### 独立模式（无需 Claude）
-
-仅使用确定性评估，无需 LLM 判断：
-
-```bash
-brain-in-the-fish evaluate document.pdf --intent "mark this essay for A-level"
-```
-
-运行 SNN 评分管道——基于证据、确定性、无需 API 密钥。输出包括 Markdown 报告、Turtle RDF 导出、交互式图谱和编排任务（Claude 可稍后接手）。
-
-### 验证
-
-```bash
-cargo test
-```
-
-## 使用方法
-
 ### 作为 MCP 服务器（推荐）
 
-```bash
-# 启动 MCP 服务器
-brain-in-the-fish serve
+添加到 Claude Code (`~/.claude.json`) 或 Claude Desktop：
 
-# Claude 处理一切——只需提问：
-# "评估这篇 A-level 经济学论文"
-# "审查这份合同的 GDPR 合规性"
-# "评估这份 NHS 临床治理报告"
-# "审计这份调查方法论"
+```json
+{
+  "mcpServers": {
+    "brain-in-the-fish": {
+      "command": "/path/to/brain-in-the-fish-mcp",
+      "args": []
+    }
+  }
+}
 ```
 
-### 作为 CLI 工具（确定性模式）
+然后向 Claude 提问：*"根据绿皮书标准评估这份政策文件"*
+
+### 作为 CLI
 
 ```bash
-# 使用 SNN 评分（无需 LLM）
-brain-in-the-fish evaluate essay.pdf --intent "mark this economics essay"
+# 确定性评估（无需 API 密钥）
+brain-in-the-fish evaluate document.pdf --intent "批改这篇论文" --open
 
 # 使用自定义评估标准
-brain-in-the-fish evaluate policy.pdf --intent "evaluate against Green Book" --criteria rubric.yaml
+brain-in-the-fish evaluate policy.pdf --intent "评估" --criteria rubric.yaml
 
-# 输出到指定目录
-brain-in-the-fish evaluate report.pdf --intent "audit this clinical report" --output ./results
+# 启用全部扩展
+brain-in-the-fish evaluate report.pdf --intent "审计" --predict --deep-validate --orchestrate
+
+# 基准测试
+brain-in-the-fish benchmark --dataset data/ellipse-sample.json --ablation
 ```
 
-### 输出文件
+### 输出
 
 | 文件 | 描述 |
-|------|------|
-| `evaluation-report.md` | 完整评分卡、缺口分析、辩论记录、改进建议 |
+| ---- | ---- |
+| `evaluation-report.md` | 评分卡、缺口分析、辩论记录、改进建议 |
 | `evaluation.ttl` | Turtle RDF 导出，用于跨评估分析 |
 | `evaluation-graph.html` | 交互式层次知识图谱 |
 | `orchestration.json` | Claude 增强评分的子智能体任务 |
 
-## 通用评估
+---
 
-系统在你告知之前并不知道要评估什么。同一引擎通过将三套本体适配到具体领域来处理任意类型的文档。
+## 工作区结构
 
-| 用例 | 文档本体 | 评估标准本体 | 智能体面板 |
-|------|----------|-------------|-----------|
-| 批改学生论文 | 段落、论点、引用、论题 | 评分标准、分数线、学习成果 | 学科专家、写作专家、批判性思维评估员 |
-| 评估政策文件 | 目标、措施、影响预测 | 绿皮书评估、影响标准、利益相关方需求 | 政策分析师、利益相关方代表、实施专家 |
-| 审查合同 | 条款、义务、术语、定义 | 法律清单、风险标准、监管要求 | 法律审查员、合规官、商务分析师 |
-| 分析调查结果 | 回应主题、方法论、人口统计 | 研究问题、效度标准 | 统计学家、研究设计师、伦理审查员 |
-| 评估招标方案 | 章节、论断、证据、案例研究 | ITT 标准、权重、通过/不通过阈值 | 采购负责人、领域专家、社会价值倡导者、财务评估员 |
+```mermaid
+graph TB
+    subgraph "Cargo 工作区"
+        ROOT[Cargo.toml — 工作区根]
 
-## 适用领域
+        subgraph "crates/core"
+            CORE[brain-in-the-fish-core — 库]
+            CORE --> TYPES[types]
+            CORE --> INGEST[ingest]
+            CORE --> EXTRACT[extract]
+            CORE --> VALIDATE[validate]
+            CORE --> CRITERIA[criteria]
+            CORE --> ALIGNMENT[alignment]
+            CORE --> AGENT[agent]
+            CORE --> SNN_MOD[snn]
+            CORE --> SCORING[scoring]
+            CORE --> DEBATE[debate]
+            CORE --> MODERATION[moderation]
+            CORE --> REPORT[report]
+            CORE --> PREDICT[predict]
+            CORE --> VIS[visualize]
+            CORE --> BENCH[benchmark]
+        end
 
-Brain in the Fish 可评估任何领域的文档。引擎根据评估意图自动调整其评估标准本体、智能体面板和评分标准。
+        subgraph "crates/cli"
+            CLI_BIN[brain-in-the-fish — 二进制]
+        end
 
-| 领域 | 文档类型 | 框架与标准 |
-|------|---------|-----------|
-| **教育** | 论文、课程作业、学位论文、考试答卷 | AQA、Ofsted、布鲁姆分类法、QAA |
-| **医疗** | 临床治理报告、患者安全审计、护理计划 | CQC、NICE 指南、NHS England |
-| **政府** | 政策文件、影响评估、商业计划书 | 绿皮书、紫皮书、公务员能力框架 |
-| **法律** | 合同、合规报告、条款和条件 | GDPR、消费者权益法、监管清单 |
-| **研究** | 调查方法论、伦理申请、同行评审 | ESRC 框架、研究委员会标准 |
-| **采购** | 招标方案、提案、ITT 回复 | PPN、社会价值法案、框架特定标准 |
-| **通用** | 任何文档对任何自定义标准 | 自定义评分标准、加权评分、通过/不通过阈值 |
+        subgraph "crates/mcp"
+            MCP_BIN[brain-in-the-fish-mcp — 二进制]
+        end
+    end
 
-## 架构
+    subgraph "外部依赖"
+        OO[open-ontologies — Oxigraph + OWL 推理]
+    end
 
-所有模块编译为单一二进制文件。没有微服务，没有 Python，本体引擎无需网络调用。
+    CLI_BIN --> CORE
+    MCP_BIN --> CORE
+    CORE --> OO
+```
 
-| 模块 | 用途 | 代码行数 |
-|------|------|---------|
-| `types` | 核心评估领域类型（Document、Criteria、Agent、Score、Session） | 289 |
-| `ingest` | PDF 文本提取、章节拆分、文档本体 RDF 生成 | 557 |
-| `criteria` | 评估框架加载（7 个内置 + YAML/JSON）、评估标准本体 RDF 生成 | 1,360 |
-| `agent` | 智能体认知模型（马斯洛 + 信任）、智能体本体 RDF、面板生成 | 840 |
-| `scoring` | SPARQL 查询、评分记录、为子智能体生成评分提示 | 1,278 |
-| `debate` | 分歧检测、质疑提示、漂移速度、收敛判定 | 875 |
-| `moderation` | 信任加权共识、离群检测、综合结果计算 | 678 |
-| `report` | Markdown 报告生成、Turtle RDF 会话导出 | 713 |
-| `server` | MCP 服务器，提供 12 个 eval_* 工具（rmcp，stdio + HTTP 传输） | 905 |
-| `main` | CLI 入口（clap），evaluate 和 serve 子命令，完整流水线编排 | 737 |
-| `snn` | 脉冲神经网络评分——确定性证据驱动验证 | 752 |
-| `llm` | Claude API 客户端，用于子代理增强评分（可选） | 320 |
-| `alignment` | 文档章节与评估标准之间的本体对齐（7 个结构信号） | 843 |
-| `research` | 证据收集与综合的研究管道 | 493 |
-| `memory` | 跨评估轮次的智能体记忆持久化 | 315 |
-| `visualize` | 评估可视化、交互式图 HTML、图表生成 | 2,520 |
-| `validate` | 15 项确定性文档验证检查，向 SNN 提供脉冲/抑制信号 | 2,147 |
-| `batch` | 批量评估多个文档 | 602 |
-| `belief_dynamics` | 基于评估发现更新马斯洛需求 | 166 |
-| `epistemology` | 基于经验、规范和证言的有根据信念 | 347 |
-| `philosophy` | 康德主义、功利主义和美德伦理分析 | 316 |
-| `orchestrator` | 为 Claude 增强评分生成子智能体任务 | 292 |
-| `semantic` | 通过嵌入进行语义相似度计算（TextEmbedder + VecStore） | 154 |
-| `lib` | 模块声明 | 22 |
+**约 20K 行 Rust 代码，25 个模块，编译为 2 个二进制文件（CLI + MCP 服务器）。**
 
-**总计：约 17,520 行 Rust 代码，共 24 个模块。**
+---
 
 ## MCP 工具
 
-MCP 服务器暴露 12 个工具，用于以编程方式编排评估流程：
-
 | 工具 | 描述 |
-|------|------|
-| `eval_status` | 服务器状态、版本、会话状态、三元组数量 |
-| `eval_ingest` | 摄入 PDF 并构建文档本体 |
-| `eval_criteria` | 加载评估框架（通用、学术、政策、临床、法律） |
-| `eval_align` | 在文档章节与评估标准之间运行本体对齐 |
-| `eval_spawn` | 根据意图生成评估智能体面板 |
-| `eval_score_prompt` | 为指定的智能体-评估标准对生成评分提示 |
-| `eval_record_score` | 将智能体的评分记录到图存储中 |
-| `eval_debate_status` | 当前轮次的分歧、漂移速度和收敛状态 |
-| `eval_challenge_prompt` | 生成一个智能体质疑另一个智能体的提示 |
-| `eval_scoring_tasks` | 为智能体面板生成所有评分任务，作为编排器可分发的提示 |
-| `eval_whatif` | 模拟文本更改并估算其对分数的影响 |
-| `eval_report` | 生成包含调停和共识的完整评估报告 |
+| ---- | ---- |
+| `eval_status` | 服务器状态、会话状态、三元组数量 |
+| `eval_ingest` | 摄入文档并构建文档本体 |
+| `eval_criteria` | 加载评估框架 |
+| `eval_align` | 运行本体对齐（章节 ↔ 标准） |
+| `eval_spawn` | 生成评估智能体面板 |
+| `eval_score_prompt` | 获取指定智能体-标准对的评分提示 |
+| `eval_record_score` | 记录子智能体的评分 |
+| `eval_scoring_tasks` | 获取全部评分任务用于编排 |
+| `eval_debate_status` | 分歧、收敛、漂移速度 |
+| `eval_challenge_prompt` | 生成辩论质疑提示 |
+| `eval_whatif` | 模拟文本更改，估算分数影响 |
+| `eval_predict` | 提取预测并评估可信度 |
+| `eval_report` | 生成最终评估报告 |
+
+---
 
 ## 基于 open-ontologies 构建
 
-Brain in the Fish 不是 [open-ontologies](https://github.com/fabio-rovai/open-ontologies) 的分支。它是一个依赖 crate，以库的形式消费 open-ontologies。
+Brain in the Fish 以库 crate 形式消费 [open-ontologies](https://github.com/fabio-rovai/open-ontologies)。使用的组件：
 
-```toml
-open-ontologies = { path = "../open-ontologies", features = ["embeddings"] }
-```
+| 组件 | 用途 |
+| ---- | ---- |
+| `GraphStore` | 三元组存储 + SPARQL 查询 |
+| `Reasoner` | OWL-RL 推理 |
+| `AlignmentEngine` | 7 信号本体对齐 |
+| `StateDb` | 持久化状态 |
+| `LineageLog` | 完整审计轨迹 |
+| `DriftDetector` | 收敛监控 |
+| `Enforcer` | 质量门控 |
+| `TextEmbedder` | 语义相似度（可选） |
 
-它使用 `GraphStore` 进行三元组存储和 SPARQL 查询，`Reasoner` 进行推理，`Aligner` 进行本体对齐，`Embedder` 进行语义相似度计算——全部作为进程内 Rust 函数调用。零网络开销。无序列化边界。本体引擎与评估逻辑运行在同一地址空间中。
+全部作为进程内 Rust 函数调用，零网络开销。
+
+---
 
 ## 测试
 
-239 个测试覆盖全部 24 个模块：摄入、评估标准加载、智能体生成、评分、辩论机制、调停、报告生成、SNN 验证、对齐、验证、信念动态、认识论、哲学、编排、批处理和 MCP 服务器工具。
-
 ```bash
-cargo test
+cargo test --workspace        # 260 个测试覆盖全部 crate
+cargo clippy --workspace      # 零警告
+cargo run --bin brain-in-the-fish -- benchmark  # 运行合成基准测试
 ```
 
 ## 贡献
 
-请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解贡献指南。
+请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 致谢
 
-- [MiroFish](https://github.com/666ghj/MiroFish) — 多智能体群体预测引擎，启发了本项目的智能体辩论架构
-- [AgentSociety](https://github.com/tsinghua-fib-lab/AgentSociety) — 清华大学认知智能体仿真，启发了马斯洛 + 计划行为理论模型
+- [MiroFish](https://github.com/666ghj/MiroFish) — 启发了智能体辩论架构的多智能体群体预测引擎
+- [AgentSociety](https://github.com/tsinghua-fib-lab/AgentSociety) — 启发了马斯洛 + TPB 模型的认知智能体仿真
 - [open-ontologies](https://github.com/fabio-rovai/open-ontologies) — 提供知识图谱骨架的 OWL 本体引擎
-- [epistemic-deconstructor](https://github.com/NikolasMarkou/epistemic-deconstructor) — Nikolas Markou 的贝叶斯假设追踪与证伪优先认识论，启发了校准置信度评分与似然比上限
-- [ARIA Safeguarded AI](https://www.aria.org.uk/programme-safeguarded-ai/) — 5900万英镑的守门人架构（世界模型 + 确定性验证器 + 证明证书），验证了 SNN + 本体验证方法
+- [epistemic-deconstructor](https://github.com/NikolasMarkou/epistemic-deconstructor) — 贝叶斯追踪与证伪优先认识论
+- [ARIA Safeguarded AI](https://www.aria.org.uk/programme-safeguarded-ai/) — 守门人架构验证
 
 ## 许可证
 
