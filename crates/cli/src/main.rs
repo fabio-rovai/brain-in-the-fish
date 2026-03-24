@@ -1169,13 +1169,27 @@ fn run_shoal(
                 all_scored.extend(scored);
             }
         }
-        let metrics = shoal::compute_metrics(&all_scored, &samples, &config);
-        println!("Shoal results ({} essays scored):", metrics.samples);
-        println!("  Pearson r: {:.3}", metrics.pearson_r);
-        println!("  QWK:       {:.3}", metrics.qwk);
-        println!("  MAE:       {:.2}", metrics.mae);
-        println!("  RMSE:      {:.2}", metrics.rmse);
-        shoal::save_results(&all_scored, &metrics, &output)?;
+        let intent = "evaluate this essay";
+        println!("Running EDS pipeline on {} scored essays...", all_scored.len());
+        let (sub, eds, blended) = shoal::compute_blended_metrics(&all_scored, &samples, &config, intent);
+
+        println!("\nShoal results ({} essays):", sub.samples);
+        println!("  | Method   | Pearson r | QWK   | MAE  | RMSE |");
+        println!("  |----------|-----------|-------|------|------|");
+        println!(
+            "  | Subagent | {:.3}     | {:.3} | {:.2} | {:.2} |",
+            sub.pearson_r, sub.qwk, sub.mae, sub.rmse
+        );
+        println!(
+            "  | EDS only | {:.3}     | {:.3} | {:.2} | {:.2} |",
+            eds.pearson_r, eds.qwk, eds.mae, eds.rmse
+        );
+        println!(
+            "  | Blended  | {:.3}     | {:.3} | {:.2} | {:.2} |",
+            blended.pearson_r, blended.qwk, blended.mae, blended.rmse
+        );
+
+        shoal::save_results(&all_scored, &blended, &output)?;
     } else {
         // Generate batch prompts
         std::fs::create_dir_all(&output)?;

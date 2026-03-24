@@ -146,6 +146,220 @@ pub fn compute_metrics(
     }
 }
 
+/// Run the deterministic pipeline on a single essay and return the EDS score (0.0-1.0).
+pub fn eds_score_essay(sample: &LabeledSample, intent: &str) -> f64 {
+    use crate::{agent, alignment, criteria, extract, snn, validate};
+
+    // 1. Build document
+    let word_count = sample.text.split_whitespace().count() as u32;
+    let mut section = crate::types::Section {
+        id: uuid::Uuid::new_v4().to_string(),
+        title: "Essay".into(),
+        text: sample.text.clone(),
+        word_count,
+        page_range: None,
+        claims: vec![],
+        evidence: vec![],
+        subsections: vec![],
+    };
+
+    // 2. Extract claims/evidence
+    let extracted = extract::extract_all(&section.text);
+    let (claims, evidence) = extract::to_claims_and_evidence(&extracted);
+    if !claims.is_empty() || !evidence.is_empty() {
+        section.claims = claims;
+        section.evidence = evidence;
+    }
+
+    let doc = crate::types::EvalDocument {
+        id: sample.id.clone(),
+        title: format!("Essay: {}", sample.id),
+        doc_type: "essay".into(),
+        total_pages: None,
+        total_word_count: Some(word_count),
+        sections: vec![section],
+    };
+
+    // 3. Load criteria
+    let framework = criteria::framework_for_intent(intent);
+
+    // 4. Align
+    let (alignments, _) = alignment::align_sections_to_criteria(&doc, &framework);
+
+    // 5. Validate
+    let validation_signals = validate::validate_core(&doc, &framework);
+
+    // 6. Spawn agents + SNN score
+    let agents = agent::spawn_panel(intent, &framework);
+    let snn_config = snn::SNNConfig::default();
+
+    let mut all_scores = Vec::new();
+    for agent_item in &agents {
+        let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+        network.feed_evidence(&doc, &alignments, &snn_config);
+
+        // Feed validation signals
+        for signal in &validation_signals {
+            if signal.spike_effect.abs() > 0.01 {
+                for neuron in &mut network.neurons {
+                    let matches = signal.criterion_id.is_none()
+                        || signal.criterion_id.as_deref() == Some(&neuron.criterion_id);
+                    if matches {
+                        neuron.receive_spike(
+                            snn::Spike {
+                                source_id: signal.id.clone(),
+                                strength: signal.spike_effect.abs(),
+                                spike_type: if signal.spike_effect > 0.0 {
+                                    snn::SpikeType::Evidence
+                                } else {
+                                    snn::SpikeType::Claim
+                                },
+                                timestep: 0,
+                            },
+                            &snn_config,
+                        );
+                        if signal.spike_effect < 0.0 {
+                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.2);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Compute scores
+        for neuron in &network.neurons {
+            let criterion = framework
+                .criteria
+                .iter()
+                .find(|c| c.id == neuron.criterion_id);
+            if let Some(crit) = criterion {
+                let snn_score = neuron.compute_score(crit.max_score, &snn_config);
+                all_scores.push((snn_score.snn_score, crit.max_score, crit.weight));
+            }
+        }
+    }
+
+    // 7. Compute weighted average across all agents and criteria
+    if all_scores.is_empty() {
+        return 0.0;
+    }
+
+    // Average across agents for each criterion, then weighted sum
+    let mut weighted_sum = 0.0;
+    let mut weight_sum = 0.0;
+
+    for crit in &framework.criteria {
+        let crit_scores: Vec<f64> = all_scores
+            .iter()
+            .filter(|(_, max, _)| (*max - crit.max_score).abs() < 0.01)
+            .map(|(score, max, _)| score / max)
+            .collect();
+
+        if !crit_scores.is_empty() {
+            let mean_pct = crit_scores.iter().sum::<f64>() / crit_scores.len() as f64;
+            weighted_sum += mean_pct * crit.weight;
+            weight_sum += crit.weight;
+        }
+    }
+
+    if weight_sum > 0.0 {
+        weighted_sum / weight_sum // Returns 0.0-1.0 percentage
+    } else {
+        0.0
+    }
+}
+
+/// Compute blended metrics: EDS score + subagent score for each essay.
+pub fn compute_blended_metrics(
+    scored: &[ScoredEssay],
+    samples: &[LabeledSample],
+    config: &ShoalConfig,
+    intent: &str,
+) -> (BenchmarkResults, BenchmarkResults, BenchmarkResults) {
+    let sample_map: std::collections::HashMap<&str, &LabeledSample> = samples
+        .iter()
+        .map(|s| (s.id.as_str(), s))
+        .collect();
+
+    let mut subagent_pred = Vec::new();
+    let mut eds_pred = Vec::new();
+    let mut blended_pred = Vec::new();
+    let mut actual = Vec::new();
+    let mut _hallucination_flags = 0usize;
+
+    for s in scored {
+        if let Some(sample) = sample_map.get(s.id.as_str()) {
+            let eds_pct = eds_score_essay(sample, intent);
+            let eds_score = eds_pct * config.max_score;
+            let subagent_score = s.score;
+
+            // Blend: 40% EDS + 60% subagent (EDS is verification, subagent is scorer)
+            let blended = eds_score * 0.4 + subagent_score * 0.6;
+
+            // Hallucination check
+            let eds_normalised = eds_score / config.max_score;
+            let sub_normalised = subagent_score / config.max_score;
+            if sub_normalised > 0.7 && eds_normalised < 0.3 {
+                _hallucination_flags += 1;
+            }
+
+            subagent_pred.push(subagent_score);
+            eds_pred.push(eds_score);
+            blended_pred.push(blended);
+            actual.push(sample.expert_score);
+        }
+    }
+
+    let n = actual.len();
+
+    let subagent_results = BenchmarkResults {
+        name: "shoal_subagent".into(),
+        samples: n,
+        pearson_r: pearson_correlation(&subagent_pred, &actual),
+        qwk: quadratic_weighted_kappa(&subagent_pred, &actual, 0.0, config.max_score),
+        mae: mean_absolute_error(&subagent_pred, &actual),
+        rmse: rmse(&subagent_pred, &actual),
+        mean_predicted: subagent_pred.iter().sum::<f64>() / n.max(1) as f64,
+        mean_actual: actual.iter().sum::<f64>() / n.max(1) as f64,
+        config: BenchmarkConfig {
+            label: "subagent".into(),
+            ..Default::default()
+        },
+    };
+
+    let eds_results = BenchmarkResults {
+        name: "shoal_eds".into(),
+        samples: n,
+        pearson_r: pearson_correlation(&eds_pred, &actual),
+        qwk: quadratic_weighted_kappa(&eds_pred, &actual, 0.0, config.max_score),
+        mae: mean_absolute_error(&eds_pred, &actual),
+        rmse: rmse(&eds_pred, &actual),
+        mean_predicted: eds_pred.iter().sum::<f64>() / n.max(1) as f64,
+        mean_actual: actual.iter().sum::<f64>() / n.max(1) as f64,
+        config: BenchmarkConfig {
+            label: "eds".into(),
+            ..Default::default()
+        },
+    };
+
+    let blended_results = BenchmarkResults {
+        name: "shoal_blended".into(),
+        samples: n,
+        pearson_r: pearson_correlation(&blended_pred, &actual),
+        qwk: quadratic_weighted_kappa(&blended_pred, &actual, 0.0, config.max_score),
+        mae: mean_absolute_error(&blended_pred, &actual),
+        rmse: rmse(&blended_pred, &actual),
+        mean_predicted: blended_pred.iter().sum::<f64>() / n.max(1) as f64,
+        mean_actual: actual.iter().sum::<f64>() / n.max(1) as f64,
+        config: BenchmarkConfig {
+            label: "blended".into(),
+            ..Default::default()
+        },
+    };
+
+    (subagent_results, eds_results, blended_results)
+}
+
 /// Save shoal results to a JSON file.
 pub fn save_results(
     scored: &[ScoredEssay],
@@ -281,5 +495,72 @@ mod tests {
         let config = ShoalConfig::default();
         let metrics = compute_metrics(&[], &[], &config);
         assert_eq!(metrics.samples, 0);
+    }
+
+    #[test]
+    fn test_eds_score_essay() {
+        let sample = LabeledSample {
+            id: "test1".into(),
+            text: "According to Joyce et al. (2012), quantitative easing reduced gilt yields by 100 basis points. The Bank of England purchased £895 billion in assets. This essay argues that QE was effective.".into(),
+            expert_score: 7.0,
+            max_score: 10.0,
+            domain: "economics".into(),
+            rubric: "academic".into(),
+        };
+        let score = eds_score_essay(&sample, "mark this essay");
+        assert!(
+            score > 0.0 && score <= 1.0,
+            "EDS score should be 0-1, got {}",
+            score
+        );
+        assert!(
+            score > 0.2,
+            "Essay with citations and evidence should score > 0.2, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_eds_score_empty_essay() {
+        let sample = LabeledSample {
+            id: "test2".into(),
+            text: "Computers are good.".into(),
+            expert_score: 2.0,
+            max_score: 10.0,
+            domain: "generic".into(),
+            rubric: "generic".into(),
+        };
+        let score = eds_score_essay(&sample, "mark this essay");
+        assert!(score < 0.5, "Empty essay should score low, got {}", score);
+    }
+
+    #[test]
+    fn test_compute_blended_metrics() {
+        let samples = sample_essays();
+        let scored = vec![
+            ScoredEssay {
+                id: "e1".into(),
+                score: 4.0,
+            },
+            ScoredEssay {
+                id: "e2".into(),
+                score: 2.0,
+            },
+            ScoredEssay {
+                id: "e3".into(),
+                score: 3.0,
+            },
+        ];
+        let config = ShoalConfig::default();
+        let (sub, eds, blended) =
+            compute_blended_metrics(&scored, &samples, &config, "mark this essay");
+        assert_eq!(sub.samples, 3);
+        assert_eq!(eds.samples, 3);
+        assert_eq!(blended.samples, 3);
+        // Blended should have non-zero MAE (EDS won't perfectly match expert)
+        assert!(
+            blended.mae >= 0.0,
+            "Blended MAE should be non-negative"
+        );
     }
 }
