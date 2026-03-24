@@ -20,3 +20,4 @@ pub mod validate;
 pub mod predict;
 pub mod benchmark;
 pub mod extract;
+pub mod shoal;

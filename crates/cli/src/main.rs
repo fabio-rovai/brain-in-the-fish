@@ -14,6 +14,7 @@ use brain_in_the_fish_core::semantic;
 use brain_in_the_fish_core::validate;
 use brain_in_the_fish_core::predict;
 use brain_in_the_fish_core::benchmark;
+use brain_in_the_fish_core::shoal;
 
 #[derive(Parser)]
 #[command(name = "brain-in-the-fish", version, about = "Universal document evaluation engine")]
@@ -92,6 +93,27 @@ enum Commands {
         #[arg(long, default_value_t = 8080)]
         port: u16,
     },
+    /// Batch-score a dataset using Claude subagents (shoal mode)
+    Shoal {
+        /// Path to labeled dataset (JSON)
+        dataset: PathBuf,
+
+        /// Batch size (essays per subagent)
+        #[arg(long, default_value_t = 100)]
+        batch_size: usize,
+
+        /// Output directory
+        #[arg(long, default_value = "/tmp/shoal")]
+        output: PathBuf,
+
+        /// Score scale max
+        #[arg(long, default_value_t = 5.0)]
+        max_score: f64,
+
+        /// Collect results and compute metrics (run after scoring)
+        #[arg(long)]
+        collect: bool,
+    },
 }
 
 #[tokio::main]
@@ -116,6 +138,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Serve { host, port } => {
             run_serve(host, port).await
+        }
+        Commands::Shoal { dataset, batch_size, output, max_score, collect } => {
+            run_shoal(dataset, batch_size, output, max_score, collect)
         }
     }
 }
@@ -1109,5 +1134,80 @@ async fn run_serve(_host: String, _port: u16) -> anyhow::Result<()> {
     let server = brain_in_the_fish_core::server::EvalServer::new();
     let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
+    Ok(())
+}
+
+fn run_shoal(
+    dataset: PathBuf,
+    batch_size: usize,
+    output: PathBuf,
+    max_score: f64,
+    collect: bool,
+) -> anyhow::Result<()> {
+    let samples = benchmark::load_dataset(&dataset)?;
+    let config = shoal::ShoalConfig {
+        batch_size,
+        scale_description: format!("0.0-{:.1}", max_score),
+        max_score,
+    };
+
+    if collect {
+        // Read all batch_N_scores.json files from output dir
+        let mut all_scored = Vec::new();
+        for entry in std::fs::read_dir(&output)? {
+            let path = entry?.path();
+            if path
+                .file_name()
+                .is_some_and(|n| {
+                    n.to_str().is_some_and(|s| {
+                        s.starts_with("batch_") && s.ends_with("_scores.json")
+                    })
+                })
+            {
+                let content = std::fs::read_to_string(&path)?;
+                let scored: Vec<shoal::ScoredEssay> = serde_json::from_str(&content)?;
+                all_scored.extend(scored);
+            }
+        }
+        let metrics = shoal::compute_metrics(&all_scored, &samples, &config);
+        println!("Shoal results ({} essays scored):", metrics.samples);
+        println!("  Pearson r: {:.3}", metrics.pearson_r);
+        println!("  QWK:       {:.3}", metrics.qwk);
+        println!("  MAE:       {:.2}", metrics.mae);
+        println!("  RMSE:      {:.2}", metrics.rmse);
+        shoal::save_results(&all_scored, &metrics, &output)?;
+    } else {
+        // Generate batch prompts
+        std::fs::create_dir_all(&output)?;
+        let batches = shoal::split_batches(&samples, batch_size);
+        println!(
+            "Shoal: {} essays -> {} batches of up to {}",
+            samples.len(),
+            batches.len(),
+            batch_size
+        );
+        for (i, batch) in batches.iter().enumerate() {
+            let prompt = shoal::batch_scoring_prompt(batch, &config);
+            let prompt_path = output.join(format!("batch_{}_prompt.txt", i));
+            std::fs::write(&prompt_path, &prompt)?;
+            println!(
+                "  Batch {}: {} essays -> {}",
+                i,
+                batch.len(),
+                prompt_path.display()
+            );
+        }
+        println!("\nNext steps:");
+        println!("  1. Dispatch each prompt to a Claude subagent");
+        println!(
+            "  2. Save each response as batch_N_scores.json in {}",
+            output.display()
+        );
+        println!(
+            "  3. Run: brain-in-the-fish shoal {} --collect --output {}",
+            dataset.display(),
+            output.display()
+        );
+    }
     Ok(())
 }
