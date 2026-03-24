@@ -78,7 +78,9 @@ Benchmarked against real expert-scored documents across education, policy, herit
 
 Raw Claude scores writing quality. BITF scores substance against criteria — catches domain mismatches, missing evidence, factual errors, and calibrates to real scoring bands.
 
-### Essay Scoring (ELLIPSE Corpus, 45 essays, 1.0–5.0 scale)
+### Essay Scoring
+
+**Subagent mode** (ELLIPSE Corpus, 45 essays, 1.0–5.0 scale):
 
 | Method | Pearson r | QWK | MAE |
 | ------ | --------- | --- | --- |
@@ -87,6 +89,17 @@ Raw Claude scores writing quality. BITF scores substance against criteria — ca
 | **BITF subagent** | **0.955** | **0.902** | **0.32** |
 
 QWK of 0.902 exceeds the 0.80 threshold for "reliable" inter-rater agreement. State-of-the-art fine-tuned AES systems score QWK 0.75–0.85.
+
+**Deterministic mode at scale** (evidence scorer only, no LLM):
+
+| Dataset | N | Pearson r | QWK | MAE |
+| ------- | - | --------- | --- | --- |
+| ELLIPSE (stratified 45) | 45 | 0.442 | 0.258 | 1.08 |
+| ELLIPSE (natural 500) | 500 | 0.103 | 0.027 | 0.79 |
+| ASAP Set 1 (stratified 51) | 51 | 0.676 | 0.342 | 2.57 |
+| ASAP Set 1 (natural 1000) | 1000 | 0.310 | 0.076 | 2.94 |
+
+**The deterministic scorer fails at scale.** Stratified small samples (which spread evenly across score bands) give misleadingly good results. On natural distributions (where 80%+ of essays cluster in 2-3 adjacent score bands), the scorer cannot differentiate. This confirms the evidence scorer is a **verification layer** (catches zero-evidence hallucinations) not a standalone scorer. The LLM subagent is required for meaningful evaluation.
 
 ### Prediction Credibility (5 UK policy targets with known outcomes)
 
