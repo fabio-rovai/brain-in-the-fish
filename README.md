@@ -145,7 +145,28 @@ QWK of 0.902 exceeds the 0.80 threshold for "reliable" inter-rater agreement. St
 | Raw Claude | 5/5 | 0 |
 | BITF deterministic | 1/5 | 111 |
 
-The deterministic pipeline produces excessive false positives (e.g., flagging "2024 vs 2025" as a "number inconsistency" when they are different years). The subagent approach is required for analytical depth.
+The deterministic pipeline's false positives have been reduced from 111 to 14 by filtering years and date ranges from the number consistency checker. The subagent approach is still required for analytical depth.
+
+### What We Tried and What Didn't Work
+
+We ran systematic ablation studies (toggle each component on/off, measure accuracy) to identify which parts of the architecture earn their complexity. Several components were demoted or removed based on the results.
+
+| Component | Hypothesis | Ablation Result | Action |
+|-----------|-----------|-----------------|--------|
+| **SNN scoring** | Provides evidence-grounded baseline | Essential — without it, Pearson drops to 0.000 (constant output) | **Keep (core)** |
+| **Ontology alignment** | Maps document sections to criteria | Essential — without it, Pearson drops from 0.684 to 0.592 | **Keep (core)** |
+| **Validation signals** | 15 checks improve scoring accuracy | **Hurts accuracy** — removing validation improves Pearson from 0.684 to 0.786 and QWK from 0.186 to 0.658 | **Capped spike effects at -0.05, reduced inhibition multiplier from 0.5 to 0.2** |
+| **Hedging language check** | Detects over/under-hedging | **Harmful** — penalises academic hedging ("might", "could") which is correct in scholarly writing | **Removed from core, deep-validate only** |
+| **Specificity check** | Flags vague generalisations | **Noisy** — flags normal academic vocabulary ("various", "significant") | **Removed from core, deep-validate only** |
+| **Transition quality check** | Checks for transition words | **High-school heuristic** — no measurable accuracy improvement | **Removed from core, deep-validate only** |
+| **Maslow belief dynamics** | Cognitive model improves agent scoring | **Zero measurable impact** — ablation shows identical scores with and without Maslow needs | **Kept but flagged as opt-in** |
+| **Multi-round debate** | Debate convergence improves consensus | **No impact in deterministic mode** — debate only matters with LLM subagents challenging each other | **Kept for LLM mode, no-op in deterministic** |
+| **Philosophical analysis** | Kantian/utilitarian/virtue ethics lenses add insight | **Interesting but not useful for accuracy** — adds 316 lines of complexity for near-zero practical value in most evaluations | **Moved to `--philosophy` opt-in flag** |
+| **Epistemology module** | Justified beliefs improve grounding | **Academic exercise** — does not improve evaluation accuracy or user experience | **Moved to `--epistemology` opt-in flag** |
+| **Rule-based prediction extraction** | Regex catches predictions | **Actively harmful** — finds 3/11 predictions, produces duplicates, misparses timeframes ("by 340%"), scores facts as predictions | **Replaced with subagent extraction + SNN verification** |
+| **Number inconsistency checker** | Cross-references numbers across sections | **111 false positives per document** — flags years as "inconsistent numbers" | **Fixed: filter years (1900-2099), fiscal year ranges, small numbers. Down to 14 FPs** |
+
+**Key insight from ablation:** The SNN and ontology alignment are the two components that provably improve accuracy. Everything else either has zero measurable impact (Maslow, debate, philosophy) or actively hurts accuracy (validation signals, rule-based extraction). The 10-stage core pipeline reflects this — only components that survived ablation run by default.
 
 ---
 
