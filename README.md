@@ -354,6 +354,51 @@ A weighted sum gets you 80% of the way. The SNN-inspired properties add four thi
 3. **Refractory period** — prevents the same evidence type from flooding the score (five citations from the same author don't each get full credit)
 4. **Threshold-based firing** — creates a natural minimum evidence bar, cleaner than an arbitrary minimum score
 
+### Bayesian confidence tracking
+
+Inspired by [epistemic-deconstructor](https://github.com/NikolasMarkou/epistemic-deconstructor) by Nikolas Markou — a Claude Code skill that implements rigorous Bayesian hypothesis tracking for reverse-engineering unknown systems.
+
+We borrowed two specific mechanisms:
+
+**1. Odds-form Bayesian updating with likelihood ratio caps.** Each spike type has a different likelihood ratio (how diagnostic is this evidence?):
+
+```text
+Quantified data:    LR = 2.5  (strong — a specific number is hard to fake)
+Verifiable claim:   LR = 2.0  (good — can be checked)
+Citation:           LR = 1.8  (moderate — existence of a citation doesn't prove the claim)
+Section alignment:  LR = 1.5  (weak — structural match, not content match)
+General claim:      LR = 1.3  (minimal — assertions without evidence)
+```
+
+The update rule (from epistemic-deconstructor's `common.py`):
+```text
+prior_odds = confidence / (1 - confidence)
+posterior_odds = prior_odds × likelihood_ratio
+new_confidence = posterior_odds / (1 + posterior_odds)
+```
+
+**Caps prevent runaway confidence.** Epistemic-deconstructor caps LRs by analysis phase (Phase 0: max 3.0, Phase 1: max 5.0, Phases 2-5: max 10.0) because early evidence is inherently less diagnostic. We cap by spike count — with few spikes, even strong evidence can't push confidence past 0.75:
+
+| Spikes received | Max LR |
+| --------------- | ------ |
+| < 3 | 3.0 |
+| 3–9 | 5.0 |
+| 10+ | 10.0 |
+
+This prevents a single strong citation from inflating confidence to 0.99 when the overall evidence base is thin.
+
+**2. Falsification checks on high scores.** Epistemic-deconstructor's core principle is "falsify, don't confirm" — before any hypothesis exceeds 0.80, at least one disconfirming evidence item must have been applied. We implement this as:
+
+```text
+If score > 80% of max:
+  Check for counter-evidence (spikes with strength < 0.2 or inhibition > 0)
+  If no counter-evidence found:
+    confidence *= 0.7  (30% penalty for unfalsified high scores)
+    falsification_checked = false  (flagged in report)
+```
+
+A high score that has never been challenged is less trustworthy than one that survived challenges. This is the falsification-first epistemology: you can't claim 9/10 unless something has tried to bring you down to 7.
+
 ### Hallucination detection
 
 When the LLM and evidence scorer disagree, the system flags it:
