@@ -23,6 +23,25 @@
 
 ---
 
+## 截图
+
+<p align="center">
+  <img src="assets/screenshot-tree-overview.png" alt="层次评估图谱" width="100%" />
+  <br><em>层次知识图谱 — 文档结构、评估标准、智能体面板和评分连接在一棵树中</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-detail-document.png" alt="文档详情面板" width="100%" />
+  <br><em>详情面板展示本体推理 — 节点是什么、其结构及其在知识图谱中存在的原因</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-detail-evidence.png" alt="证据详情与属性" width="100%" />
+  <br><em>证据节点检查 — 属性、本体角色、连接和溯源</em>
+</p>
+
+---
+
 ## 功能简介
 
 一个 Rust MCP 服务器，使用 Claude 子智能体对任何文档进行任何标准的评估，配备脉冲神经网络（SNN）使幻觉在数学上可被检测。输入一份 PDF 和评估意图——返回结构化评分、弱点分析、预测可信度评估和完整审计轨迹。

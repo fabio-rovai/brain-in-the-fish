@@ -23,6 +23,25 @@
 
 ---
 
+## スクリーンショット
+
+<p align="center">
+  <img src="assets/screenshot-tree-overview.png" alt="階層的評価グラフ" width="100%" />
+  <br><em>階層的知識グラフ — 文書構造、評価基準、エージェントパネル、採点が1つのツリーで接続</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-detail-document.png" alt="文書詳細パネル" width="100%" />
+  <br><em>詳細パネルでオントロジー推論を表示 — ノードの正体、構造、知識グラフに存在する理由</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-detail-evidence.png" alt="証拠詳細とプロパティ" width="100%" />
+  <br><em>証拠ノードの検査 — プロパティ、オントロジーの役割、接続、来歴</em>
+</p>
+
+---
+
 ## 概要
 
 Rust製のMCPサーバーで、Claudeサブエージェントを使用してあらゆる文書をあらゆる基準で評価します。スパイキングニューラルネットワーク（SNN）により、幻覚を数学的に検出可能にします。PDFと評価意図を入力すると、構造化されたスコア、弱点分析、予測信頼性評価、完全な監査証跡を返します。
