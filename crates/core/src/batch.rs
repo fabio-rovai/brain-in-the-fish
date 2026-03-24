@@ -421,6 +421,9 @@ mod tests {
                 agent_count: 4,
                 debate_rounds: 2,
                 evaluated_at: "2026-03-23T10:00:00Z".into(),
+                weaknesses: vec![],
+                document_type: "essay".into(),
+                timestamp: "2026-03-23T10:00:00Z".into(),
             },
             EvaluationRecord {
                 id: "r2".into(),
@@ -451,6 +454,9 @@ mod tests {
                 agent_count: 4,
                 debate_rounds: 3,
                 evaluated_at: "2026-03-23T11:00:00Z".into(),
+                weaknesses: vec![],
+                document_type: "essay".into(),
+                timestamp: "2026-03-23T11:00:00Z".into(),
             },
             EvaluationRecord {
                 id: "r3".into(),
@@ -481,6 +487,9 @@ mod tests {
                 agent_count: 4,
                 debate_rounds: 1,
                 evaluated_at: "2026-03-23T12:00:00Z".into(),
+                weaknesses: vec!["Analysis (40%)".into()],
+                document_type: "essay".into(),
+                timestamp: "2026-03-23T12:00:00Z".into(),
             },
         ]
     }

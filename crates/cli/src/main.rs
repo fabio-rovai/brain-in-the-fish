@@ -76,6 +76,12 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// View cross-evaluation history and trends
+    History {
+        /// History directory (default: ~/.brain-in-the-fish/history/)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
     /// Start the MCP server for Claude subagent orchestration
     Serve {
         /// Host to bind to
@@ -104,6 +110,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Benchmark { dataset, ablation, output } => {
             run_benchmark(dataset, ablation, output)
+        }
+        Commands::History { dir } => {
+            run_history(dir)
         }
         Commands::Serve { host, port } => {
             run_serve(host, port).await
@@ -1072,6 +1081,26 @@ fn run_benchmark(
         println!("Table saved to: {}", table_path.display());
     }
 
+    Ok(())
+}
+
+fn run_history(dir: Option<PathBuf>) -> anyhow::Result<()> {
+    let history_dir = if let Some(d) = dir {
+        d
+    } else {
+        // Use the same default as MemoryStore::open()
+        let store = memory::MemoryStore::open()?;
+        store.dir().to_path_buf()
+    };
+
+    if !history_dir.exists() {
+        println!("No history directory found at: {}", history_dir.display());
+        println!("Run 'brain-in-the-fish evaluate' to create evaluation history.");
+        return Ok(());
+    }
+
+    let report = memory::cross_evaluation_report(&history_dir)?;
+    println!("{report}");
     Ok(())
 }
 

@@ -107,6 +107,12 @@ pub struct EvalPredictInput {
     pub section_index: Option<usize>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EvalHistoryInput {
+    /// Optional path to history directory. Defaults to ~/.brain-in-the-fish/history/
+    pub dir: Option<String>,
+}
+
 // ============================================================================
 // Session state
 // ============================================================================
@@ -905,6 +911,37 @@ impl EvalServer {
                 })
                 .to_string()
             }
+        }
+    }
+
+    // ── History ─────────────────────────────────────────────────────────────
+
+    #[tool(name = "eval_history", description = "Returns cross-evaluation history report as JSON: score distribution, trends, weakest criteria, and common weaknesses across all past evaluations.")]
+    async fn eval_history(&self, Parameters(input): Parameters<EvalHistoryInput>) -> String {
+        let history_dir = if let Some(dir) = &input.dir {
+            std::path::PathBuf::from(dir)
+        } else {
+            dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".brain-in-the-fish")
+                .join("history")
+        };
+
+        match crate::memory::cross_evaluation_summary(&history_dir) {
+            Ok(summary) => serde_json::json!({
+                "ok": true,
+                "evaluations": summary.evaluations,
+                "mean_score": (summary.mean_score * 10.0).round() / 10.0,
+                "std_dev": (summary.std_dev * 10.0).round() / 10.0,
+                "min_score": (summary.min_score * 10.0).round() / 10.0,
+                "max_score": (summary.max_score * 10.0).round() / 10.0,
+                "trend": summary.trend,
+                "weakest_criteria": summary.weakest_criteria,
+                "common_weaknesses": summary.common_weaknesses,
+                "by_document_type": summary.by_document_type,
+            })
+            .to_string(),
+            Err(e) => format!(r#"{{"error":"{}"}}"#, e),
         }
     }
 }
