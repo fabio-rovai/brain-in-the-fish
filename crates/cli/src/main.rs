@@ -99,7 +99,7 @@ enum Commands {
         dataset: PathBuf,
 
         /// Batch size (essays per subagent)
-        #[arg(long, default_value_t = 100)]
+        #[arg(long, default_value_t = 10)]
         batch_size: usize,
 
         /// Output directory
@@ -109,6 +109,10 @@ enum Commands {
         /// Score scale max
         #[arg(long, default_value_t = 5.0)]
         max_score: f64,
+
+        /// Evaluation intent (drives rubric, persona, criteria selection)
+        #[arg(long, default_value = "evaluate this essay")]
+        intent: String,
 
         /// Collect results and compute metrics (run after scoring)
         #[arg(long)]
@@ -139,8 +143,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Serve { host, port } => {
             run_serve(host, port).await
         }
-        Commands::Shoal { dataset, batch_size, output, max_score, collect } => {
-            run_shoal(dataset, batch_size, output, max_score, collect)
+        Commands::Shoal { dataset, batch_size, output, max_score, intent, collect } => {
+            run_shoal(dataset, batch_size, output, max_score, intent, collect)
         }
     }
 }
@@ -1142,6 +1146,7 @@ fn run_shoal(
     batch_size: usize,
     output: PathBuf,
     max_score: f64,
+    intent: String,
     collect: bool,
 ) -> anyhow::Result<()> {
     let samples = benchmark::load_dataset(&dataset)?;
@@ -1149,6 +1154,7 @@ fn run_shoal(
         batch_size,
         scale_description: format!("0.0-{:.1}", max_score),
         max_score,
+        intent: intent.clone(),
     };
 
     if collect {
@@ -1169,9 +1175,8 @@ fn run_shoal(
                 all_scored.extend(scored);
             }
         }
-        let intent = "evaluate this essay";
         println!("Running EDS pipeline on {} scored essays...", all_scored.len());
-        let (sub, eds, blended) = shoal::compute_blended_metrics(&all_scored, &samples, &config, intent);
+        let (sub, eds, blended) = shoal::compute_blended_metrics(&all_scored, &samples, &config, &intent);
 
         println!("\nShoal results ({} essays):", sub.samples);
         println!("  | Method   | Pearson r | QWK   | MAE  | RMSE |");

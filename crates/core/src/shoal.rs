@@ -22,14 +22,17 @@ pub struct ShoalConfig {
     pub scale_description: String,
     /// Maximum score value
     pub max_score: f64,
+    /// Evaluation intent — drives framework, persona, and criteria selection
+    pub intent: String,
 }
 
 impl Default for ShoalConfig {
     fn default() -> Self {
         Self {
-            batch_size: 100,
+            batch_size: 10,
             scale_description: "1.0-5.0 (0.5 increments)".into(),
             max_score: 5.0,
+            intent: "evaluate this essay".into(),
         }
     }
 }
@@ -48,29 +51,105 @@ pub fn split_batches(samples: &[LabeledSample], batch_size: usize) -> Vec<Vec<La
 
 /// Generate a scoring prompt for a batch of essays.
 /// This prompt is what gets sent to a Claude subagent.
+///
+/// The prompt includes the full BITF evaluation context:
+/// - Agent persona (from the spawned panel)
+/// - Evaluation framework with rubric level descriptors
+/// - Per-essay evidence summaries (citations, statistics, claims extracted)
 pub fn batch_scoring_prompt(batch: &[LabeledSample], config: &ShoalConfig) -> String {
-    let mut prompt = format!(
-        "Score each essay on a {} scale. Read each essay carefully and assess: \
-         clarity, argument quality, organization, language control, and persuasiveness.\n\n\
-         Return ONLY a JSON array: [{{\"id\": \"...\", \"score\": X.X}}, ...]\n\n\
-         No explanations. Just the scores.\n\n",
-        config.scale_description
-    );
+    let intent = &config.intent;
+    let framework = crate::criteria::framework_for_intent(intent);
 
+    // Build persona from the lead agent
+    let agents = crate::agent::spawn_panel(intent, &framework);
+    let persona = if let Some(agent) = agents.first() {
+        format!(
+            "## Your Role\n\n\
+             You are {}, a {} with expertise in {}.\n\
+             {}\n\n",
+            agent.name, agent.role, agent.domain, agent.persona_description
+        )
+    } else {
+        String::new()
+    };
+
+    // Build the rubric section
+    let mut rubric = String::new();
+    rubric.push_str("## Evaluation Framework\n\n");
+    rubric.push_str(&format!("**Framework:** {}\n\n", framework.name));
+    for crit in &framework.criteria {
+        rubric.push_str(&format!(
+            "### {} (max {}, weight {:.0}%)\n",
+            crit.title,
+            crit.max_score,
+            crit.weight * 100.0
+        ));
+        if let Some(desc) = &crit.description {
+            rubric.push_str(&format!("{}\n", desc));
+        }
+        for level in &crit.rubric_levels {
+            rubric.push_str(&format!(
+                "- **{}** ({}): {}\n",
+                level.level, level.score_range, level.descriptor
+            ));
+        }
+        rubric.push('\n');
+    }
+
+    // Build per-essay sections with evidence summaries
+    let mut essays_section = String::new();
     for (i, sample) in batch.iter().enumerate() {
-        prompt.push_str(&format!(
-            "--- Essay {} (ID: {}) ---\n{}\n\n",
+        let extracted = crate::extract::extract_all(&sample.text);
+        let citations = extracted
+            .iter()
+            .filter(|e| e.item_type == crate::extract::ExtractedType::Citation)
+            .count();
+        let statistics = extracted
+            .iter()
+            .filter(|e| e.item_type == crate::extract::ExtractedType::Statistic)
+            .count();
+        let claims = extracted
+            .iter()
+            .filter(|e| e.item_type == crate::extract::ExtractedType::Claim)
+            .count();
+        let total_evidence = extracted.len();
+
+        essays_section.push_str(&format!(
+            "---\n\n### Essay {} (ID: {})\n\n\
+             **Evidence summary:** {} items extracted ({} citations, {} statistics, {} claims)\n\n\
+             {}\n\n",
             i + 1,
             sample.id,
-            if sample.text.len() > 2000 {
-                format!("{}...", &sample.text[..2000])
+            total_evidence,
+            citations,
+            statistics,
+            claims,
+            if sample.text.len() > 3000 {
+                format!("{}...", &sample.text[..3000])
             } else {
                 sample.text.clone()
             }
         ));
     }
 
-    prompt
+    format!(
+        "{}\
+         {}\
+         ## Scoring Instructions\n\n\
+         For each essay below, score it against the framework above.\n\
+         - Reference specific rubric levels in your assessment\n\
+         - Consider the evidence summary (more citations/statistics = stronger evidence base)\n\
+         - Use the FULL scale — a score of {:.0} means exceptional on every criterion, not just good\n\
+         - A score below {:.0} means significant weaknesses\n\
+         - Be calibrated: most essays should cluster in the middle, with few at extremes\n\n\
+         Return a JSON array: [{{\"id\": \"...\", \"score\": X.X}}, ...]\n\n\
+         {}\n",
+        persona,
+        rubric,
+        config.max_score,
+        config.max_score * 0.3,
+        essays_section
+    )
 }
 
 /// Parse subagent response into scored essays.
@@ -440,10 +519,18 @@ mod tests {
         let samples = sample_essays();
         let config = ShoalConfig::default();
         let prompt = batch_scoring_prompt(&samples, &config);
+        // Should contain essay content
         assert!(prompt.contains("Essay 1"));
         assert!(prompt.contains("e1"));
         assert!(prompt.contains("Good essay"));
+        // Should contain JSON format instruction
         assert!(prompt.contains("JSON array"));
+        // Should contain framework/rubric context
+        assert!(prompt.contains("## Evaluation Framework"));
+        assert!(prompt.contains("## Your Role"));
+        assert!(prompt.contains("## Scoring Instructions"));
+        // Should contain evidence summaries
+        assert!(prompt.contains("Evidence summary:"));
     }
 
     #[test]
