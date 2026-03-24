@@ -23,6 +23,25 @@
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshot-tree-overview.png" alt="Hierarchical evaluation graph" width="100%" />
+  <br><em>Hierarchical knowledge graph — document structure, evaluation criteria, agent panel, and scoring connected in one tree</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-detail-document.png" alt="Document detail panel" width="100%" />
+  <br><em>Detail panel showing ontology reasoning — what the node is, its structure, and why it exists in the knowledge graph</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-detail-evidence.png" alt="Evidence detail with properties" width="100%" />
+  <br><em>Evidence node inspection — properties, ontology role, connections, and provenance</em>
+</p>
+
+---
+
 ## What It Does
 
 A Rust MCP server that evaluates any document against any criteria using Claude subagents, with a Spiking Neural Network that makes hallucination mathematically detectable. Feed it a PDF and an intent — it returns structured scores, weakness analysis, prediction credibility, and a full audit trail.
