@@ -269,11 +269,81 @@ Systematic ablation studies — toggle each component on/off, measure accuracy �
 
 ---
 
-## Anti-Hallucination: Evidence Verification Layer
+## Evidence Scorer: How It Works
 
-MiroFish agents can "justify" a 9/10 score for a criterion with no supporting evidence. This is hallucination with a confidence score attached.
+MiroFish agents can "justify" a 9/10 score for a criterion with no supporting evidence. This is hallucination with a confidence score attached. The evidence scorer makes this detectable.
 
-The evidence scorer makes this detectable. Each agent has one neuron per criterion. Evidence from the ontology generates spikes. No evidence = no spikes = no firing = score of zero. When the LLM says 9/10 but the evidence scorer says 2/10, the system flags it:
+### Biological inspiration
+
+The scorer borrows four properties from [Spiking Neural Networks](https://en.wikipedia.org/wiki/Spiking_neural_network) (third-generation neural networks that model how real neurons communicate via discrete electrical pulses). We don't claim this is neuromorphic computing — it's an evidence density scorer that uses biologically-inspired dynamics because they provide useful properties for document evaluation.
+
+### Property 1: Membrane potential + threshold = minimum evidence bar
+
+Each agent has one neuron per evaluation criterion. Evidence from the knowledge graph generates input spikes:
+
+| Evidence type | Spike strength | Example |
+| ------------- | -------------- | ------- |
+| Quantified data | 0.8–1.0 | "FTSE 100 rose 45%" |
+| Verifiable claim | 0.6–0.8 | "Bank of England purchased £895bn in assets" |
+| Citation | 0.5–0.7 | "(Bernanke, 2009)" |
+| General claim | 0.3–0.5 | "QE was effective as a stabilisation tool" |
+| Section alignment | 0.2–0.4 | Section title matches criterion |
+
+Spikes accumulate in the membrane potential. When it exceeds the threshold, the neuron fires. **No evidence = no spikes = no firing = score of zero.** This is the anti-hallucination property.
+
+### Property 2: Leaky integration = diminishing returns
+
+```text
+membrane_potential *= (1.0 - decay_rate)   // after each timestep
+```
+
+Real neurons leak charge over time. We use this to model **diminishing returns** — the 10th citation about the same topic adds less value than the 1st. Without decay, a document could game the score by repeating weak evidence 50 times.
+
+### Property 3: Lateral inhibition = debate challenges
+
+```text
+When Agent A challenges Agent B's score:
+  Agent B's neuron.apply_inhibition(challenge_strength)
+  → reduces membrane potential
+  → requires MORE evidence to maintain the same score
+```
+
+In real neural networks, nearby neurons inhibit each other to sharpen responses. We use this for debate: a challenged score needs stronger evidence to survive.
+
+### Property 4: Refractory period = no double-counting
+
+After firing, the neuron enters a refractory period where new spikes are ignored. This prevents the same piece of evidence from being counted multiple times in quick succession.
+
+### The actual scoring formula
+
+Strip away the biological framing and here's the math:
+
+```text
+evidence_saturation = ln(1 + total_spikes) / ln(16)     // log scale, saturates at ~15 items
+spike_quality       = mean(spike_strengths)               // 0.0–1.0
+firing_rate         = fire_count / timesteps              // traditional SNN signal
+
+raw_score = evidence_saturation × 0.50                    // how much evidence exists
+          + spike_quality       × 0.35                    // how strong is the evidence
+          + firing_rate         × 0.15                    // how consistently did it accumulate
+
+final = raw_score × (1.0 - inhibition) × max_score       // penalise if challenged in debate
+```
+
+**In plain English:** Score = 50% "how much evidence" + 35% "how strong" + 15% "how consistent." Then penalise if other agents challenged the score.
+
+### Why not just count evidence?
+
+A weighted sum gets you 80% of the way. The SNN-inspired properties add four things a simple counter can't:
+
+1. **Temporal dynamics** — evidence arriving in bursts (all in one section) vs spread across the document produces different firing patterns
+2. **Inhibition from debate** — a simple counter can't model "this score was challenged and needs more evidence to survive"
+3. **Refractory period** — prevents the same evidence type from flooding the score (five citations from the same author don't each get full credit)
+4. **Threshold-based firing** — creates a natural minimum evidence bar, cleaner than an arbitrary minimum score
+
+### Hallucination detection
+
+When the LLM and evidence scorer disagree, the system flags it:
 
 ```text
 LLM says 9/10. Evidence scorer says 2/10 (only 2 weak spikes received).
@@ -281,7 +351,7 @@ LLM says 9/10. Evidence scorer says 2/10 (only 2 weak spikes received).
 → "WARNING: LLM scored significantly higher than evidence supports."
 ```
 
-The final score blends both: `final = eds × eds_weight + llm × llm_weight`. The scorer is deterministic: given the same evidence, it always produces the same score. This is the verification property that matters. The evidence scorer dominates when evidence is abundant. LLM fills in when sparse — but the hallucination flag is raised.
+The final score blends both: `final = eds × eds_weight + llm × llm_weight`. The scorer is deterministic: given the same evidence, it always produces the same score. When evidence is abundant, the scorer dominates. When sparse, the LLM fills in — but the hallucination flag is raised.
 
 ### ARIA Alignment
 
