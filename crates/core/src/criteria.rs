@@ -456,6 +456,144 @@ pub fn parse_framework_from_file(path: &std::path::Path) -> anyhow::Result<Evalu
     }
 }
 
+/// Built-in ELLIPSE English Language Proficiency framework.
+///
+/// Matches the ELLIPSE corpus scoring rubric for ELL (English Language Learner)
+/// essays. Six dimensions, each scored 1.0-5.0 in 0.5 increments with equal
+/// weight (~16.7% each).
+pub fn ellipse_framework() -> EvaluationFramework {
+    let ell_rubric = |strong: &str, good: &str, developing: &str, limited: &str, minimal: &str| -> Vec<RubricLevel> {
+        vec![
+            RubricLevel {
+                level: "Strong".to_string(),
+                score_range: "4.5-5.0".to_string(),
+                descriptor: strong.to_string(),
+            },
+            RubricLevel {
+                level: "Good".to_string(),
+                score_range: "3.5-4.0".to_string(),
+                descriptor: good.to_string(),
+            },
+            RubricLevel {
+                level: "Developing".to_string(),
+                score_range: "2.5-3.0".to_string(),
+                descriptor: developing.to_string(),
+            },
+            RubricLevel {
+                level: "Limited".to_string(),
+                score_range: "1.5-2.0".to_string(),
+                descriptor: limited.to_string(),
+            },
+            RubricLevel {
+                level: "Minimal".to_string(),
+                score_range: "1.0".to_string(),
+                descriptor: minimal.to_string(),
+            },
+        ]
+    };
+
+    let criteria = vec![
+        EvaluationCriterion {
+            id: "cohesion".to_string(),
+            title: "Cohesion".to_string(),
+            description: Some("How well ideas connect through transitions and logical flow between sentences and paragraphs".to_string()),
+            max_score: 5.0,
+            weight: 0.167,
+            rubric_levels: ell_rubric(
+                "Skillful use of cohesive devices. Ideas flow naturally with varied transitions. Logical progression throughout.",
+                "Effective use of transitions. Clear logical flow with occasional lapses. Ideas generally well-connected.",
+                "Basic transitions used. Some logical gaps. Ideas sometimes disconnected.",
+                "Few transitions. Frequent logical gaps. Ideas often disconnected or jumbled.",
+                "No cohesive devices. No logical flow. Sentences appear random.",
+            ),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "syntax".to_string(),
+            title: "Syntax".to_string(),
+            description: Some("Sentence structure variety and correctness — simple vs complex sentences, subordination, coordination".to_string()),
+            max_score: 5.0,
+            weight: 0.167,
+            rubric_levels: ell_rubric(
+                "Wide variety of sentence structures used effectively. Complex and compound-complex sentences controlled.",
+                "Some variety in sentence structure. Attempts at complex sentences mostly successful.",
+                "Mostly simple and compound sentences. Attempts at complexity often result in errors.",
+                "Predominantly simple sentences. Run-ons and fragments frequent.",
+                "Sentence boundaries unclear. Persistent fragments or run-ons impeding meaning.",
+            ),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "vocabulary".to_string(),
+            title: "Vocabulary".to_string(),
+            description: Some("Range and precision of word choice — academic vs basic vocabulary, word form accuracy".to_string()),
+            max_score: 5.0,
+            weight: 0.167,
+            rubric_levels: ell_rubric(
+                "Precise, varied vocabulary including academic terms. Effective word choice throughout.",
+                "Good range of vocabulary. Some academic language. Occasional imprecision.",
+                "Adequate vocabulary for basic communication. Repetitive word choice. Limited academic vocabulary.",
+                "Very basic vocabulary. Frequent word choice errors. Meaning sometimes unclear.",
+                "Extremely limited vocabulary. Wrong word forms. Meaning frequently lost.",
+            ),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "phraseology".to_string(),
+            title: "Phraseology".to_string(),
+            description: Some("Natural phrasing, idiom use, collocations — does the writing sound natural to a native reader?".to_string()),
+            max_score: 5.0,
+            weight: 0.167,
+            rubric_levels: ell_rubric(
+                "Natural, idiomatic phrasing. Correct collocations. Reads like a native speaker.",
+                "Generally natural phrasing. Most collocations correct. Occasional awkward constructions.",
+                "Some natural phrasing mixed with awkward constructions. L1 interference visible.",
+                "Frequently unnatural phrasing. Many incorrect collocations. Strong L1 interference.",
+                "Almost entirely unnatural phrasing. Word-by-word translation from L1 apparent.",
+            ),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "grammar".to_string(),
+            title: "Grammar".to_string(),
+            description: Some("Grammatical accuracy — subject-verb agreement, tense consistency, articles, prepositions".to_string()),
+            max_score: 5.0,
+            weight: 0.167,
+            rubric_levels: ell_rubric(
+                "Consistent grammatical accuracy. Complex structures controlled. Rare errors.",
+                "Generally accurate grammar. Errors in complex structures but not impeding meaning.",
+                "Basic grammar mostly correct. Frequent errors in complex structures. Meaning usually clear.",
+                "Frequent grammatical errors including basic structures. Meaning sometimes impeded.",
+                "Persistent grammatical errors. Basic structures incorrect. Meaning frequently lost.",
+            ),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "conventions".to_string(),
+            title: "Conventions".to_string(),
+            description: Some("Spelling, punctuation, capitalisation accuracy".to_string()),
+            max_score: 5.0,
+            weight: 0.167,
+            rubric_levels: ell_rubric(
+                "Consistently accurate spelling, punctuation, and capitalisation.",
+                "Generally accurate. Occasional errors in less common words or advanced punctuation.",
+                "Basic spelling/punctuation mostly correct. Errors in complex words.",
+                "Frequent spelling/punctuation errors. Basic capitalisation rules inconsistent.",
+                "Persistent errors in basic spelling, punctuation, and capitalisation.",
+            ),
+            sub_criteria: vec![],
+        },
+    ];
+
+    EvaluationFramework {
+        id: "ellipse_ell".to_string(),
+        name: "ELLIPSE English Language Proficiency".to_string(),
+        total_weight: 1.002, // 6 * 0.167
+        pass_mark: Some(2.5),
+        criteria,
+    }
+}
+
 /// Built-in HM Treasury Green Book impact assessment framework.
 pub fn policy_greenbook_framework() -> EvaluationFramework {
     let rubric = |desc_outstanding: &str, desc_good: &str, desc_adequate: &str, desc_inadequate: &str| -> Vec<RubricLevel> {
@@ -1111,6 +1249,8 @@ pub fn framework_for_intent(intent: &str) -> EvaluationFramework {
         survey_methodology_framework()
     } else if lower.contains("contract") || lower.contains("legal") {
         contract_review_framework()
+    } else if lower.contains("ellipse") || lower.contains("english learner") || lower.contains("ell ") || lower.contains("language proficiency") {
+        ellipse_framework()
     } else if lower.contains("gcse") || lower.contains("english language") {
         gcse_english_framework()
     } else if lower.contains("nhs") || lower.contains("clinical") || lower.contains("governance") {
@@ -1356,5 +1496,43 @@ criteria:
         assert_eq!(framework_for_intent("mark this essay").id, "academic_essay");
         assert_eq!(framework_for_intent("score this tender bid").id, "generic_quality");
         assert_eq!(framework_for_intent("evaluate this random thing").id, "generic_quality");
+        // ELLIPSE / ELL intents
+        assert_eq!(framework_for_intent("score this ellipse essay").id, "ellipse_ell");
+        assert_eq!(framework_for_intent("evaluate english learner writing").id, "ellipse_ell");
+        assert_eq!(framework_for_intent("assess ell proficiency").id, "ellipse_ell");
+        assert_eq!(framework_for_intent("measure language proficiency").id, "ellipse_ell");
+    }
+
+    #[test]
+    fn test_ellipse_framework_weights_sum_close_to_1() {
+        let fw = ellipse_framework();
+        let total: f64 = fw.criteria.iter().map(|c| c.weight).sum();
+        assert!(
+            (total - 1.0).abs() < 0.01,
+            "ELLIPSE weights should sum to ~1.0, got {}",
+            total
+        );
+    }
+
+    #[test]
+    fn test_ellipse_framework_has_six_criteria() {
+        let fw = ellipse_framework();
+        assert_eq!(fw.criteria.len(), 6);
+        assert_eq!(fw.pass_mark, Some(2.5));
+        assert_eq!(fw.name, "ELLIPSE English Language Proficiency");
+    }
+
+    #[test]
+    fn test_ellipse_criteria_have_five_rubric_levels() {
+        let fw = ellipse_framework();
+        for crit in &fw.criteria {
+            assert_eq!(
+                crit.rubric_levels.len(),
+                5,
+                "Criterion '{}' should have 5 rubric levels",
+                crit.title
+            );
+            assert_eq!(crit.max_score, 5.0);
+        }
     }
 }

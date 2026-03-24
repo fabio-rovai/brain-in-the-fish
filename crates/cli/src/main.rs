@@ -1194,6 +1194,10 @@ fn run_shoal(
             blended.pearson_r, blended.qwk, blended.mae, blended.rmse
         );
 
+        // Score band analysis
+        let bands = shoal::score_band_analysis(&all_scored, &samples);
+        print!("\n{}", shoal::format_score_band_analysis(&bands));
+
         shoal::save_results(&all_scored, &blended, &output)?;
     } else {
         // Generate batch prompts

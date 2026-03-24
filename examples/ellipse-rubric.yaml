@@ -1,0 +1,128 @@
+name: "ELLIPSE English Language Proficiency"
+pass_mark: 2.5
+criteria:
+  - title: "Cohesion"
+    description: "How well ideas connect through transitions and logical flow between sentences and paragraphs"
+    max_score: 5.0
+    weight: 0.167
+    rubric:
+      - level: "Strong"
+        score_range: "4.5-5.0"
+        descriptor: "Skillful use of cohesive devices. Ideas flow naturally with varied transitions. Logical progression throughout."
+      - level: "Good"
+        score_range: "3.5-4.0"
+        descriptor: "Effective use of transitions. Clear logical flow with occasional lapses. Ideas generally well-connected."
+      - level: "Developing"
+        score_range: "2.5-3.0"
+        descriptor: "Basic transitions used. Some logical gaps. Ideas sometimes disconnected."
+      - level: "Limited"
+        score_range: "1.5-2.0"
+        descriptor: "Few transitions. Frequent logical gaps. Ideas often disconnected or jumbled."
+      - level: "Minimal"
+        score_range: "1.0"
+        descriptor: "No cohesive devices. No logical flow. Sentences appear random."
+
+  - title: "Syntax"
+    description: "Sentence structure variety and correctness — simple vs complex sentences, subordination, coordination"
+    max_score: 5.0
+    weight: 0.167
+    rubric:
+      - level: "Strong"
+        score_range: "4.5-5.0"
+        descriptor: "Wide variety of sentence structures used effectively. Complex and compound-complex sentences controlled."
+      - level: "Good"
+        score_range: "3.5-4.0"
+        descriptor: "Some variety in sentence structure. Attempts at complex sentences mostly successful."
+      - level: "Developing"
+        score_range: "2.5-3.0"
+        descriptor: "Mostly simple and compound sentences. Attempts at complexity often result in errors."
+      - level: "Limited"
+        score_range: "1.5-2.0"
+        descriptor: "Predominantly simple sentences. Run-ons and fragments frequent."
+      - level: "Minimal"
+        score_range: "1.0"
+        descriptor: "Sentence boundaries unclear. Persistent fragments or run-ons impeding meaning."
+
+  - title: "Vocabulary"
+    description: "Range and precision of word choice — academic vs basic vocabulary, word form accuracy"
+    max_score: 5.0
+    weight: 0.167
+    rubric:
+      - level: "Strong"
+        score_range: "4.5-5.0"
+        descriptor: "Precise, varied vocabulary including academic terms. Effective word choice throughout."
+      - level: "Good"
+        score_range: "3.5-4.0"
+        descriptor: "Good range of vocabulary. Some academic language. Occasional imprecision."
+      - level: "Developing"
+        score_range: "2.5-3.0"
+        descriptor: "Adequate vocabulary for basic communication. Repetitive word choice. Limited academic vocabulary."
+      - level: "Limited"
+        score_range: "1.5-2.0"
+        descriptor: "Very basic vocabulary. Frequent word choice errors. Meaning sometimes unclear."
+      - level: "Minimal"
+        score_range: "1.0"
+        descriptor: "Extremely limited vocabulary. Wrong word forms. Meaning frequently lost."
+
+  - title: "Phraseology"
+    description: "Natural phrasing, idiom use, collocations — does the writing sound natural to a native reader?"
+    max_score: 5.0
+    weight: 0.167
+    rubric:
+      - level: "Strong"
+        score_range: "4.5-5.0"
+        descriptor: "Natural, idiomatic phrasing. Correct collocations. Reads like a native speaker."
+      - level: "Good"
+        score_range: "3.5-4.0"
+        descriptor: "Generally natural phrasing. Most collocations correct. Occasional awkward constructions."
+      - level: "Developing"
+        score_range: "2.5-3.0"
+        descriptor: "Some natural phrasing mixed with awkward constructions. L1 interference visible."
+      - level: "Limited"
+        score_range: "1.5-2.0"
+        descriptor: "Frequently unnatural phrasing. Many incorrect collocations. Strong L1 interference."
+      - level: "Minimal"
+        score_range: "1.0"
+        descriptor: "Almost entirely unnatural phrasing. Word-by-word translation from L1 apparent."
+
+  - title: "Grammar"
+    description: "Grammatical accuracy — subject-verb agreement, tense consistency, articles, prepositions"
+    max_score: 5.0
+    weight: 0.167
+    rubric:
+      - level: "Strong"
+        score_range: "4.5-5.0"
+        descriptor: "Consistent grammatical accuracy. Complex structures controlled. Rare errors."
+      - level: "Good"
+        score_range: "3.5-4.0"
+        descriptor: "Generally accurate grammar. Errors in complex structures but not impeding meaning."
+      - level: "Developing"
+        score_range: "2.5-3.0"
+        descriptor: "Basic grammar mostly correct. Frequent errors in complex structures. Meaning usually clear."
+      - level: "Limited"
+        score_range: "1.5-2.0"
+        descriptor: "Frequent grammatical errors including basic structures. Meaning sometimes impeded."
+      - level: "Minimal"
+        score_range: "1.0"
+        descriptor: "Persistent grammatical errors. Basic structures incorrect. Meaning frequently lost."
+
+  - title: "Conventions"
+    description: "Spelling, punctuation, capitalisation accuracy"
+    max_score: 5.0
+    weight: 0.167
+    rubric:
+      - level: "Strong"
+        score_range: "4.5-5.0"
+        descriptor: "Consistently accurate spelling, punctuation, and capitalisation."
+      - level: "Good"
+        score_range: "3.5-4.0"
+        descriptor: "Generally accurate. Occasional errors in less common words or advanced punctuation."
+      - level: "Developing"
+        score_range: "2.5-3.0"
+        descriptor: "Basic spelling/punctuation mostly correct. Errors in complex words."
+      - level: "Limited"
+        score_range: "1.5-2.0"
+        descriptor: "Frequent spelling/punctuation errors. Basic capitalisation rules inconsistent."
+      - level: "Minimal"
+        score_range: "1.0"
+        descriptor: "Persistent errors in basic spelling, punctuation, and capitalisation."

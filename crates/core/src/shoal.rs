@@ -439,6 +439,96 @@ pub fn compute_blended_metrics(
     (subagent_results, eds_results, blended_results)
 }
 
+/// A single score band analysis entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoreBandEntry {
+    pub band_label: String,
+    pub band_low: f64,
+    pub band_high: f64,
+    pub mean_predicted: f64,
+    pub mean_delta: f64,
+    pub count: usize,
+}
+
+/// Compute per-score-band error analysis.
+///
+/// Groups expert scores into bands (1.0-1.5, 2.0-2.5, 3.0-3.5, 4.0-4.5, 5.0)
+/// and reports mean predicted score and delta for each band. This reveals
+/// systematic over/under-scoring at different proficiency levels.
+pub fn score_band_analysis(
+    scored: &[ScoredEssay],
+    samples: &[LabeledSample],
+) -> Vec<ScoreBandEntry> {
+    let sample_map: std::collections::HashMap<&str, f64> = samples
+        .iter()
+        .map(|s| (s.id.as_str(), s.expert_score))
+        .collect();
+
+    // Collect (predicted, expert) pairs
+    let mut pairs: Vec<(f64, f64)> = Vec::new();
+    for s in scored {
+        if let Some(&expert) = sample_map.get(s.id.as_str()) {
+            pairs.push((s.score, expert));
+        }
+    }
+
+    let bands: &[(f64, f64, &str)] = &[
+        (1.0, 1.5, "1.0-1.5"),
+        (2.0, 2.5, "2.0-2.5"),
+        (3.0, 3.5, "3.0-3.5"),
+        (4.0, 4.5, "4.0-4.5"),
+        (5.0, 5.0, "5.0"),
+    ];
+
+    bands
+        .iter()
+        .map(|&(low, high, label)| {
+            let in_band: Vec<(f64, f64)> = pairs
+                .iter()
+                .filter(|&&(_, expert)| expert >= low && expert <= high)
+                .copied()
+                .collect();
+
+            let n = in_band.len();
+            if n == 0 {
+                ScoreBandEntry {
+                    band_label: label.to_string(),
+                    band_low: low,
+                    band_high: high,
+                    mean_predicted: 0.0,
+                    mean_delta: 0.0,
+                    count: 0,
+                }
+            } else {
+                let mean_pred = in_band.iter().map(|(p, _)| p).sum::<f64>() / n as f64;
+                let mean_expert = in_band.iter().map(|(_, e)| e).sum::<f64>() / n as f64;
+                let delta = mean_pred - mean_expert;
+                ScoreBandEntry {
+                    band_label: label.to_string(),
+                    band_low: low,
+                    band_high: high,
+                    mean_predicted: mean_pred,
+                    mean_delta: delta,
+                    count: n,
+                }
+            }
+        })
+        .collect()
+}
+
+/// Format score band analysis for display.
+pub fn format_score_band_analysis(bands: &[ScoreBandEntry]) -> String {
+    let mut out = String::from("Score band analysis:\n");
+    for band in bands {
+        let sign = if band.mean_delta >= 0.0 { "+" } else { "" };
+        out.push_str(&format!(
+            "  Expert {:9}: mean predicted {:.1} (delta {}{:.1}, n={})\n",
+            band.band_label, band.mean_predicted, sign, band.mean_delta, band.count
+        ));
+    }
+    out
+}
+
 /// Save shoal results to a JSON file.
 pub fn save_results(
     scored: &[ScoredEssay],
@@ -649,5 +739,87 @@ mod tests {
             blended.mae >= 0.0,
             "Blended MAE should be non-negative"
         );
+    }
+
+    #[test]
+    fn test_score_band_analysis() {
+        let samples = vec![
+            LabeledSample {
+                id: "low".into(),
+                text: "bad".into(),
+                expert_score: 1.0,
+                max_score: 5.0,
+                domain: "test".into(),
+                rubric: "test".into(),
+            },
+            LabeledSample {
+                id: "mid".into(),
+                text: "ok".into(),
+                expert_score: 3.0,
+                max_score: 5.0,
+                domain: "test".into(),
+                rubric: "test".into(),
+            },
+            LabeledSample {
+                id: "high".into(),
+                text: "great".into(),
+                expert_score: 5.0,
+                max_score: 5.0,
+                domain: "test".into(),
+                rubric: "test".into(),
+            },
+        ];
+        let scored = vec![
+            ScoredEssay { id: "low".into(), score: 2.0 },
+            ScoredEssay { id: "mid".into(), score: 3.5 },
+            ScoredEssay { id: "high".into(), score: 4.5 },
+        ];
+
+        let bands = score_band_analysis(&scored, &samples);
+        assert_eq!(bands.len(), 5);
+
+        // Band 1.0-1.5: expert=1.0, predicted=2.0, delta=+1.0
+        let band_low = &bands[0];
+        assert_eq!(band_low.count, 1);
+        assert!((band_low.mean_predicted - 2.0).abs() < 0.01);
+        assert!((band_low.mean_delta - 1.0).abs() < 0.01);
+
+        // Band 3.0-3.5: expert=3.0, predicted=3.5, delta=+0.5
+        let band_mid = &bands[2];
+        assert_eq!(band_mid.count, 1);
+        assert!((band_mid.mean_predicted - 3.5).abs() < 0.01);
+        assert!((band_mid.mean_delta - 0.5).abs() < 0.01);
+
+        // Band 5.0: expert=5.0, predicted=4.5, delta=-0.5
+        let band_high = &bands[4];
+        assert_eq!(band_high.count, 1);
+        assert!((band_high.mean_predicted - 4.5).abs() < 0.01);
+        assert!((band_high.mean_delta - -0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_score_band_analysis_empty() {
+        let bands = score_band_analysis(&[], &[]);
+        assert_eq!(bands.len(), 5);
+        for band in &bands {
+            assert_eq!(band.count, 0);
+        }
+    }
+
+    #[test]
+    fn test_format_score_band_analysis() {
+        let bands = vec![ScoreBandEntry {
+            band_label: "1.0-1.5".to_string(),
+            band_low: 1.0,
+            band_high: 1.5,
+            mean_predicted: 2.0,
+            mean_delta: 1.0,
+            count: 3,
+        }];
+        let output = format_score_band_analysis(&bands);
+        assert!(output.contains("1.0-1.5"));
+        assert!(output.contains("mean predicted 2.0"));
+        assert!(output.contains("+1.0"));
+        assert!(output.contains("n=3"));
     }
 }
