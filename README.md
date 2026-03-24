@@ -7,7 +7,7 @@
 <p align="center">
   <strong>Evaluate anything. Predict everything. Hallucinate nothing.</strong>
   <br>
-  <em>The brain that MiroFish was missing — SNN-verified evaluation & prediction credibility for any document, any domain, any language.</em>
+  <em>SNN-verified document evaluation & prediction credibility — the brain that MiroFish was missing.</em>
 </p>
 
 <p align="center">
@@ -23,232 +23,236 @@
 
 ---
 
-## Screenshots
+## What It Does
 
-<p align="center">
-  <img src="assets/screenshot-tree-overview.png" alt="Hierarchical evaluation graph" width="100%" />
-  <br><em>Hierarchical knowledge graph — document structure, evaluation criteria, agent panel, and scoring connected in one tree</em>
-</p>
+A Rust MCP server that evaluates any document against any criteria using Claude subagents, with a Spiking Neural Network that makes hallucination mathematically detectable. Feed it a PDF and an intent — it returns structured scores, weakness analysis, prediction credibility, and a full audit trail.
 
-<p align="center">
-  <img src="assets/screenshot-detail-document.png" alt="Document detail panel" width="100%" />
-  <br><em>Detail panel showing ontology reasoning — what the node is, its structure, and why it exists in the knowledge graph</em>
-</p>
+```bash
+# As MCP server (recommended — Claude orchestrates subagent evaluation)
+brain-in-the-fish serve
 
-<p align="center">
-  <img src="assets/screenshot-detail-evidence.png" alt="Evidence detail with properties" width="100%" />
-  <br><em>Evidence node inspection — properties, ontology role, connections, and provenance</em>
-</p>
+# As CLI (deterministic SNN scoring, no API key needed)
+brain-in-the-fish evaluate policy.pdf --intent "evaluate against Green Book standards" --open
+```
 
 ---
 
-## The Problem
-
-Two prior systems attempted multi-agent document evaluation. Both fell short.
-
-**MiroFish** gave fish a swarm -- agents debate a document and converge on a prediction. But MiroFish agents are stateless LLM prompts. They have no memory between rounds, no structured cognition, and no formal link between what they read and what they score. Prediction from an LLM swarm is fundamentally hallucination-prone: agents invent plausible-sounding justifications without grounding them in the document's actual content. When MiroFish's agents predict 'this policy will reduce complaints by 50%,' there is no evidence check — the prediction is as credible as the LLM's temperature setting.
-
-**AgentSociety** gave agents a mind -- Maslow needs, Theory of Planned Behaviour, trust dynamics. But the cognitive model lives in Python dictionaries. It is opaque to reasoning, not queryable by SPARQL, not diffable between debate rounds, and not interoperable with any external knowledge system. The mind exists, but nobody can examine it.
-
-Both systems share a deeper flaw: there is no structured, auditable mapping between a question asked and the evidence found. Scores appear, but the chain from document content to criterion to agent judgement is implicit and unreproducible.
-
-## The Fix
-
-Brain in the Fish gives the mind a skeleton -- a structured, queryable, diffable OWL ontology substrate that agents don't just use but exist within.
-
-**Three ontologies, one graph.** Document, Criteria, and Agent ontologies all live as OWL triples in a shared Oxigraph store (via [open-ontologies](https://github.com/fabio-rovai/open-ontologies)). Every section, claim, criterion, rubric level, agent belief, Maslow need, and trust weight is a first-class RDF node.
-
-**Evaluation over prediction.** MiroFish predicts what a score should be. Brain in the Fish evaluates what the document actually contains against explicit criteria. Evaluation is fundamentally more reliable than prediction because the evidence IS the document -- it is concrete, present, and verifiable. The system does not guess; it maps, scores, and justifies.
-
-**Agent cognition IS the ontology.** Each evaluator agent's Maslow needs, trust relationships, and domain expertise are OWL individuals. When an agent's trust in a colleague changes after a debate challenge, that change is a triple update -- queryable, diffable, and auditable.
-
-**Ontology alignment maps document to criteria.** `onto_align` produces a mathematical mapping between document sections and evaluation criteria. Gaps are identified before scoring begins. No criterion goes unanswered silently.
-
-**Prediction credibility, not prediction.** MiroFish predicts futures. Brain in the Fish assesses whether predictions within a document are credible. It extracts every forecast, target, commitment, and cost estimate, then checks each against the document's evidence base. 'Reduce complaints by 50%' gets a credibility score based on what evidence supports that number — not based on what an LLM thinks will happen.
-
-**Versioned debate.** Each debate round produces new score triples. `onto_diff` between rounds reveals exactly which agents moved, by how much, and why. Drift velocity measures convergence. The entire deliberation is reproducible from the graph state.
-
-## Comparison
-
-| Feature | MiroFish | AgentSociety | Brain in the Fish |
-|---------|----------|--------------|-------------------|
-| Agent cognition | Stateless LLM prompts | Maslow + TPB in Python dicts | Maslow + TPB as OWL individuals in Oxigraph |
-| Evidence basis | LLM generates justifications | LLM generates justifications | Document content mapped to criteria via ontology alignment |
-| Debate tracking | Round counter, text logs | Round counter, JSON state | Versioned RDF triples with `onto_diff` and drift velocity |
-| Reproducibility | Non-deterministic | Non-deterministic | Deterministic graph state per round, SPARQL-queryable |
-| Cross-evaluation learning | None | None | Turtle export enables cross-session analysis |
-| Fact-checking / validation | None | None | 15 deterministic checks (citations, consistency, fallacies, specificity, etc.) |
-| Epistemological grounding | None | None | Justified beliefs with empirical, normative, and testimonial bases |
-| Philosophical frameworks | None | None | Kantian, utilitarian, and virtue ethics analysis |
-| Prediction handling | Agents hallucinate futures | Not addressed | Extracts predictions from document, assesses credibility against evidence |
-| Belief dynamics | None | Maslow needs in Python dicts | Maslow needs update from findings, ontology-grounded |
-| Runtime dependencies | Python + multiple LLM APIs | Python + LLM APIs | Single Rust binary, Oxigraph embedded |
-| Deploy complexity | Multi-service Python stack | Multi-service Python stack | `cargo build` produces one binary |
-
 ## Performance
 
-Benchmarked against real expert-scored documents across multiple domains.
+Benchmarked against real expert-scored documents across education, policy, heritage, public health, technology, and research domains.
 
-### Document Evaluation Accuracy
-
-Tested on 12 real expert-evaluated documents across education, policy, heritage, public health, technology, and research domains. Each document was independently scored by BITF subagents and compared to the real evaluator's scores.
+### Document Evaluation (12 real expert-evaluated documents)
 
 | Metric | Value |
-|--------|-------|
+| ------ | ----- |
 | **Average scoring delta** | **2.8 percentage points** from expert scores |
-| **Direction accuracy** | **12/12** (never scored a weak document high or strong document low) |
+| **Direction accuracy** | **12/12** — never scored a weak document high or strong document low |
 | **Weakness identification** | **92%** match with real evaluator comments |
 | **Perfect criterion-level matches** | 2 documents where every criterion matched exactly |
 
-BITF exhibits a consistent -2pp pessimistic bias (scores slightly lower than real evaluators). This is the safe direction for a pre-submission review tool.
-
-### BITF vs Raw Claude (Head-to-Head)
-
-On documents where both were tested on the same submission with the same criteria:
+### BITF vs Raw Claude
 
 | Method | Avg delta from expert | Weakness detection | Overclaiming |
-|--------|----------------------|-------------------|-------------|
+| ------ | --------------------- | ------------------ | ------------ |
 | **BITF subagent** | **2.8pp** | **92%** | Rare (pessimistic bias) |
 | Raw Claude (no framework) | ~15pp | ~70% | Systematic (generous) |
 
-Raw Claude reads well-written prose and scores the writing quality. BITF scores substance against criteria — it catches domain mismatches, missing evidence, factual errors, and calibrates to real scoring bands.
+Raw Claude scores writing quality. BITF scores substance against criteria — catches domain mismatches, missing evidence, factual errors, and calibrates to real scoring bands.
 
-### Essay Scoring (ELLIPSE Corpus)
-
-45 real expert-graded English learner essays, 1.0–5.0 scale:
+### Essay Scoring (ELLIPSE Corpus, 45 essays, 1.0–5.0 scale)
 
 | Method | Pearson r | QWK | MAE |
-|--------|-----------|-----|-----|
+| ------ | --------- | --- | --- |
 | SNN-only (deterministic) | 0.442 | 0.258 | 1.08 |
 | Raw Claude | 0.937 | — | 0.39 |
 | **BITF subagent** | **0.955** | **0.902** | **0.32** |
 
 QWK of 0.902 exceeds the 0.80 threshold for "reliable" inter-rater agreement. State-of-the-art fine-tuned AES systems score QWK 0.75–0.85.
 
-### Prediction Credibility
-
-5 real UK government policy targets (Clean Growth Strategy 2017) with known outcomes by 2024:
+### Prediction Credibility (5 UK policy targets with known outcomes)
 
 | Method | Correct directional calls |
-|--------|--------------------------|
+| ------ | ------------------------ |
 | BITF subagent | **5/5** |
 | Raw Claude | 5/5 |
 | BITF rule-based | 1/5 |
 
-### Edge Case Detection
+---
 
-5 documents with planted analytical flaws (contradictions, cherry-picked stats, circular reasoning, missing counterfactuals, technically-correct-but-misleading):
+## Architecture
 
-| Method | Flaws detected | False positives |
-|--------|----------------|----------------|
-| BITF subagent | **5/5** | 0 |
-| Raw Claude | 5/5 | 0 |
-| BITF deterministic | 1/5 | 111 |
+```mermaid
+graph TB
+    subgraph Input
+        DOC[Document PDF/TXT]
+        INT[Evaluation Intent]
+    end
 
-The deterministic pipeline's false positives have been reduced from 111 to 14 by filtering years and date ranges from the number consistency checker. The subagent approach is still required for analytical depth.
+    subgraph "Core Pipeline (10 stages)"
+        ING[1. Ingest]
+        EXT[2. Extract — hybrid rule + LLM]
+        VAL[3. Validate — 8 core checks]
+        CRI[4. Load Criteria]
+        ALI[5. Align — 7 structural signals]
+        SPA[6. Spawn Agent Panel]
+        SNN[7. SNN Scoring]
+        DEB[8. Debate]
+        MOD[9. Moderation]
+        REP[10. Report]
+    end
 
-### What We Tried and What Didn't Work
+    subgraph "Optional Extensions"
+        PHI[--philosophy]
+        EPI[--epistemology]
+        PRE[--predict]
+        ORC[--orchestrate]
+        DEP[--deep-validate]
+    end
 
-We ran systematic ablation studies (toggle each component on/off, measure accuracy) to identify which parts of the architecture earn their complexity. Several components were demoted or removed based on the results.
+    subgraph "Knowledge Graph (Oxigraph)"
+        DO[Document Ontology]
+        CO[Criteria Ontology]
+        AO[Agent Ontology]
+    end
 
-| Component | Hypothesis | Ablation Result | Action |
-|-----------|-----------|-----------------|--------|
-| **SNN scoring** | Provides evidence-grounded baseline | Essential — without it, Pearson drops to 0.000 (constant output) | **Keep (core)** |
-| **Ontology alignment** | Maps document sections to criteria | Essential — without it, Pearson drops from 0.684 to 0.592 | **Keep (core)** |
-| **Validation signals** | 15 checks improve scoring accuracy | **Hurts accuracy** — removing validation improves Pearson from 0.684 to 0.786 and QWK from 0.186 to 0.658 | **Capped spike effects at -0.05, reduced inhibition multiplier from 0.5 to 0.2** |
-| **Hedging language check** | Detects over/under-hedging | **Harmful** — penalises academic hedging ("might", "could") which is correct in scholarly writing | **Removed from core, deep-validate only** |
-| **Specificity check** | Flags vague generalisations | **Noisy** — flags normal academic vocabulary ("various", "significant") | **Removed from core, deep-validate only** |
-| **Transition quality check** | Checks for transition words | **High-school heuristic** — no measurable accuracy improvement | **Removed from core, deep-validate only** |
-| **Maslow belief dynamics** | Cognitive model improves agent scoring | **Zero measurable impact** — ablation shows identical scores with and without Maslow needs | **Kept but flagged as opt-in** |
-| **Multi-round debate** | Debate convergence improves consensus | **No impact in deterministic mode** — debate only matters with LLM subagents challenging each other | **Kept for LLM mode, no-op in deterministic** |
-| **Philosophical analysis** | Kantian/utilitarian/virtue ethics lenses add insight | **Interesting but not useful for accuracy** — adds 316 lines of complexity for near-zero practical value in most evaluations | **Moved to `--philosophy` opt-in flag** |
-| **Epistemology module** | Justified beliefs improve grounding | **Academic exercise** — does not improve evaluation accuracy or user experience | **Moved to `--epistemology` opt-in flag** |
-| **Rule-based prediction extraction** | Regex catches predictions | **Actively harmful** — finds 3/11 predictions, produces duplicates, misparses timeframes ("by 340%"), scores facts as predictions | **Replaced with subagent extraction + SNN verification** |
-| **Number inconsistency checker** | Cross-references numbers across sections | **111 false positives per document** — flags years as "inconsistent numbers" | **Fixed: filter years (1900-2099), fiscal year ranges, small numbers. Down to 14 FPs** |
+    subgraph Output
+        MD[evaluation-report.md]
+        TTL[evaluation.ttl]
+        HTML[evaluation-graph.html]
+        JSON[orchestration.json]
+    end
 
-**Key insight from ablation:** The SNN and ontology alignment are the two components that provably improve accuracy. Everything else either has zero measurable impact (Maslow, debate, philosophy) or actively hurts accuracy (validation signals, rule-based extraction). The 10-stage core pipeline reflects this — only components that survived ablation run by default.
+    DOC --> ING
+    INT --> ING
+    ING --> EXT --> VAL --> CRI --> ALI --> SPA --> SNN --> DEB --> MOD --> REP
+    ING --> DO
+    CRI --> CO
+    SPA --> AO
+    DO & CO & AO --> ALI
+    DO & CO & AO --> SNN
+    REP --> MD & TTL & HTML
+    ORC --> JSON
+```
+
+### Three Ontologies, One Graph
+
+```mermaid
+graph LR
+    subgraph "Document Ontology"
+        D[Document] --> S1[Section 1]
+        D --> S2[Section 2]
+        S1 --> C1[Claim]
+        S1 --> E1[Evidence]
+        S2 --> C2[Claim]
+    end
+
+    subgraph "Criteria Ontology"
+        F[Framework] --> CR1[Criterion 1]
+        F --> CR2[Criterion 2]
+        CR1 --> R1[Rubric Level 4: 7-8]
+        CR1 --> R2[Rubric Level 3: 5-6]
+    end
+
+    subgraph "Agent Ontology"
+        A1[Subject Expert] --> N1[Need: Esteem]
+        A1 --> T1[Trust → Writing Specialist: 0.7]
+        A2[Writing Specialist] --> N2[Need: Safety]
+    end
+
+    S1 -.->|onto_align| CR1
+    S2 -.->|onto_align| CR2
+    A1 -.->|scores| CR1
+    A2 -.->|scores| CR2
+```
+
+### SNN Verification Layer
+
+```mermaid
+graph LR
+    subgraph "Evidence from Graph"
+        QD[Quantified Data — 0.8-1.0]
+        VC[Verifiable Claim — 0.6-0.8]
+        CI[Citation — 0.5-0.7]
+        GC[General Claim — 0.3-0.5]
+    end
+
+    subgraph "SNN Neuron"
+        MP[Membrane Potential]
+        TH[Threshold]
+        FR[Firing Rate → Score]
+    end
+
+    subgraph "Blended Output"
+        SS[SNN Score]
+        LS[LLM Score]
+        FS[Final Score]
+        HF[Hallucination Flag]
+    end
+
+    QD & VC & CI & GC -->|spikes| MP
+    MP -->|exceeds| TH -->|fires| FR
+    FR --> SS
+    SS & LS --> FS
+    SS -->|"SNN low + LLM high"| HF
+```
+
+---
+
+## What We Tried and What Didn't Work
+
+Systematic ablation studies — toggle each component on/off, measure accuracy — identified which parts earn their complexity.
+
+| Component | Result | Action |
+| --------- | ------ | ------ |
+| **SNN scoring** | Essential — without it, Pearson drops to 0.000 | **Core** |
+| **Ontology alignment** | Essential — without it, Pearson drops from 0.684 to 0.592 | **Core** |
+| **Validation signals** | Hurts accuracy — removing them improves Pearson 0.684→0.786 | Capped at -0.05, inhibition reduced |
+| **Hedging check** | Harmful — penalises correct academic hedging | Removed from core |
+| **Specificity check** | Noisy — flags normal academic vocabulary | Removed from core |
+| **Transition check** | High-school heuristic, no accuracy improvement | Removed from core |
+| **Maslow dynamics** | Zero measurable impact on scores | Opt-in (`--epistemology`) |
+| **Multi-round debate** | No impact in deterministic mode | Only active with LLM subagents |
+| **Philosophy module** | Interesting, not useful for accuracy (316 lines, ~0 ROI) | Opt-in (`--philosophy`) |
+| **Epistemology module** | Academic exercise, no accuracy improvement | Opt-in (`--epistemology`) |
+| **Rule-based predictions** | Actively harmful — 3/11 found, duplicates, misparses | Replaced with subagent + SNN |
+| **Number checker (old)** | 111 false positives per document (years as "inconsistencies") | Fixed — filtered years/dates, down to 14 FPs |
+
+**Key insight:** SNN and ontology alignment are the only two components that provably improve accuracy. Everything else either has zero impact or hurts. The 10-stage core pipeline reflects this.
 
 ---
 
 ## How It Works
 
-The evaluation pipeline runs in 10 core stages (with optional extensions):
+### Core Pipeline (always runs)
 
-1. **Ingest** -- Extract text from PDF (or plain text), split into sections by heading detection, build the Document Ontology as RDF triples in Oxigraph.
+1. **Ingest** — PDF/text → sections → Document Ontology (RDF triples in Oxigraph)
+2. **Extract** — Hybrid rule + LLM claim/evidence extraction with confidence scores
+3. **Validate** — 8 core deterministic checks (citations, consistency, structure, reading level, duplicates, evidence quality, referencing)
+4. **Load Criteria** — 7 built-in frameworks + YAML/JSON custom rubrics
+5. **Align** — Map sections ↔ criteria via 7 structural signals (AlignmentEngine)
+6. **Spawn Agents** — Domain-specialist panel + moderator with cognitive model
+7. **SNN Score** — Evidence-grounded deterministic scoring (no evidence = score zero)
+8. **Debate** — Disagreement detection, challenge/response, convergence
+9. **Moderate** — Trust-weighted consensus with outlier detection
+10. **Report** — Markdown + Turtle RDF + interactive graph HTML
 
-2. **Enrich** -- Split sections into paragraphs, extract claims and evidence via regex pattern matching.
+### Optional Extensions (CLI flags)
 
-3. **Predict** -- Extract quantitative targets, cost estimates, timelines, comparisons, and commitments. Assess each prediction's credibility against the document's own evidence base. Flag unsupported forecasts.
+| Flag | What it adds |
+| ---- | ------------ |
+| `--predict` | Extract predictions/targets from document, assess credibility against evidence |
+| `--philosophy` | Kantian, utilitarian, virtue ethics analysis |
+| `--epistemology` | Justified beliefs with empirical/normative/testimonial bases |
+| `--deep-validate` | All 15 validation checks (adds hedging, transitions, specificity, fallacies, etc.) |
+| `--orchestrate` | Generate Claude subagent task files for LLM-enhanced scoring |
 
-4. **Validate** -- Run 15 deterministic checks: citations, word count, consistency, structure, reading level, duplicates, evidence quality, fallacies, hedging, topic sentences, counter-arguments, transitions, specificity, referencing, and argument flow. Each check produces validation signals that feed into the SNN.
+---
 
-5. **OWL-RL Reasoning** -- Infer new triples from the knowledge graph using OWL-RL entailment rules.
+## Anti-Hallucination: Why SNN
 
-6. **Load Criteria** -- Select or generate an evaluation framework (7 built-in frameworks + YAML/JSON file parsing). Each criterion, rubric level, and weight becomes an OWL individual in the Criteria Ontology.
+MiroFish agents can "justify" a 9/10 score for a criterion with no supporting evidence. This is hallucination with a confidence score attached.
 
-7. **Discover Sector Guidelines** -- Detect the evaluation domain and load sector-specific guidelines with provenance tracking.
-
-8. **Align** -- Map document sections to criteria using 7 structural signals via AlignmentEngine. Identify gaps where no document content addresses a criterion.
-
-9. **Spawn Agent Panel** -- Spawn 7 domain-specialist agents plus a moderator. Each agent's cognitive model (Maslow needs, trust weights, domain expertise) is loaded as the Agent Ontology.
-
-10. **SNN Scoring** -- Deterministic, evidence-grounded scoring via spiking neural networks. Anti-hallucination: no evidence in the graph means no spikes means score of zero. Validation signals feed in as spikes (positive findings) or inhibition (negative findings).
-
-11. **Belief Dynamics** -- Update agent Maslow needs based on evaluation findings.
-
-12. **Epistemology** -- Construct justified beliefs with empirical, normative, and testimonial bases.
-
-13. **Philosophical Analysis** -- Apply Kantian, utilitarian, and virtue ethics lenses to evaluation findings.
-
-14. **Debate** -- Challenger agents construct evidence-based arguments. Deterministic convergence with trust evolution. Each round produces new score triples.
-
-15. **Moderation** -- Trust-weighted consensus with outlier detection and moderated results.
-
-16. **Report** -- Generate structured Markdown report, Turtle RDF export, interactive graph HTML, and orchestration JSON.
-
-17. **Enforce** -- Quality gate with custom rules via the Enforcer.
-
-18. **Lineage** -- Full audit trail via onto_lineage, tracking every transformation from ingest to final score.
-
-19. **Cross-evaluation Memory** -- Historical comparison across evaluation sessions.
-
-20. **Orchestration Output** -- Generate subagent tasks for Claude-enhanced scoring via the orchestrator.
-
-## Anti-Hallucination: SNN Verification Layer
-
-MiroFish's core weakness is that agent scores are LLM outputs — plausible text with no mathematical grounding. An agent can "justify" a 9/10 score for a criterion that has no supporting evidence in the document. This is hallucination with a confidence score attached.
-
-Brain in the Fish solves this with a **Spiking Neural Network (SNN)** verification layer that sits between the ontology evidence and the LLM scoring. The SNN is deterministic: given the same evidence, it always produces the same score. The LLM is stochastic: it provides qualitative judgment. Combined, they make hallucination detectable.
-
-### How the SNN works
-
-Each evaluator agent has a neural network with one **neuron per criterion**. Evidence from the document ontology generates **input spikes**. Validation signals from the 15-check validation pipeline also feed into the SNN: positive findings (good evidence quality, strong citations) generate excitatory spikes, while negative findings (logical fallacies, excessive hedging, vague language) generate inhibitory signals that reduce membrane potential.
-
-| Evidence type | Spike strength | Example |
-| ------------- | -------------- | ------- |
-| Quantified data | 0.8-1.0 | "FTSE 100 rose 45%" |
-| Verifiable claim | 0.6-0.8 | "Bank of England purchased £895bn in assets" |
-| Citation | 0.5-0.7 | "(Bernanke, 2009)" |
-| General claim | 0.3-0.5 | "QE was effective as a stabilisation tool" |
-| Section alignment | 0.2-0.4 | Section title matches criterion |
-
-Neurons use **leaky integrate-and-fire** dynamics:
-
-- Spikes accumulate in the membrane potential
-- Potential decays over time (leak)
-- When potential exceeds **threshold** (derived from rubric) → neuron fires
-- Firing rate maps to score
-- No evidence in the graph = no spikes = no firing = score of zero
-
-### Blended scoring: SNN + LLM
-
-The final score blends both layers, weighted by SNN confidence:
-
-```text
-final_score = snn_score × snn_weight + llm_score × llm_weight
-```
-
-When SNN confidence is high (abundant evidence), the SNN dominates. When low (sparse evidence), the LLM fills in — but a **hallucination flag** is raised if the LLM scores significantly higher than the evidence supports.
+The SNN makes this detectable. Each agent has one neuron per criterion. Evidence from the ontology generates spikes. No evidence = no spikes = no firing = score of zero. When the LLM says 9/10 but the SNN says 2/10, the system flags it:
 
 ```text
 LLM says 9/10. SNN says 2/10 (only 2 weak spikes received).
@@ -256,22 +260,20 @@ LLM says 9/10. SNN says 2/10 (only 2 weak spikes received).
 → "WARNING: LLM scored significantly higher than evidence supports."
 ```
 
-### Debate as lateral inhibition
+The final score blends both: `final = snn × snn_weight + llm × llm_weight`. SNN dominates when evidence is abundant. LLM fills in when sparse — but the hallucination flag is raised.
 
-During debate rounds, challenges from other agents apply **lateral inhibition** to the target agent's neurons. This reduces the membrane potential, requiring more evidence to maintain a high score. Trust weights modulate spike transmission between agents — highly trusted challengers produce stronger inhibitory signals.
+### ARIA Alignment
 
-### Theoretical grounding: ARIA Safeguarded AI
-
-This architecture aligns with [ARIA's £59M Safeguarded AI programme](https://www.aria.org.uk/programme-safeguarded-ai/) (led by davidad, co-authored with Yoshua Bengio, Stuart Russell, and Max Tegmark). Their thesis in ["Towards Guaranteed Safe AI"](https://arxiv.org/abs/2405.06624): **don't make the LLM deterministic — make the verification deterministic.**
+This implements the gatekeeper architecture from [ARIA's Safeguarded AI programme](https://www.aria.org.uk/programme-safeguarded-ai/) (Bengio, Russell, Tegmark): **don't make the LLM deterministic — make the verification deterministic.**
 
 | ARIA framework | Brain in the Fish |
 | -------------- | ----------------- |
-| World model (formal description of reality) | Ontology (OWL knowledge graph) |
-| Safety specification (acceptable outputs) | Rubric levels + SNN thresholds |
-| Deterministic verifier (proof checker) | SNN (same spikes → same score, always) |
-| Proof certificate (reasoning trace) | Spike log + onto_lineage (auditable evidence path) |
+| World model | OWL ontology (knowledge graph) |
+| Safety specification | Rubric levels + SNN thresholds |
+| Deterministic verifier | SNN (same evidence → same score, always) |
+| Proof certificate | Spike log + onto_lineage |
 
-The LLM generates qualitative judgment. The SNN provides a deterministic, auditable verification gate. The ontology provides the formal world model. Together, they implement ARIA's "gatekeeper" architecture for document evaluation.
+---
 
 ## Getting Started
 
@@ -287,225 +289,156 @@ cd brain-in-the-fish
 cargo build --release
 ```
 
-### Connect to Claude
+### As MCP Server (recommended)
 
-Brain in the Fish is an MCP server. Add it to your Claude Code or Claude Desktop configuration:
-
-**Claude Code (~/.claude.json):**
+Add to Claude Code (`~/.claude.json`) or Claude Desktop:
 
 ```json
 {
   "mcpServers": {
     "brain-in-the-fish": {
-      "command": "/path/to/brain-in-the-fish",
-      "args": ["serve"]
+      "command": "/path/to/brain-in-the-fish-mcp",
+      "args": []
     }
   }
 }
 ```
 
-**Claude Desktop (claude_desktop_config.json):**
+Then ask Claude: *"Evaluate this policy document against Green Book standards"*
 
-```json
-{
-  "mcpServers": {
-    "brain-in-the-fish": {
-      "command": "/path/to/brain-in-the-fish",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-Then ask Claude:
-
-> "Evaluate this policy document against Green Book standards"
-
-Claude will orchestrate the evaluation by dispatching subagents that call the eval_* MCP tools. Each subagent scores as a specialist persona. The SNN verification layer validates every score against evidence in the knowledge graph.
-
-### Standalone mode (no Claude)
-
-For deterministic-only evaluation without LLM judgment:
+### As CLI
 
 ```bash
-brain-in-the-fish evaluate document.pdf --intent "mark this essay for A-level"
-```
-
-This runs the SNN scoring pipeline — evidence-grounded, deterministic, no API key needed. Output includes the Markdown report, Turtle RDF export, interactive graph, and orchestration tasks that Claude can pick up later.
-
-### Verify
-
-```bash
-cargo test
-```
-
-## Usage
-
-### As MCP server (recommended)
-
-```bash
-# Start the MCP server
-brain-in-the-fish serve
-
-# Claude handles the rest — just ask:
-# "Evaluate this essay for A-level economics"
-# "Review this contract for GDPR compliance"
-# "Assess this NHS clinical governance report"
-# "Audit this survey methodology"
-```
-
-### As CLI tool (deterministic mode)
-
-```bash
-# Evaluate with SNN scoring (no LLM needed)
-brain-in-the-fish evaluate essay.pdf --intent "mark this economics essay"
+# Deterministic evaluation (no API key needed)
+brain-in-the-fish evaluate document.pdf --intent "mark this essay" --open
 
 # With custom criteria
-brain-in-the-fish evaluate policy.pdf --intent "evaluate against Green Book" --criteria rubric.yaml
+brain-in-the-fish evaluate policy.pdf --intent "evaluate" --criteria rubric.yaml
 
-# Output to specific directory
-brain-in-the-fish evaluate report.pdf --intent "audit this clinical report" --output ./results
+# With all extensions
+brain-in-the-fish evaluate report.pdf --intent "audit" --predict --deep-validate --orchestrate
+
+# Benchmark against labeled dataset
+brain-in-the-fish benchmark --dataset data/ellipse-sample.json --ablation
 ```
 
-### Output files
+### Output
 
 | File | Description |
-|------|-------------|
-| `evaluation-report.md` | Full scorecard, gap analysis, debate trail, recommendations |
+| ---- | ----------- |
+| `evaluation-report.md` | Scorecard, gap analysis, debate trail, recommendations |
 | `evaluation.ttl` | Turtle RDF export for cross-evaluation analysis |
 | `evaluation-graph.html` | Interactive hierarchical knowledge graph |
 | `orchestration.json` | Subagent tasks for Claude-enhanced scoring |
 
-## Universal Evaluation
+---
 
-The system does not know what it is evaluating until you tell it. The same engine handles any document type by adapting its three ontologies to the domain.
+## Workspace Structure
 
-| Use Case | Document Ontology | Criteria Ontology | Agent Panel |
-|----------|-------------------|-------------------|-------------|
-| Mark a student essay | Paragraphs, arguments, citations, thesis | Marking rubric, grade boundaries, learning outcomes | Subject expert, writing specialist, critical thinking assessor |
-| Assess a policy document | Objectives, measures, impact projections | Green Book appraisal, impact criteria, stakeholder needs | Policy analyst, stakeholder representative, implementation expert |
-| Review a contract | Clauses, obligations, terms, definitions | Legal checklist, risk criteria, regulatory requirements | Legal reviewer, compliance officer, commercial analyst |
-| Analyse survey results | Response themes, methodology, demographics | Research questions, validity criteria | Statistician, research designer, ethics reviewer |
-| Score a tender bid | Sections, claims, evidence, case studies | ITT criteria, weights, pass/fail thresholds | Procurement lead, domain expert, social value champion, finance assessor |
+```mermaid
+graph TB
+    subgraph "Cargo Workspace"
+        ROOT[Cargo.toml — workspace root]
 
-## Sectors
+        subgraph "crates/core"
+            CORE[brain-in-the-fish-core — library]
+            CORE --> TYPES[types]
+            CORE --> INGEST[ingest]
+            CORE --> EXTRACT[extract]
+            CORE --> VALIDATE[validate]
+            CORE --> CRITERIA[criteria]
+            CORE --> ALIGNMENT[alignment]
+            CORE --> AGENT[agent]
+            CORE --> SNN_MOD[snn]
+            CORE --> SCORING[scoring]
+            CORE --> DEBATE[debate]
+            CORE --> MODERATION[moderation]
+            CORE --> REPORT[report]
+            CORE --> PREDICT[predict]
+            CORE --> VIS[visualize]
+            CORE --> BENCH[benchmark]
+        end
 
-Brain in the Fish evaluates documents across any domain. The engine adapts its criteria ontology, agent panel, and scoring rubrics to the sector automatically based on the evaluation intent.
+        subgraph "crates/cli"
+            CLI[brain-in-the-fish — binary]
+        end
 
-| Sector | Document Types | Frameworks & Standards |
-|--------|---------------|----------------------|
-| **Education** | Essays, coursework, dissertations, exam scripts | AQA, Ofsted, Bloom's Taxonomy, QAA |
-| **Healthcare** | Clinical governance reports, patient safety audits, care plans | CQC, NICE guidelines, NHS England |
-| **Government** | Policy documents, impact assessments, business cases | Green Book, Magenta Book, Civil Service competencies |
-| **Legal** | Contracts, compliance reports, terms and conditions | GDPR, Consumer Rights Act, regulatory checklists |
-| **Research** | Survey methodology, ethics applications, peer review | ESRC framework, research council criteria |
-| **Procurement** | Tender bids, proposals, ITT responses | PPN, Social Value Act, framework-specific criteria |
-| **Generic** | Any document against any criteria you define | Custom rubrics, weighted scoring, pass/fail thresholds |
+        subgraph "crates/mcp"
+            MCP[brain-in-the-fish-mcp — binary]
+        end
+    end
 
-## Architecture
+    subgraph "External"
+        OO[open-ontologies — Oxigraph + OWL reasoning]
+    end
 
-All modules compile into a single binary. No microservices, no Python, no network calls to the ontology engine.
+    CLI --> CORE
+    MCP --> CORE
+    CORE --> OO
+```
 
-| Module | Purpose | Lines |
-|--------|---------|-------|
-| `types` | Core evaluation domain types (Document, Criteria, Agent, Score, Session) | 289 |
-| `ingest` | PDF text extraction, section splitting, Document Ontology RDF generation | 557 |
-| `criteria` | Evaluation framework loading (7 built-in + YAML/JSON), Criteria Ontology RDF generation | 1,360 |
-| `agent` | Agent cognitive model (Maslow + trust), Agent Ontology RDF, panel spawning | 840 |
-| `scoring` | SPARQL queries, score recording, scoring prompt generation for subagents | 1,278 |
-| `debate` | Disagreement detection, challenge prompts, drift velocity, convergence | 875 |
-| `moderation` | Trust-weighted consensus, outlier detection, overall result calculation | 678 |
-| `report` | Markdown report generation, Turtle RDF session export | 713 |
-| `server` | MCP server with 12 eval_* tools (rmcp, stdio + HTTP transport) | 905 |
-| `main` | CLI entry point (clap), evaluate and serve subcommands, full pipeline orchestration | 737 |
-| `snn` | Spiking neural network scoring — deterministic evidence-grounded verification | 752 |
-| `llm` | Claude API client for subagent-enhanced scoring (optional) | 320 |
-| `alignment` | Ontology alignment between document sections and evaluation criteria (7 structural signals) | 843 |
-| `research` | Research pipeline for evidence gathering and synthesis | 493 |
-| `memory` | Agent memory persistence across evaluation rounds | 315 |
-| `visualize` | Evaluation visualization, interactive graph HTML, chart generation | 2,520 |
-| `validate` | 15 deterministic document validation checks feeding SNN spikes/inhibition | 2,147 |
-| `batch` | Batch evaluation of multiple documents | 602 |
-| `belief_dynamics` | Maslow needs update from evaluation findings | 166 |
-| `epistemology` | Justified beliefs with empirical, normative, and testimonial bases | 347 |
-| `philosophy` | Kantian, utilitarian, and virtue ethics analysis | 316 |
-| `orchestrator` | Subagent task generation for Claude-enhanced scoring | 292 |
-| `semantic` | Semantic similarity via embeddings (TextEmbedder + VecStore) | 154 |
-| `lib` | Module declarations | 22 |
+**~20K lines of Rust across 25 modules, compiled to 2 binaries (CLI + MCP server).**
 
-**Total: ~17,520 lines of Rust across 24 modules.**
+---
 
 ## MCP Tools
 
-The MCP server exposes 12 tools for orchestrating evaluations programmatically:
-
 | Tool | Description |
-|------|-------------|
-| `eval_status` | Server status, version, session state, triple count |
-| `eval_ingest` | Ingest a PDF and build the Document Ontology |
-| `eval_criteria` | Load an evaluation framework (generic, academic, policy, clinical, legal) |
-| `eval_align` | Run ontology alignment between document sections and criteria |
-| `eval_spawn` | Generate an evaluator agent panel from the intent |
-| `eval_score_prompt` | Generate a scoring prompt for a specific agent-criterion pair |
-| `eval_record_score` | Record a score from an agent into the graph store |
-| `eval_debate_status` | Disagreements, drift velocity, and convergence for the active round |
-| `eval_challenge_prompt` | Generate a challenge prompt for one agent to challenge another |
-| `eval_scoring_tasks` | Generate all scoring tasks for the agent panel as orchestrator-dispatchable prompts |
-| `eval_whatif` | Simulate a text change and estimate how it would affect scores |
-| `eval_report` | Generate the full evaluation report with moderation and consensus |
+| ---- | ----------- |
+| `eval_status` | Server status, session state, triple count |
+| `eval_ingest` | Ingest document and build Document Ontology |
+| `eval_criteria` | Load evaluation framework |
+| `eval_align` | Run ontology alignment (sections ↔ criteria) |
+| `eval_spawn` | Generate evaluator agent panel |
+| `eval_score_prompt` | Get scoring prompt for one agent-criterion pair |
+| `eval_record_score` | Record a score from a subagent |
+| `eval_scoring_tasks` | Get all scoring tasks for orchestration |
+| `eval_debate_status` | Disagreements, convergence, drift velocity |
+| `eval_challenge_prompt` | Generate challenge prompt for debate |
+| `eval_whatif` | Simulate text change, estimate score impact |
+| `eval_predict` | Extract predictions with credibility assessment |
+| `eval_report` | Generate final evaluation report |
+
+---
 
 ## Built on open-ontologies
 
-Brain in the Fish is not a fork of [open-ontologies](https://github.com/fabio-rovai/open-ontologies). It is a dependent crate that consumes open-ontologies as a library.
+Brain in the Fish consumes [open-ontologies](https://github.com/fabio-rovai/open-ontologies) as a library crate. It uses:
 
-```toml
-open-ontologies = { path = "../open-ontologies", features = ["embeddings"] }
-```
+| Component | Purpose |
+| --------- | ------- |
+| `GraphStore` | Triple storage + SPARQL queries |
+| `Reasoner` | OWL-RL inference |
+| `AlignmentEngine` | 7-signal ontology alignment |
+| `StateDb` | Persistent state |
+| `LineageLog` | Full audit trail |
+| `DriftDetector` | Convergence monitoring |
+| `Enforcer` | Quality gates |
+| `TextEmbedder` | Semantic similarity (optional) |
 
-It uses `GraphStore` for triple storage and SPARQL queries, `Reasoner` for OWL-RL inference, `AlignmentEngine` for ontology alignment, `StateDb` for persistent state, `LineageLog` for full audit trails, `DriftDetector` for convergence monitoring, and `Enforcer` for quality gates -- plus optionally `TextEmbedder` and `VecStore` for semantic similarity. All run as in-process Rust function calls. Zero network overhead. No serialisation boundaries. The ontology engine runs in the same address space as the evaluation logic.
+All run as in-process Rust function calls. Zero network overhead.
 
-## Validation
-
-The validation pipeline runs 15 deterministic checks on every document before scoring begins. Each check produces signals that feed into the SNN as spikes (positive) or inhibition (negative).
-
-| Check | Description |
-| ----- | ----------- |
-| Citation recency | Flags citations older than 10 years and missing citations in long sections |
-| Citation format | Detects malformed parenthetical references |
-| Word count | Checks section lengths against rubric requirements |
-| Number consistency | Finds contradictory numbers cited across different sections |
-| Structure compliance | Verifies required sections (introduction, conclusion, etc.) are present |
-| Reading level | Flesch-Kincaid grade level assessment for audience appropriateness |
-| Duplicate content | Detects repeated passages across sections |
-| Evidence quality | Measures evidence-to-claim ratio and proportion of quantified evidence |
-| Logical fallacies | Pattern-matches common fallacies (ad populum, slippery slope, straw man) |
-| Hedging balance | Flags excessive hedging language that weakens assertions |
-| Topic sentences | Checks that paragraphs open with clear topic sentences |
-| Counter-arguments | Detects engagement with opposing viewpoints |
-| Transition quality | Checks for effective transitions between sections |
-| Specificity | Flags vague generalisations and rewards precise, data-backed language |
-| Referencing consistency | Detects mixed citation styles (Harvard vs numeric) |
-| Argument flow | Checks that later sections build on evidence from earlier ones |
+---
 
 ## Testing
 
-239 tests covering all 24 modules: ingestion, criteria loading, agent spawning, scoring, debate mechanics, moderation, report generation, SNN verification, alignment, validation, belief dynamics, epistemology, philosophy, orchestration, batch processing, and MCP server tools.
-
 ```bash
-cargo test
+cargo test --workspace        # 260 tests across all crates
+cargo clippy --workspace      # Zero warnings
+cargo run --bin brain-in-the-fish -- benchmark  # Run synthetic benchmark
 ```
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Acknowledgments
 
-- [MiroFish](https://github.com/666ghj/MiroFish) — the multi-agent swarm prediction engine that inspired this project's agent debate architecture
-- [AgentSociety](https://github.com/tsinghua-fib-lab/AgentSociety) — Tsinghua's cognitive agent simulation that inspired the Maslow + Theory of Planned Behaviour model
-- [open-ontologies](https://github.com/fabio-rovai/open-ontologies) — the OWL ontology engine that provides the knowledge graph backbone
-- [epistemic-deconstructor](https://github.com/NikolasMarkou/epistemic-deconstructor) — Nikolas Markou's Bayesian hypothesis tracking and falsification-first epistemology, which inspired the calibrated confidence scoring with LR caps and falsification checks
-- [ARIA Safeguarded AI](https://www.aria.org.uk/programme-safeguarded-ai/) — the £59M programme whose gatekeeper architecture (world model + deterministic verifier + proof certificate) validated the SNN + ontology verification approach
+- [MiroFish](https://github.com/666ghj/MiroFish) — multi-agent swarm prediction that inspired the agent debate architecture
+- [AgentSociety](https://github.com/tsinghua-fib-lab/AgentSociety) — cognitive agent simulation that inspired the Maslow + TPB model
+- [open-ontologies](https://github.com/fabio-rovai/open-ontologies) — OWL ontology engine providing the knowledge graph backbone
+- [epistemic-deconstructor](https://github.com/NikolasMarkou/epistemic-deconstructor) — Bayesian tracking and falsification-first epistemology
+- [ARIA Safeguarded AI](https://www.aria.org.uk/programme-safeguarded-ai/) — gatekeeper architecture validation
 
 ## License
 
