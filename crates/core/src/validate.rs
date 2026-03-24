@@ -353,9 +353,62 @@ fn extract_significant_numbers(text: &str) -> Vec<NumberInContext> {
     for (i, word) in words.iter().enumerate() {
         // Match: 45M, 340%, 1,200, 45%, 895 billion, etc.
         let cleaned = word.trim_matches(|c: char| {
-            !c.is_ascii_digit() && c != '.' && c != ',' && c != '%' && c != '\u{00a3}' && c != '$'
+            !c.is_ascii_digit()
+                && c != '.'
+                && c != ','
+                && c != '%'
+                && c != '\u{00a3}'
+                && c != '$'
+                && c != '/'
+                && c != '-'
+                && c != '\u{2013}'
         });
         if cleaned.len() >= 2 && cleaned.chars().any(|c| c.is_ascii_digit()) {
+            // Extract just the digits and decimal point for numeric checks
+            let cleaned_num: String = cleaned
+                .chars()
+                .filter(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+
+            // Skip standalone years (1900-2099) — they're dates, not quantities
+            if cleaned_num.len() == 4
+                && let Ok(year) = cleaned_num.parse::<u32>()
+                && (1900..=2099).contains(&year)
+                && !cleaned.contains('%')
+                && !cleaned.contains('\u{00a3}')
+                && !cleaned.contains('$')
+            {
+                continue;
+            }
+
+            // Skip fiscal year patterns like "2019/20", "2023-24", "2018–22"
+            if cleaned.contains('/')
+                || cleaned.contains('\u{2013}')
+                || cleaned.contains('-')
+            {
+                let parts: Vec<&str> = cleaned
+                    .split(['/', '\u{2013}', '-'])
+                    .collect();
+                if parts.len() == 2
+                    && parts
+                        .iter()
+                        .all(|p| p.trim().chars().all(|c| c.is_ascii_digit()))
+                {
+                    continue;
+                }
+            }
+
+            // Skip tiny numbers (< 10) unless they have a unit
+            if let Ok(n) = cleaned_num.parse::<f64>()
+                && n < 10.0
+                && !cleaned.contains('%')
+                && !cleaned.contains('\u{00a3}')
+                && !cleaned.contains('$')
+                && !cleaned.to_lowercase().contains("million")
+            {
+                continue;
+            }
+
             // Get surrounding context (5 words each side)
             let start = i.saturating_sub(5);
             let end = (i + 6).min(words.len());
