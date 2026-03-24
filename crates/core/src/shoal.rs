@@ -52,108 +52,127 @@ pub fn split_batches(samples: &[LabeledSample], batch_size: usize) -> Vec<Vec<La
 /// Generate a scoring prompt for a batch of essays.
 /// This prompt is what gets sent to a Claude subagent.
 ///
-/// The prompt includes the full BITF evaluation context:
-/// - Agent persona (from the spawned panel)
-/// - Evaluation framework with rubric level descriptors
-/// - Per-essay evidence summaries (citations, statistics, claims extracted)
+/// Uses multi-agent consensus: three evaluator personas each score
+/// all 6 criteria independently, and the final score is the median
+/// of their overall scores. Each essay includes actual extracted
+/// evidence text for anchoring.
 pub fn batch_scoring_prompt(batch: &[LabeledSample], config: &ShoalConfig) -> String {
     let intent = &config.intent;
     let framework = crate::criteria::framework_for_intent(intent);
 
-    // Build persona from the lead agent
-    let agents = crate::agent::spawn_panel(intent, &framework);
-    let persona = if let Some(agent) = agents.first() {
-        format!(
-            "## Your Role\n\n\
-             You are {}, a {} with expertise in {}.\n\
-             {}\n\n",
-            agent.name, agent.role, agent.domain, agent.persona_description
-        )
-    } else {
-        String::new()
-    };
+    let mut prompt = String::new();
 
-    // Build the rubric section
-    let mut rubric = String::new();
-    rubric.push_str("## Evaluation Framework\n\n");
-    rubric.push_str(&format!("**Framework:** {}\n\n", framework.name));
+    // Multi-agent instruction
+    prompt.push_str("## Multi-Evaluator Panel\n\n");
+    prompt.push_str(
+        "Score each essay THREE times as three different evaluators:\n\n",
+    );
+    prompt.push_str("**Evaluator 1 — The Grammarian:** Focuses on technical accuracy, syntax, conventions. Strict on errors.\n");
+    prompt.push_str("**Evaluator 2 — The ELL Specialist:** Understands language acquisition stages. Judges communication success, not native-level accuracy. Lenient on developmental errors that don't impede meaning.\n");
+    prompt.push_str("**Evaluator 3 — The Holistic Reader:** Reads for overall quality — ideas, voice, engagement. Balances form and content.\n\n");
+    prompt.push_str(
+        "The final score is the **median** of the three evaluators' overall scores.\n\n",
+    );
+
+    // Framework/rubric
+    prompt.push_str("## Evaluation Framework\n\n");
+    prompt.push_str(&format!("**{}**\n\n", framework.name));
+    prompt.push_str("Score each of these 6 criteria separately (1.0-5.0, 0.5 increments):\n\n");
     for crit in &framework.criteria {
-        rubric.push_str(&format!(
-            "### {} (max {}, weight {:.0}%)\n",
-            crit.title,
-            crit.max_score,
-            crit.weight * 100.0
-        ));
+        prompt.push_str(&format!("### {}\n", crit.title));
         if let Some(desc) = &crit.description {
-            rubric.push_str(&format!("{}\n", desc));
+            prompt.push_str(&format!("{}\n", desc));
         }
         for level in &crit.rubric_levels {
-            rubric.push_str(&format!(
+            prompt.push_str(&format!(
                 "- **{}** ({}): {}\n",
                 level.level, level.score_range, level.descriptor
             ));
         }
-        rubric.push('\n');
+        prompt.push('\n');
     }
 
-    // Build per-essay sections with evidence summaries
-    let mut essays_section = String::new();
+    // Calibration guidance
+    prompt.push_str("## Calibration\n\n");
+    prompt.push_str("These are English Language Learners. Calibrate to the ELL scale:\n");
+    prompt.push_str("- 1.0 = meaning frequently lost, near-unintelligible\n");
+    prompt.push_str("- 2.0 = basic meaning conveyed despite frequent errors\n");
+    prompt.push_str("- 3.0 = meaning clear, errors present but don't impede comprehension\n");
+    prompt.push_str("- 4.0 = good control, occasional errors, reads smoothly\n");
+    prompt.push_str("- 5.0 = near-native proficiency, rare errors\n\n");
+    prompt.push_str("Most essays should cluster 2.0-3.5. Use the full range.\n\n");
+
+    // Per-essay with evidence anchoring
+    prompt.push_str("## Essays\n\n");
     for (i, sample) in batch.iter().enumerate() {
         let extracted = crate::extract::extract_all(&sample.text);
-        let citations = extracted
-            .iter()
-            .filter(|e| e.item_type == crate::extract::ExtractedType::Citation)
-            .count();
-        let statistics = extracted
-            .iter()
-            .filter(|e| e.item_type == crate::extract::ExtractedType::Statistic)
-            .count();
-        let claims = extracted
-            .iter()
-            .filter(|e| e.item_type == crate::extract::ExtractedType::Claim)
-            .count();
-        let total_evidence = extracted.len();
 
-        essays_section.push_str(&format!(
-            "---\n\n### Essay {} (ID: {})\n\n\
-             **Evidence summary:** {} items extracted ({} citations, {} statistics, {} claims)\n\n\
-             {}\n\n",
+        prompt.push_str(&format!(
+            "---\n\n### Essay {} (ID: {})\n\n",
             i + 1,
-            sample.id,
-            total_evidence,
-            citations,
-            statistics,
-            claims,
-            if sample.text.len() > 3000 {
-                format!("{}...", &sample.text[..3000])
-            } else {
-                sample.text.clone()
-            }
+            sample.id
         ));
+
+        // Evidence anchoring — show ACTUAL extracted items
+        if !extracted.is_empty() {
+            prompt.push_str("**Evidence found in text:**\n");
+            for item in extracted.iter().take(5) {
+                let type_label = match item.item_type {
+                    crate::extract::ExtractedType::Citation => "Citation",
+                    crate::extract::ExtractedType::Statistic => "Statistic",
+                    crate::extract::ExtractedType::Claim => "Claim",
+                    crate::extract::ExtractedType::Prediction => "Prediction",
+                    crate::extract::ExtractedType::Commitment => "Commitment",
+                    crate::extract::ExtractedType::Evidence => "Evidence",
+                    crate::extract::ExtractedType::Argument => "Argument",
+                };
+                let display_text = if item.text.len() > 80 {
+                    format!("{}...", &item.text[..80])
+                } else {
+                    item.text.clone()
+                };
+                prompt.push_str(&format!("- {}: \"{}\"\n", type_label, display_text));
+            }
+            prompt.push('\n');
+        }
+
+        // Essay text
+        let text = if sample.text.len() > 3000 {
+            format!("{}...", &sample.text[..3000])
+        } else {
+            sample.text.clone()
+        };
+        prompt.push_str(&format!("{}\n\n", text));
     }
 
-    format!(
-        "{}\
-         {}\
-         ## Scoring Instructions\n\n\
-         For each essay below, score it against the framework above.\n\
-         - Reference specific rubric levels in your assessment\n\
-         - Consider the evidence summary (more citations/statistics = stronger evidence base)\n\
-         - Use the FULL scale — a score of {:.0} means exceptional on every criterion, not just good\n\
-         - A score below {:.0} means significant weaknesses\n\
-         - Be calibrated: most essays should cluster in the middle, with few at extremes\n\n\
-         Return a JSON array: [{{\"id\": \"...\", \"score\": X.X}}, ...]\n\n\
-         {}\n",
-        persona,
-        rubric,
-        config.max_score,
-        config.max_score * 0.3,
-        essays_section
-    )
+    // Response format
+    prompt.push_str("## Response Format\n\n");
+    prompt.push_str("Return a JSON array. For each essay:\n");
+    prompt.push_str("```json\n");
+    prompt.push_str("[{\n");
+    prompt.push_str("  \"id\": \"essay_id\",\n");
+    prompt.push_str("  \"eval1\": {\"cohesion\": X, \"syntax\": X, \"vocabulary\": X, \"phraseology\": X, \"grammar\": X, \"conventions\": X, \"overall\": X},\n");
+    prompt.push_str("  \"eval2\": {\"cohesion\": X, \"syntax\": X, \"vocabulary\": X, \"phraseology\": X, \"grammar\": X, \"conventions\": X, \"overall\": X},\n");
+    prompt.push_str("  \"eval3\": {\"cohesion\": X, \"syntax\": X, \"vocabulary\": X, \"phraseology\": X, \"grammar\": X, \"conventions\": X, \"overall\": X},\n");
+    prompt.push_str("  \"score\": MEDIAN_OF_THREE_OVERALLS\n");
+    prompt.push_str("}]\n");
+    prompt.push_str("```\n");
+    prompt.push_str("\nReturn ONLY the JSON array. No explanations.\n");
+
+    prompt
+}
+
+/// Intermediate type for the rich multi-evaluator response format.
+#[derive(Debug, Clone, Deserialize)]
+struct RichScoredEssay {
+    id: String,
+    score: f64,
+    // eval1, eval2, eval3 are present but we only need the final score
 }
 
 /// Parse subagent response into scored essays.
-/// Handles various JSON formats the subagent might return.
+/// Handles both the rich multi-evaluator format (with eval1/eval2/eval3)
+/// and the simple format (just id + score).
 pub fn parse_scores(response: &str) -> Vec<ScoredEssay> {
     // Try to find JSON array in the response
     let json_str = if let Some(start) = response.find('[') {
@@ -166,6 +185,18 @@ pub fn parse_scores(response: &str) -> Vec<ScoredEssay> {
         response
     };
 
+    // Try rich format first (has eval1/eval2/eval3 + score)
+    if let Ok(rich_scores) = serde_json::from_str::<Vec<RichScoredEssay>>(json_str) {
+        return rich_scores
+            .into_iter()
+            .map(|r| ScoredEssay {
+                id: r.id,
+                score: r.score,
+            })
+            .collect();
+    }
+
+    // Fall back to simple format
     serde_json::from_str(json_str).unwrap_or_default()
 }
 
@@ -617,10 +648,34 @@ mod tests {
         assert!(prompt.contains("JSON array"));
         // Should contain framework/rubric context
         assert!(prompt.contains("## Evaluation Framework"));
-        assert!(prompt.contains("## Your Role"));
-        assert!(prompt.contains("## Scoring Instructions"));
-        // Should contain evidence summaries
-        assert!(prompt.contains("Evidence summary:"));
+        // Multi-agent personas
+        assert!(prompt.contains("## Multi-Evaluator Panel"));
+        assert!(prompt.contains("Evaluator 1"));
+        assert!(prompt.contains("Evaluator 2"));
+        assert!(prompt.contains("Evaluator 3"));
+        assert!(prompt.contains("median"));
+        // Calibration
+        assert!(prompt.contains("## Calibration"));
+        // Per-criterion scoring
+        assert!(prompt.contains("cohesion"));
+        assert!(prompt.contains("syntax"));
+    }
+
+    #[test]
+    fn test_rich_prompt_has_three_evaluators() {
+        let samples = sample_essays();
+        let config = ShoalConfig {
+            intent: "grade this English language learner essay for language proficiency".into(),
+            ..Default::default()
+        };
+        let prompt = batch_scoring_prompt(&samples, &config);
+        assert!(prompt.contains("Evaluator 1"));
+        assert!(prompt.contains("Evaluator 2"));
+        assert!(prompt.contains("Evaluator 3"));
+        assert!(prompt.contains("median"));
+        assert!(prompt.contains("The Grammarian"));
+        assert!(prompt.contains("The ELL Specialist"));
+        assert!(prompt.contains("The Holistic Reader"));
     }
 
     #[test]
@@ -638,6 +693,27 @@ mod tests {
         let response = r#"[{"id": "e1", "score": 3.0}]"#;
         let scores = parse_scores(response);
         assert_eq!(scores.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_rich_scores() {
+        let response = r#"[{"id": "e1", "eval1": {"cohesion": 2.0, "syntax": 2.0, "vocabulary": 2.5, "phraseology": 2.0, "grammar": 2.0, "conventions": 2.0, "overall": 2.1}, "eval2": {"cohesion": 3.0, "syntax": 2.5, "vocabulary": 3.0, "phraseology": 2.5, "grammar": 2.5, "conventions": 2.5, "overall": 2.7}, "eval3": {"cohesion": 2.5, "syntax": 2.5, "vocabulary": 2.5, "phraseology": 2.5, "grammar": 2.0, "conventions": 2.5, "overall": 2.4}, "score": 2.4}]"#;
+        let scores = parse_scores(response);
+        assert_eq!(scores.len(), 1);
+        assert_eq!(scores[0].id, "e1");
+        assert!((scores[0].score - 2.4).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_rich_scores_multiple() {
+        let response = r#"[
+            {"id": "e1", "eval1": {"overall": 2.0}, "eval2": {"overall": 3.0}, "eval3": {"overall": 2.5}, "score": 2.5},
+            {"id": "e2", "eval1": {"overall": 3.5}, "eval2": {"overall": 4.0}, "eval3": {"overall": 3.5}, "score": 3.5}
+        ]"#;
+        let scores = parse_scores(response);
+        assert_eq!(scores.len(), 2);
+        assert!((scores[0].score - 2.5).abs() < 0.01);
+        assert!((scores[1].score - 3.5).abs() < 0.01);
     }
 
     #[test]
