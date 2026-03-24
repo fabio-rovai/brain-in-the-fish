@@ -12,9 +12,6 @@ use brain_in_the_fish_core::snn;
 use brain_in_the_fish_core::memory;
 use brain_in_the_fish_core::semantic;
 use brain_in_the_fish_core::validate;
-use brain_in_the_fish_core::belief_dynamics;
-use brain_in_the_fish_core::epistemology;
-use brain_in_the_fish_core::philosophy;
 use brain_in_the_fish_core::predict;
 use brain_in_the_fish_core::benchmark;
 
@@ -47,14 +44,6 @@ enum Commands {
         /// Open the graph visualization in browser after evaluation
         #[arg(long)]
         open: bool,
-
-        /// Enable philosophical analysis (Kantian/utilitarian/virtue ethics)
-        #[arg(long)]
-        philosophy: bool,
-
-        /// Enable epistemological analysis (justified beliefs)
-        #[arg(long)]
-        epistemology: bool,
 
         /// Enable prediction credibility assessment
         #[arg(long)]
@@ -107,8 +96,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Evaluate { document, intent, criteria, output, open, philosophy, epistemology, predict, deep_validate, orchestrate } => {
-            run_evaluate(document, intent, criteria, output, open, philosophy, epistemology, predict, deep_validate, orchestrate).await
+        Commands::Evaluate { document, intent, criteria, output, open, predict, deep_validate, orchestrate } => {
+            run_evaluate(document, intent, criteria, output, open, predict, deep_validate, orchestrate).await
         }
         Commands::Graph { path } => {
             run_graph(path)
@@ -197,8 +186,6 @@ async fn run_evaluate(
     criteria_path: Option<PathBuf>,
     output: Option<PathBuf>,
     open_graph: bool,
-    philosophy: bool,
-    epistemology: bool,
     predict: bool,
     deep_validate: bool,
     orchestrate: bool,
@@ -517,61 +504,6 @@ async fn run_evaluate(
     }
 
     onto_lineage.record(&session_id, "A", "snn_score", &format!("{} scores computed", round1_scores.len()));
-
-    // Belief dynamics: update agent Maslow needs based on findings
-    println!("   Updating agent cognitive states...");
-    for agent in &mut agents {
-        let agent_snn: Vec<_> = snn_networks.iter()
-            .find(|n| n.agent_id == agent.id)
-            .map(|n| n.compute_scores(&framework.criteria, &snn_config))
-            .unwrap_or_default();
-        belief_dynamics::update_needs(agent, &agent_snn, &validation_signals, &framework.criteria);
-        let satisfied: Vec<_> = agent.needs.iter()
-            .filter(|n| n.satisfied)
-            .map(|n| format!("{:?}", n.need_type))
-            .collect();
-        if !satisfied.is_empty() {
-            println!("      {} needs satisfied: {}", agent.name, satisfied.join(", "));
-        }
-    }
-
-    // Epistemology: form justified beliefs (opt-in via --epistemology)
-    let epistemic_states: Vec<epistemology::EpistemicState> = if epistemology {
-        println!("   [--epistemology] Forming epistemic beliefs...");
-        let mut states = Vec::new();
-        for network in &snn_networks {
-            let agent = agents.iter().find(|a| a.id == network.agent_id);
-            if let Some(agent) = agent {
-                let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
-                let state = epistemology::beliefs_from_snn(agent, &snn_scores, &framework.criteria, &validation_signals);
-                let turtle = epistemology::epistemic_state_to_turtle(&state);
-                let _ = graph.load_turtle(&turtle, None);
-                println!("      {}: {} beliefs, {} revisions", agent.name, state.beliefs.len(), state.revision_history.len());
-                states.push(state);
-            }
-        }
-        states
-    } else {
-        Vec::new()
-    };
-
-    // Philosophical analysis (opt-in via --philosophy)
-    let phil_assessments = if philosophy {
-        println!("   [--philosophy] Philosophical analysis...");
-        let assessments = philosophy::analyse(&doc);
-        let phil_turtle = philosophy::assessments_to_turtle(&assessments);
-        let phil_triples = graph.load_turtle(&phil_turtle, None).unwrap_or(0);
-        println!("   {} philosophical frameworks, {} triples", assessments.len(), phil_triples);
-        for assessment in &assessments {
-            println!("      {:?}: alignment {:.0}%", assessment.framework, assessment.overall_alignment * 100.0);
-        }
-        assessments
-    } else {
-        Vec::new()
-    };
-    if epistemology || philosophy {
-        onto_lineage.record(&session_id, "A", "epistemology", &format!("{} epistemic states, {} philosophical assessments", epistemic_states.len(), phil_assessments.len()));
-    }
 
     // Version snapshot before debate (for drift detection after)
     let pre_debate_turtle = match graph.serialize("turtle") {
@@ -1001,7 +933,7 @@ fn run_benchmark(
                 vec![]
             };
 
-            let mut agents = agent::spawn_panel(&intent, &framework);
+            let agents = agent::spawn_panel(&intent, &framework);
 
             let predicted = if config.use_snn {
                 let snn_config = snn::SNNConfig::default();
@@ -1059,16 +991,6 @@ fn run_benchmark(
                             evidence_used: vec![],
                             gaps_identified: vec![],
                         });
-                    }
-                }
-
-                if config.use_maslow {
-                    for agent in &mut agents {
-                        let agent_snn: Vec<_> = snn_networks.iter()
-                            .find(|n| n.agent_id == agent.id)
-                            .map(|n| n.compute_scores(&framework.criteria, &snn_config))
-                            .unwrap_or_default();
-                        belief_dynamics::update_needs(agent, &agent_snn, &validation_signals, &framework.criteria);
                     }
                 }
 

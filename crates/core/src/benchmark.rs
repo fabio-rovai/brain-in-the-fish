@@ -39,7 +39,6 @@ pub struct BenchmarkConfig {
     pub use_snn: bool,
     pub use_ontology_alignment: bool,
     pub use_debate: bool,
-    pub use_maslow: bool,
     pub use_validation: bool,
     pub use_llm_scoring: bool,
     pub use_llm_extraction: bool,
@@ -52,7 +51,6 @@ impl Default for BenchmarkConfig {
             use_snn: true,
             use_ontology_alignment: true,
             use_debate: true,
-            use_maslow: true,
             use_validation: true,
             use_llm_scoring: false, // default to deterministic
             use_llm_extraction: false,
@@ -227,11 +225,6 @@ pub fn ablation_configs() -> Vec<BenchmarkConfig> {
             ..Default::default()
         },
         BenchmarkConfig {
-            use_maslow: false,
-            label: "no_maslow".into(),
-            ..Default::default()
-        },
-        BenchmarkConfig {
             use_validation: false,
             label: "no_validation".into(),
             ..Default::default()
@@ -403,7 +396,7 @@ mod tests {
     #[test]
     fn test_ablation_configs() {
         let configs = ablation_configs();
-        assert_eq!(configs.len(), 6);
+        assert_eq!(configs.len(), 5);
         assert!(configs[0].use_snn); // full pipeline
         assert!(!configs[1].use_snn); // no_snn
     }
