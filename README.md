@@ -96,7 +96,7 @@ QWK of 0.902 exceeds the 0.80 threshold for "reliable" inter-rater agreement. St
 | Raw Claude | 5/5 |
 | BITF rule-based | 1/5 |
 
-Subagent prediction matches raw Claude performance (both 5/5). The value of this module is structured extraction (prediction types, timeframes, evidence mapping) + SNN verification + audit trail, not improved accuracy over the base model. The rule-based fallback was replaced after proving actively harmful.
+Subagent prediction matches raw Claude performance (both 5/5). The value of this module is structured extraction (prediction types, timeframes, evidence mapping) + evidence-based verification + audit trail, not improved accuracy over the base model. The rule-based fallback was replaced after proving actively harmful.
 
 ---
 

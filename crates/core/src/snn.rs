@@ -1,9 +1,14 @@
-//! Spiking Neural Network scoring layer.
+//! Evidence density scorer — deterministic evidence-grounded scoring.
 //!
-//! Provides a deterministic, evidence-grounded scoring mechanism that
-//! complements LLM-based qualitative evaluation. The SNN only produces
-//! scores when actual evidence exists in the knowledge graph — making
-//! hallucination mathematically impossible.
+//! Uses a biologically-inspired integrate-and-fire model to convert
+//! evidence items from the knowledge graph into scores. The model is
+//! deterministic: same evidence always produces the same score.
+//!
+//! Internally uses spike-based dynamics (membrane potential, threshold,
+//! firing rate) but the core function is simple: more evidence with
+//! higher quality = higher score. The biological framing provides
+//! useful properties (lateral inhibition for debate, refractory periods
+//! for diminishing returns) but this is NOT a trained neural network.
 //!
 //! ## Architecture
 //!

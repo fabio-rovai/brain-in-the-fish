@@ -8,7 +8,7 @@ version: 0.1.0
 
 ## What This Does
 
-Brain in the Fish evaluates documents (essays, policies, contracts, clinical reports, surveys) against evaluation criteria using a panel of AI agents. Each agent's mental state exists as OWL ontology. Scoring is grounded in a Spiking Neural Network that makes hallucination mathematically detectable.
+Brain in the Fish evaluates documents (essays, policies, contracts, clinical reports, surveys) against evaluation criteria using a panel of AI agents. Each agent's mental state exists as OWL ontology. Scoring is grounded in an Evidence Density Scorer (EDS) that makes hallucination mathematically detectable.
 
 ## MCP Tools Available
 
@@ -35,7 +35,7 @@ Brain in the Fish evaluates documents (essays, policies, contracts, clinical rep
 eval_ingest → eval_criteria → eval_align → eval_spawn → eval_report
 ```
 
-The server runs SNN scoring internally. `eval_report` produces a complete evaluation with deterministic scores.
+The server runs evidence scoring internally. `eval_report` produces a complete evaluation with deterministic scores.
 
 ### Full Mode (with Claude subagent scoring)
 
@@ -116,8 +116,8 @@ When scoring as an agent persona:
 ## Architecture Notes
 
 - **Three ontologies** coexist in one Oxigraph triple store: Document, Criteria, Agent
-- **SNN layer** provides deterministic evidence-grounded scoring baseline
-- **Validation signals** (citations, structure, reading level, fallacies, hedging) feed into SNN as spikes
+- **Evidence scorer** provides deterministic evidence-grounded scoring baseline
+- **Validation signals** (citations, structure, reading level, fallacies, hedging) feed into the scorer as spikes
 - **Epistemic state** tracks justified beliefs with empirical/normative/testimonial bases
 - **Philosophical analysis** applies Kantian/utilitarian/virtue ethics lenses
 - **Belief dynamics** — Maslow needs update based on findings, trust evolves during debate

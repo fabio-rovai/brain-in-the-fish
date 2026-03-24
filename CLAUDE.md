@@ -8,18 +8,18 @@ This project depends on `open-ontologies` as a library (`../open-ontologies`). I
 
 ## Module Overview
 
-| Module       | Purpose                                                        |
-|--------------|----------------------------------------------------------------|
-| `types`      | Core evaluation domain types                                   |
-| `ingest`     | PDF ingestion and document ontology generation                 |
-| `criteria`   | Evaluation criteria ontology loading/generation                |
-| `agent`      | Agent cognitive model and spawning                             |
-| `scoring`    | Independent scoring engine with ReACT loop                     |
-| `debate`     | Multi-round structured debate orchestrator                     |
-| `moderation` | Consensus moderation and convergence detection                 |
-| `report`     | Evaluation report generation                                   |
-| `snn`        | Spiking neural network verification layer                      |
-| `server`     | MCP server exposing eval_* tools                               |
+| Module       | Purpose                                                           |
+|--------------|-------------------------------------------------------------------|
+| `types`      | Core evaluation domain types                                      |
+| `ingest`     | PDF ingestion and document ontology generation                    |
+| `criteria`   | Evaluation criteria ontology loading/generation                   |
+| `agent`      | Agent cognitive model and spawning                                |
+| `scoring`    | Independent scoring engine with ReACT loop                        |
+| `debate`     | Multi-round structured debate orchestrator                        |
+| `moderation` | Consensus moderation and convergence detection                    |
+| `report`     | Evaluation report generation                                      |
+| `snn`        | Evidence density scorer — deterministic evidence-grounded scoring |
+| `server`     | MCP server exposing eval_* tools                                  |
 
 ## Build
 
