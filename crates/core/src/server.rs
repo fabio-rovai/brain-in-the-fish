@@ -910,6 +910,93 @@ impl EvalServer {
 }
 
 // ============================================================================
+// Test helpers — public wrappers around tool methods for integration testing
+// ============================================================================
+
+impl EvalServer {
+    /// Wrapper for eval_status tool.
+    pub fn test_status(&self) -> String {
+        self.eval_status()
+    }
+
+    /// Wrapper for eval_ingest tool.
+    pub async fn test_ingest(&self, path: &str, intent: &str) -> String {
+        self.eval_ingest(Parameters(EvalIngestInput {
+            path: path.to_string(),
+            intent: intent.to_string(),
+        }))
+        .await
+    }
+
+    /// Wrapper for eval_criteria tool.
+    pub async fn test_criteria(&self, framework: Option<&str>, intent: Option<&str>) -> String {
+        self.eval_criteria(Parameters(EvalCriteriaInput {
+            framework: framework.map(|s| s.to_string()),
+            intent: intent.map(|s| s.to_string()),
+        }))
+        .await
+    }
+
+    /// Wrapper for eval_align tool.
+    pub async fn test_align(&self) -> String {
+        self.eval_align(Parameters(EvalAlignInput {
+            criterion_id: None,
+        }))
+        .await
+    }
+
+    /// Wrapper for eval_spawn tool.
+    pub async fn test_spawn(&self, intent: &str) -> String {
+        self.eval_spawn(Parameters(EvalSpawnInput {
+            intent: intent.to_string(),
+        }))
+        .await
+    }
+
+    /// Wrapper for eval_record_score tool.
+    pub async fn test_record_score(
+        &self,
+        agent_id: &str,
+        criterion_id: &str,
+        score: f64,
+        max_score: f64,
+        round: u32,
+        justification: &str,
+    ) -> String {
+        self.eval_record_score(Parameters(EvalRecordScoreInput {
+            agent_id: agent_id.to_string(),
+            criterion_id: criterion_id.to_string(),
+            score,
+            max_score,
+            round,
+            justification: justification.to_string(),
+            evidence_used: vec!["test evidence".to_string()],
+            gaps_identified: vec![],
+        }))
+        .await
+    }
+
+    /// Wrapper for eval_scoring_tasks tool.
+    pub async fn test_scoring_tasks(&self) -> String {
+        self.eval_scoring_tasks(Parameters(EvalScoringTasksInput {
+            agent_index: None,
+            criterion_index: None,
+        }))
+        .await
+    }
+
+    /// Wrapper for eval_debate_status tool.
+    pub async fn test_debate_status(&self) -> String {
+        self.eval_debate_status().await
+    }
+
+    /// Wrapper for eval_report tool.
+    pub async fn test_report(&self) -> String {
+        self.eval_report().await
+    }
+}
+
+// ============================================================================
 // ServerHandler
 // ============================================================================
 
