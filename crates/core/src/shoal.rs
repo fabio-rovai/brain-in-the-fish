@@ -24,6 +24,8 @@ pub struct ShoalConfig {
     pub max_score: f64,
     /// Evaluation intent — drives framework, persona, and criteria selection
     pub intent: String,
+    /// Optional anchor essays for ontology-grounded calibration
+    pub anchors: Option<Vec<crate::calibrate::AnchorEssay>>,
 }
 
 impl Default for ShoalConfig {
@@ -33,6 +35,7 @@ impl Default for ShoalConfig {
             scale_description: "1.0-5.0 (0.5 increments)".into(),
             max_score: 5.0,
             intent: "evaluate this essay".into(),
+            anchors: None,
         }
     }
 }
@@ -59,6 +62,20 @@ pub fn split_batches(samples: &[LabeledSample], batch_size: usize) -> Vec<Vec<La
 pub fn batch_scoring_prompt(batch: &[LabeledSample], config: &ShoalConfig) -> String {
     let intent = &config.intent;
     let framework = crate::criteria::framework_for_intent(intent);
+
+    // Build calibration graph if anchors are provided
+    let calibration_graph: Option<std::sync::Arc<open_ontologies::graph::GraphStore>> =
+        config.anchors.as_ref().and_then(|anchors| {
+            if anchors.is_empty() {
+                return None;
+            }
+            let graph = std::sync::Arc::new(open_ontologies::graph::GraphStore::new());
+            if crate::calibrate::load_anchors(&graph, anchors).is_ok() {
+                Some(graph)
+            } else {
+                None
+            }
+        });
 
     let mut prompt = String::new();
 
@@ -131,6 +148,15 @@ pub fn batch_scoring_prompt(batch: &[LabeledSample], config: &ShoalConfig) -> St
         prompt.push_str("**Document Analysis:**\n");
         prompt.push_str(&format!("- Word count: {}\n", word_count));
         prompt.push_str(&summary);
+
+        // Add calibration anchor if available
+        if let Some(graph) = calibration_graph.as_ref() {
+            let cal_section =
+                crate::calibrate::calibration_prompt_section(graph, &sample.text, &config.intent);
+            if !cal_section.is_empty() {
+                prompt.push_str(&cal_section);
+            }
+        }
         prompt.push('\n');
 
         // Essay text
@@ -376,21 +402,55 @@ pub fn eds_score_essay(sample: &LabeledSample, intent: &str) -> f64 {
     }
 }
 
-/// Compute blended metrics: EDS score + subagent score for each essay.
+/// Blended metrics results: subagent, EDS, blended, and optionally calibrated.
+pub struct BlendedMetrics {
+    pub subagent: BenchmarkResults,
+    pub eds: BenchmarkResults,
+    pub blended: BenchmarkResults,
+    pub calibrated: Option<BenchmarkResults>,
+}
+
+/// Compute blended metrics: EDS score + subagent score + calibrated score for each essay.
 pub fn compute_blended_metrics(
     scored: &[ScoredEssay],
     samples: &[LabeledSample],
     config: &ShoalConfig,
     intent: &str,
 ) -> (BenchmarkResults, BenchmarkResults, BenchmarkResults) {
+    let bm = compute_blended_metrics_full(scored, samples, config, intent);
+    (bm.subagent, bm.eds, bm.blended)
+}
+
+/// Full blended metrics including calibrated scores when anchors are provided.
+pub fn compute_blended_metrics_full(
+    scored: &[ScoredEssay],
+    samples: &[LabeledSample],
+    config: &ShoalConfig,
+    intent: &str,
+) -> BlendedMetrics {
     let sample_map: std::collections::HashMap<&str, &LabeledSample> = samples
         .iter()
         .map(|s| (s.id.as_str(), s))
         .collect();
 
+    // Build calibration graph if anchors provided
+    let calibration_graph: Option<std::sync::Arc<open_ontologies::graph::GraphStore>> =
+        config.anchors.as_ref().and_then(|anchors| {
+            if anchors.is_empty() {
+                return None;
+            }
+            let graph = std::sync::Arc::new(open_ontologies::graph::GraphStore::new());
+            if crate::calibrate::load_anchors(&graph, anchors).is_ok() {
+                Some(graph)
+            } else {
+                None
+            }
+        });
+
     let mut subagent_pred = Vec::new();
     let mut eds_pred = Vec::new();
     let mut blended_pred = Vec::new();
+    let mut calibrated_pred = Vec::new();
     let mut actual = Vec::new();
     let mut _hallucination_flags = 0usize;
 
@@ -402,6 +462,18 @@ pub fn compute_blended_metrics(
 
             // Blend: 40% EDS + 60% subagent (EDS is verification, subagent is scorer)
             let blended = eds_score * 0.4 + subagent_score * 0.6;
+
+            // Calibrated score (if anchors available)
+            if let Some(graph) = calibration_graph.as_ref() {
+                let (cal, _, _) = crate::calibrate::calibrated_score(
+                    graph,
+                    &sample.text,
+                    intent,
+                    subagent_score,
+                    config.max_score,
+                );
+                calibrated_pred.push(cal);
+            }
 
             // Hallucination check
             let eds_normalised = eds_score / config.max_score;
@@ -464,7 +536,31 @@ pub fn compute_blended_metrics(
         },
     };
 
-    (subagent_results, eds_results, blended_results)
+    let calibrated_results = if !calibrated_pred.is_empty() && calibrated_pred.len() == n {
+        Some(BenchmarkResults {
+            name: "shoal_calibrated".into(),
+            samples: n,
+            pearson_r: pearson_correlation(&calibrated_pred, &actual),
+            qwk: quadratic_weighted_kappa(&calibrated_pred, &actual, 0.0, config.max_score),
+            mae: mean_absolute_error(&calibrated_pred, &actual),
+            rmse: rmse(&calibrated_pred, &actual),
+            mean_predicted: calibrated_pred.iter().sum::<f64>() / n.max(1) as f64,
+            mean_actual: actual.iter().sum::<f64>() / n.max(1) as f64,
+            config: BenchmarkConfig {
+                label: "calibrated".into(),
+                ..Default::default()
+            },
+        })
+    } else {
+        None
+    };
+
+    BlendedMetrics {
+        subagent: subagent_results,
+        eds: eds_results,
+        blended: blended_results,
+        calibrated: calibrated_results,
+    }
 }
 
 /// A single score band analysis entry.

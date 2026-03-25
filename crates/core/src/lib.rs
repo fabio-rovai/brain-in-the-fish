@@ -22,3 +22,4 @@ pub mod benchmark;
 pub mod extract;
 pub mod shoal;
 pub mod adaptive_extract;
+pub mod calibrate;

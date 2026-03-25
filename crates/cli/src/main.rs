@@ -117,6 +117,10 @@ enum Commands {
         /// Collect results and compute metrics (run after scoring)
         #[arg(long)]
         collect: bool,
+
+        /// Path to anchor essays JSON for ontology-grounded calibration
+        #[arg(long)]
+        anchors: Option<PathBuf>,
     },
 }
 
@@ -143,8 +147,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Serve { host, port } => {
             run_serve(host, port).await
         }
-        Commands::Shoal { dataset, batch_size, output, max_score, intent, collect } => {
-            run_shoal(dataset, batch_size, output, max_score, intent, collect)
+        Commands::Shoal { dataset, batch_size, output, max_score, intent, collect, anchors } => {
+            run_shoal(dataset, batch_size, output, max_score, intent, collect, anchors)
         }
     }
 }
@@ -1148,13 +1152,28 @@ fn run_shoal(
     max_score: f64,
     intent: String,
     collect: bool,
+    anchors_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let samples = benchmark::load_dataset(&dataset)?;
+
+    // Load anchor essays if provided
+    let anchors: Option<Vec<brain_in_the_fish_core::calibrate::AnchorEssay>> =
+        if let Some(path) = &anchors_path {
+            let content = std::fs::read_to_string(path)?;
+            let loaded: Vec<brain_in_the_fish_core::calibrate::AnchorEssay> =
+                serde_json::from_str(&content)?;
+            println!("Loaded {} anchor essays for calibration", loaded.len());
+            Some(loaded)
+        } else {
+            None
+        };
+
     let config = shoal::ShoalConfig {
         batch_size,
         scale_description: format!("0.0-{:.1}", max_score),
         max_score,
         intent: intent.clone(),
+        anchors: anchors.clone(),
     };
 
     if collect {
@@ -1176,29 +1195,35 @@ fn run_shoal(
             }
         }
         println!("Running EDS pipeline on {} scored essays...", all_scored.len());
-        let (sub, eds, blended) = shoal::compute_blended_metrics(&all_scored, &samples, &config, &intent);
+        let bm = shoal::compute_blended_metrics_full(&all_scored, &samples, &config, &intent);
 
-        println!("\nShoal results ({} essays):", sub.samples);
-        println!("  | Method   | Pearson r | QWK   | MAE  | RMSE |");
-        println!("  |----------|-----------|-------|------|------|");
+        println!("\nShoal results ({} essays):", bm.subagent.samples);
+        println!("  | Method     | Pearson r | QWK   | MAE  | RMSE |");
+        println!("  |------------|-----------|-------|------|------|");
         println!(
-            "  | Subagent | {:.3}     | {:.3} | {:.2} | {:.2} |",
-            sub.pearson_r, sub.qwk, sub.mae, sub.rmse
+            "  | Subagent   | {:.3}     | {:.3} | {:.2} | {:.2} |",
+            bm.subagent.pearson_r, bm.subagent.qwk, bm.subagent.mae, bm.subagent.rmse
         );
         println!(
-            "  | EDS only | {:.3}     | {:.3} | {:.2} | {:.2} |",
-            eds.pearson_r, eds.qwk, eds.mae, eds.rmse
+            "  | EDS only   | {:.3}     | {:.3} | {:.2} | {:.2} |",
+            bm.eds.pearson_r, bm.eds.qwk, bm.eds.mae, bm.eds.rmse
         );
         println!(
-            "  | Blended  | {:.3}     | {:.3} | {:.2} | {:.2} |",
-            blended.pearson_r, blended.qwk, blended.mae, blended.rmse
+            "  | Blended    | {:.3}     | {:.3} | {:.2} | {:.2} |",
+            bm.blended.pearson_r, bm.blended.qwk, bm.blended.mae, bm.blended.rmse
         );
+        if let Some(cal) = &bm.calibrated {
+            println!(
+                "  | Calibrated | {:.3}     | {:.3} | {:.2} | {:.2} |",
+                cal.pearson_r, cal.qwk, cal.mae, cal.rmse
+            );
+        }
 
         // Score band analysis
         let bands = shoal::score_band_analysis(&all_scored, &samples);
         print!("\n{}", shoal::format_score_band_analysis(&bands));
 
-        shoal::save_results(&all_scored, &blended, &output)?;
+        shoal::save_results(&all_scored, &bm.blended, &output)?;
     } else {
         // Generate batch prompts
         std::fs::create_dir_all(&output)?;
@@ -1209,6 +1234,9 @@ fn run_shoal(
             batches.len(),
             batch_size
         );
+        if anchors_path.is_some() {
+            println!("  Calibration anchors loaded — prompts will include anchor references");
+        }
         for (i, batch) in batches.iter().enumerate() {
             let prompt = shoal::batch_scoring_prompt(batch, &config);
             let prompt_path = output.join(format!("batch_{}_prompt.txt", i));
