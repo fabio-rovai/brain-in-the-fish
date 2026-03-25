@@ -529,6 +529,7 @@ impl EvalServer {
 
     #[tool(name = "eval_record_score", description = "Record a score from an agent for a criterion. Stores in the graph store.")]
     async fn eval_record_score(&self, Parameters(input): Parameters<EvalRecordScoreInput>) -> String {
+        let evidence_refs = input.evidence_used.clone();
         let score = Score {
             agent_id: input.agent_id.clone(),
             criterion_id: input.criterion_id.clone(),
@@ -542,6 +543,39 @@ impl EvalServer {
 
         match crate::scoring::record_score(&self.graph, &score) {
             Ok(triples) => {
+                // Auto-feed evidence into EDS if networks exist
+                let eds_spikes_fed = {
+                    let mut session = self.session.lock().unwrap();
+                    let config = session.snn_config.clone();
+                    if let Some(network) = session.snn_networks.iter_mut()
+                        .find(|n| n.agent_id == input.agent_id)
+                    {
+                        if let Some(neuron) = network.neurons.iter_mut()
+                            .find(|n| n.criterion_id == input.criterion_id)
+                        {
+                            for (i, ev_ref) in evidence_refs.iter().enumerate() {
+                                if i > 0 && i as u32 % config.refractory_period == 0 {
+                                    neuron.clear_refractory();
+                                }
+                                neuron.receive_spike(
+                                    crate::snn::Spike {
+                                        source_id: ev_ref.clone(),
+                                        strength: 0.7,
+                                        spike_type: crate::snn::SpikeType::Evidence,
+                                        timestep: i as u32 % config.timesteps,
+                                    },
+                                    &config,
+                                );
+                            }
+                            evidence_refs.len()
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                };
+
                 serde_json::json!({
                     "ok": true,
                     "agent_id": input.agent_id,
@@ -549,6 +583,7 @@ impl EvalServer {
                     "score": input.score,
                     "round": input.round,
                     "triples_inserted": triples,
+                    "eds_spikes_fed": eds_spikes_fed,
                 })
                 .to_string()
             }
