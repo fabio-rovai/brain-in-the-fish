@@ -19,7 +19,32 @@ This project depends on `open-ontologies` as a library (`../open-ontologies`). I
 | `moderation` | Consensus moderation and convergence detection                    |
 | `report`     | Evaluation report generation                                      |
 | `snn`        | Evidence density scorer — deterministic evidence-grounded scoring |
-| `server`     | MCP server exposing eval_* tools                                  |
+| `server`     | MCP server exposing eval_* and eds_* tools                        |
+
+## EDS Tools (Evidence Density Scorer)
+
+Subagents use these MCP tools to work through the SNN instead of scoring with vibes:
+
+| Tool | When to use |
+|------|-------------|
+| `eds_feed` | After extracting evidence — push structured evidence into the SNN for scoring |
+| `eds_score` | After feeding evidence — get SNN score, confidence, low-confidence criteria |
+| `eds_challenge` | During debate — apply lateral inhibition to target agent's SNN |
+| `eds_consensus` | After scoring round — check if agents' SNN scores have converged |
+
+### EDS Workflow
+
+1. Read the scoring task prompt (from `eval_scoring_tasks`)
+2. Extract structured evidence from the aligned document sections
+3. Call `eds_feed` with typed evidence items (claim, evidence, quantified_data, citation)
+4. Call `eds_score` to get the SNN-computed score and confidence
+5. If low-confidence criteria are flagged, re-read the document and extract more evidence
+6. Call `eds_feed` again with new evidence, then `eds_score` again
+7. Record final score via `eval_record_score` (which also auto-feeds EDS)
+8. During debate, use `eds_challenge` for lateral inhibition
+9. Call `eds_consensus` to check convergence
+
+The subagent thinks through the SNN — it extracts evidence, feeds it into the SNN, reads the SNN's assessment, and makes a judgment informed by both its qualitative reading and the quantitative evidence structure.
 
 ## Build
 
