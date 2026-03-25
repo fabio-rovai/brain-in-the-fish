@@ -113,6 +113,28 @@ pub struct EvalHistoryInput {
     pub dir: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdsFeedInput {
+    /// Agent ID (from eval_spawn).
+    pub agent_id: String,
+    /// Criterion ID to feed evidence into.
+    pub criterion_id: String,
+    /// Structured evidence items extracted by the subagent.
+    pub evidence: Vec<EdsFeedEvidence>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdsFeedEvidence {
+    /// Source identifier for audit trail.
+    pub source_id: String,
+    /// Evidence type: "claim", "evidence", "quantified_data", "citation", "alignment".
+    pub evidence_type: String,
+    /// Strength/quality of this evidence (0.0-1.0).
+    pub strength: f64,
+    /// The evidence text (for audit trail).
+    pub text: String,
+}
+
 // ============================================================================
 // Session state
 // ============================================================================
@@ -955,6 +977,71 @@ impl EvalServer {
             Err(e) => format!(r#"{{"error":"{}"}}"#, e),
         }
     }
+
+    // ── EDS Feed ───────────────────────────────────────────────────────────
+
+    #[tool(name = "eds_feed", description = "Push structured evidence into the SNN for a specific agent and criterion. Returns updated neuron state.")]
+    async fn eds_feed(&self, Parameters(input): Parameters<EdsFeedInput>) -> String {
+        let mut session = self.session.lock().unwrap();
+        let config = session.snn_config.clone();
+
+        let network = match session.snn_networks.iter_mut()
+            .find(|n| n.agent_id == input.agent_id)
+        {
+            Some(n) => n,
+            None => return format!(
+                r#"{{"error":"No SNN network for agent_id '{}'. Call eval_spawn first."}}"#,
+                input.agent_id
+            ),
+        };
+
+        let neuron = match network.neurons.iter_mut()
+            .find(|n| n.criterion_id == input.criterion_id)
+        {
+            Some(n) => n,
+            None => return format!(
+                r#"{{"error":"No neuron for criterion_id '{}'"}}"#,
+                input.criterion_id
+            ),
+        };
+
+        for (i, ev) in input.evidence.iter().enumerate() {
+            let spike_type = match ev.evidence_type.as_str() {
+                "quantified_data" => crate::snn::SpikeType::QuantifiedData,
+                "evidence" => crate::snn::SpikeType::Evidence,
+                "citation" => crate::snn::SpikeType::Citation,
+                "alignment" => crate::snn::SpikeType::Alignment,
+                _ => crate::snn::SpikeType::Claim,
+            };
+
+            if i > 0 && i as u32 % config.refractory_period == 0 {
+                neuron.clear_refractory();
+            }
+
+            neuron.receive_spike(
+                crate::snn::Spike {
+                    source_id: ev.source_id.clone(),
+                    strength: ev.strength.clamp(0.0, 1.0),
+                    spike_type,
+                    timestep: i as u32 % config.timesteps,
+                },
+                &config,
+            );
+        }
+
+        serde_json::json!({
+            "ok": true,
+            "agent_id": input.agent_id,
+            "criterion_id": input.criterion_id,
+            "spikes_fed": input.evidence.len(),
+            "membrane_potential": neuron.membrane_potential,
+            "fire_count": neuron.fire_count,
+            "total_spikes": neuron.total_spikes,
+            "bayesian_confidence": neuron.bayesian_confidence,
+            "refractory": neuron.refractory,
+        })
+        .to_string()
+    }
 }
 
 // ============================================================================
@@ -1128,6 +1215,7 @@ mod tests {
         assert!(names.contains(&"eval_whatif".to_string()));
         assert!(names.contains(&"eval_report".to_string()));
         assert!(names.contains(&"eval_predict".to_string()));
+        assert!(names.contains(&"eds_feed".to_string()));
     }
 
     #[test]
