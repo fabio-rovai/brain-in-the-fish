@@ -135,6 +135,14 @@ pub struct EdsFeedEvidence {
     pub text: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdsScoreInput {
+    /// Agent ID. Returns scores for this agent's SNN network.
+    pub agent_id: String,
+    /// Optional criterion ID. If omitted, returns scores for all criteria.
+    pub criterion_id: Option<String>,
+}
+
 // ============================================================================
 // Session state
 // ============================================================================
@@ -1042,6 +1050,66 @@ impl EvalServer {
         })
         .to_string()
     }
+
+    // ── EDS Score ─────────────────────────────────────────────────────────
+
+    #[tool(name = "eds_score", description = "Get SNN scores for an agent. Returns score, confidence, firing rate, and low-confidence criteria.")]
+    async fn eds_score(&self, Parameters(input): Parameters<EdsScoreInput>) -> String {
+        let session = self.session.lock().unwrap();
+
+        let network = match session.snn_networks.iter()
+            .find(|n| n.agent_id == input.agent_id)
+        {
+            Some(n) => n,
+            None => return format!(
+                r#"{{"error":"No SNN network for agent_id '{}'"}}"#,
+                input.agent_id
+            ),
+        };
+
+        let framework = match &session.framework {
+            Some(f) => f,
+            None => return r#"{"error":"No framework loaded"}"#.to_string(),
+        };
+
+        let scores = network.compute_scores(&framework.criteria, &session.snn_config);
+
+        let filtered: Vec<_> = if let Some(ref cid) = input.criterion_id {
+            scores.into_iter().filter(|(id, _)| id == cid).collect()
+        } else {
+            scores
+        };
+
+        let score_details: Vec<serde_json::Value> = filtered.iter().map(|(cid, s)| {
+            serde_json::json!({
+                "criterion_id": cid,
+                "snn_score": s.snn_score,
+                "confidence": s.confidence,
+                "bayesian_confidence": s.bayesian_confidence,
+                "firing_rate": s.firing_rate,
+                "evidence_count": s.evidence_count,
+                "spike_quality": s.spike_quality,
+                "grounded": s.grounded,
+                "falsification_checked": s.falsification_checked,
+                "confidence_interval": [s.confidence_interval.0, s.confidence_interval.1],
+                "explanation": s.explanation,
+            })
+        }).collect();
+
+        let low_confidence: Vec<String> = filtered.iter()
+            .filter(|(_, s)| s.bayesian_confidence < 0.6 && s.grounded)
+            .map(|(cid, _)| cid.clone())
+            .collect();
+
+        serde_json::json!({
+            "ok": true,
+            "agent_id": input.agent_id,
+            "criteria_scored": score_details.len(),
+            "scores": score_details,
+            "low_confidence_criteria": low_confidence,
+        })
+        .to_string()
+    }
 }
 
 // ============================================================================
@@ -1216,6 +1284,7 @@ mod tests {
         assert!(names.contains(&"eval_report".to_string()));
         assert!(names.contains(&"eval_predict".to_string()));
         assert!(names.contains(&"eds_feed".to_string()));
+        assert!(names.contains(&"eds_score".to_string()));
     }
 
     #[test]
