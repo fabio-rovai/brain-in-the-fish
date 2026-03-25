@@ -8,3 +8,4 @@ docs/plans/
 data/*.parquet
 data/*.tsv
 data/*.csv
+.worktrees/
