@@ -127,6 +127,8 @@ struct SessionState {
     rounds: Vec<DebateRound>,
     current_round: u32,
     intent: String,
+    snn_networks: Vec<crate::snn::AgentNetwork>,
+    snn_config: crate::snn::SNNConfig,
 }
 
 impl SessionState {
@@ -139,6 +141,8 @@ impl SessionState {
             rounds: Vec::new(),
             current_round: 0,
             intent: String::new(),
+            snn_networks: Vec::new(),
+            snn_config: crate::snn::SNNConfig::default(),
         }
     }
 }
@@ -1117,5 +1121,12 @@ mod tests {
         assert!(names.contains(&"eval_whatif".to_string()));
         assert!(names.contains(&"eval_report".to_string()));
         assert!(names.contains(&"eval_predict".to_string()));
+    }
+
+    #[test]
+    fn test_session_has_snn_networks() {
+        let state = SessionState::new();
+        assert!(state.snn_networks.is_empty());
+        assert_eq!(state.snn_config.timesteps, 10);
     }
 }
