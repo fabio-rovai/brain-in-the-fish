@@ -102,133 +102,38 @@ pub fn batch_scoring_prompt(batch: &[LabeledSample], config: &ShoalConfig) -> St
     prompt.push_str("- 5.0 = near-native proficiency, rare errors\n\n");
     prompt.push_str("Most essays should cluster 2.0-3.5. Use the full range.\n\n");
 
-    // How to use the Engine Analysis guidance
-    prompt.push_str("## How to use the Engine Analysis\n\n");
-    prompt.push_str("The Evidence Density Score (EDS) is a deterministic baseline from our evidence extraction pipeline.\n");
-    prompt.push_str("- If EDS is high (>60%) and you read the essay as weak → re-read, you may be missing evidence\n");
-    prompt.push_str("- If EDS is low (<30%) and you read the essay as strong → the essay may rely on assertions without evidence\n");
-    prompt.push_str("- Use EDS as an anchor, not a constraint. Your judgment should be informed by it, not bound to it.\n");
-    prompt.push_str("- The evidence items listed are what the extraction engine found. Check if they match your reading.\n\n");
+    // How to use the Document Analysis guidance
+    prompt.push_str("## How to use the Document Analysis\n\n");
+    prompt.push_str("Each essay includes a domain-adaptive analysis showing what our extraction engine found.\n");
+    prompt.push_str("- The categories are tailored to the document type (essays look for thesis, cohesion, voice; tenders look for case studies, compliance).\n");
+    prompt.push_str("- Use the analysis as context, not a constraint. Your judgment should be informed by it, not bound to it.\n");
+    prompt.push_str("- If the analysis shows many cohesion devices and varied sentences but you read it as weak → re-read for structure.\n");
+    prompt.push_str("- If the analysis shows no counter-arguments or personal voice → the essay may lack depth.\n\n");
 
-    // Per-essay with full EDS analysis
+    // Per-essay with adaptive domain analysis
     prompt.push_str("## Essays\n\n");
     for (i, sample) in batch.iter().enumerate() {
-        // 1. Extract evidence
-        let extracted = crate::extract::extract_all(&sample.text);
-        let citations: Vec<_> = extracted
-            .iter()
-            .filter(|e| e.item_type == crate::extract::ExtractedType::Citation)
-            .collect();
-        let statistics: Vec<_> = extracted
-            .iter()
-            .filter(|e| e.item_type == crate::extract::ExtractedType::Statistic)
-            .collect();
-        let claims: Vec<_> = extracted
-            .iter()
-            .filter(|e| e.item_type == crate::extract::ExtractedType::Claim)
-            .collect();
-
-        // 2. Run EDS pipeline
-        let eds_pct = eds_score_essay(sample, &config.intent);
-        let eds_score = eds_pct * config.max_score;
-
-        // 3. Build document for validation
         let word_count = sample.text.split_whitespace().count();
-        let mut section = crate::types::Section {
-            id: uuid::Uuid::new_v4().to_string(),
-            title: "Essay".into(),
-            text: sample.text.clone(),
-            word_count: word_count as u32,
-            page_range: None,
-            claims: vec![],
-            evidence: vec![],
-            subsections: vec![],
-        };
-        let (ex_claims, ex_evidence) = crate::extract::to_claims_and_evidence(&extracted);
-        section.claims = ex_claims;
-        section.evidence = ex_evidence;
 
-        let doc = crate::types::EvalDocument {
-            id: sample.id.clone(),
-            title: "Essay".into(),
-            doc_type: "essay".into(),
-            total_pages: None,
-            total_word_count: Some(word_count as u32),
-            sections: vec![section],
-        };
-        let validation = crate::validate::validate_core(&doc, &framework);
-        let warnings = validation
-            .iter()
-            .filter(|s| s.severity == crate::validate::Severity::Warning)
-            .count();
+        // Adaptive evidence extraction — domain-aware
+        let adaptive_items =
+            crate::adaptive_extract::quick_adaptive_extract(&sample.text, &config.intent);
+        let summary =
+            crate::adaptive_extract::evidence_summary(&adaptive_items, &config.intent);
 
-        // 4. Format the analysis block
+        // Format the analysis block
         prompt.push_str(&format!(
             "---\n\n### Essay {} (ID: {})\n\n",
             i + 1,
             sample.id
         ));
 
-        prompt.push_str("**Engine Analysis:**\n");
-        prompt.push_str(&format!(
-            "- Evidence Density Score: {:.1}/{:.1} ({:.0}%)\n",
-            eds_score,
-            config.max_score,
-            eds_pct * 100.0
-        ));
-        prompt.push_str(&format!(
-            "- Evidence items: {} total ({} citations, {} statistics, {} claims)\n",
-            extracted.len(),
-            citations.len(),
-            statistics.len(),
-            claims.len()
-        ));
+        prompt.push_str("**Document Analysis:**\n");
         prompt.push_str(&format!("- Word count: {}\n", word_count));
-        prompt.push_str(&format!("- Validation: {} warnings\n", warnings));
-
-        // Show actual evidence found
-        if !citations.is_empty() {
-            prompt.push_str("- Citations found: ");
-            for (j, c) in citations.iter().take(3).enumerate() {
-                if j > 0 {
-                    prompt.push_str(", ");
-                }
-                let t = if c.text.len() > 40 {
-                    &c.text[..40]
-                } else {
-                    &c.text
-                };
-                prompt.push_str(&format!("\"{}\"", t));
-            }
-            prompt.push('\n');
-        }
-        if !statistics.is_empty() {
-            prompt.push_str("- Statistics found: ");
-            for (j, s) in statistics.iter().take(3).enumerate() {
-                if j > 0 {
-                    prompt.push_str(", ");
-                }
-                let t = if s.text.len() > 40 {
-                    &s.text[..40]
-                } else {
-                    &s.text
-                };
-                prompt.push_str(&format!("\"{}\"", t));
-            }
-            prompt.push('\n');
-        }
-        if warnings > 0 {
-            for sig in validation
-                .iter()
-                .filter(|s| s.severity == crate::validate::Severity::Warning)
-                .take(3)
-            {
-                prompt.push_str(&format!("- WARNING: {}\n", sig.title));
-            }
-        }
+        prompt.push_str(&summary);
         prompt.push('\n');
 
-        // 5. Essay text
+        // Essay text
         let text = if sample.text.len() > 3000 {
             format!("{}...", &sample.text[..3000])
         } else {
@@ -751,14 +656,12 @@ mod tests {
         // Per-criterion scoring
         assert!(prompt.contains("cohesion"));
         assert!(prompt.contains("syntax"));
-        // Engine Analysis — EDS pipeline output fed into prompt
-        assert!(prompt.contains("Engine Analysis"), "prompt should include Engine Analysis block per essay");
-        assert!(prompt.contains("Evidence Density Score"), "prompt should include EDS score");
-        assert!(prompt.contains("Evidence items:"), "prompt should include evidence item counts");
+        // Document Analysis — adaptive extraction output fed into prompt
+        assert!(prompt.contains("Document Analysis"), "prompt should include Document Analysis block per essay");
         assert!(prompt.contains("Word count:"), "prompt should include word count");
-        assert!(prompt.contains("Validation:"), "prompt should include validation summary");
-        // EDS guidance section
-        assert!(prompt.contains("## How to use the Engine Analysis"), "prompt should include EDS guidance");
+        assert!(prompt.contains("Total evidence items:"), "prompt should include evidence item totals");
+        // Adaptive guidance section
+        assert!(prompt.contains("## How to use the Document Analysis"), "prompt should include analysis guidance");
     }
 
     #[test]
