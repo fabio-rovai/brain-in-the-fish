@@ -421,11 +421,18 @@ impl EvalServer {
         session.agents = agents;
         session.current_round = 1;
 
+        // Create SNN networks for each agent
+        let snn_networks: Vec<crate::snn::AgentNetwork> = session.agents.iter()
+            .map(|a| crate::snn::AgentNetwork::new(a, &framework.criteria))
+            .collect();
+        session.snn_networks = snn_networks;
+
         serde_json::json!({
             "ok": true,
             "agent_count": session.agents.len(),
             "agents": agent_summary,
             "triples_loaded": total_triples,
+            "snn_neurons_per_agent": framework.criteria.len(),
         })
         .to_string()
     }
