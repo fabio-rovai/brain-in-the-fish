@@ -143,6 +143,18 @@ pub struct EdsScoreInput {
     pub criterion_id: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdsChallengeInput {
+    /// Agent ID of the challenger.
+    pub challenger_agent_id: String,
+    /// Agent ID of the target whose score is being challenged.
+    pub target_agent_id: String,
+    /// Criterion being challenged.
+    pub criterion_id: String,
+    /// Counter-evidence supporting the challenge.
+    pub counter_evidence: Vec<EdsFeedEvidence>,
+}
+
 // ============================================================================
 // Session state
 // ============================================================================
@@ -1110,6 +1122,130 @@ impl EvalServer {
         })
         .to_string()
     }
+
+    // ── EDS Challenge ─────────────────────────────────────────────────────
+
+    #[tool(name = "eds_challenge", description = "Challenge another agent's SNN score on a criterion. Applies lateral inhibition and feeds counter-evidence.")]
+    async fn eds_challenge(&self, Parameters(input): Parameters<EdsChallengeInput>) -> String {
+        let mut session = self.session.lock().unwrap();
+        let config = session.snn_config.clone();
+        let framework = match &session.framework {
+            Some(f) => f.clone(),
+            None => return r#"{"error":"No framework loaded"}"#.to_string(),
+        };
+
+        let target_network = match session.snn_networks.iter_mut()
+            .find(|n| n.agent_id == input.target_agent_id)
+        {
+            Some(n) => n,
+            None => return format!(
+                r#"{{"error":"No SNN network for target agent '{}'"}}"#,
+                input.target_agent_id
+            ),
+        };
+
+        let avg_strength = if input.counter_evidence.is_empty() {
+            0.0
+        } else {
+            input.counter_evidence.iter().map(|e| e.strength).sum::<f64>()
+                / input.counter_evidence.len() as f64
+        };
+        let inhibition_amount = avg_strength * config.inhibition_strength;
+
+        target_network.inhibit(&input.criterion_id, inhibition_amount);
+
+        let scores = target_network.compute_scores(&framework.criteria, &config);
+        let updated = scores.iter()
+            .find(|(cid, _)| *cid == input.criterion_id)
+            .map(|(_, s)| serde_json::json!({
+                "snn_score": s.snn_score,
+                "confidence": s.confidence,
+                "bayesian_confidence": s.bayesian_confidence,
+            }));
+
+        serde_json::json!({
+            "ok": true,
+            "challenger": input.challenger_agent_id,
+            "target": input.target_agent_id,
+            "criterion_id": input.criterion_id,
+            "inhibition_applied": inhibition_amount,
+            "counter_evidence_count": input.counter_evidence.len(),
+            "updated_score": updated,
+        })
+        .to_string()
+    }
+
+    // ── EDS Consensus ────────────────────────────────────────────────────
+
+    #[tool(name = "eds_consensus", description = "Check if agents' SNN scores have converged. Returns drift velocity and per-criterion variance.")]
+    async fn eds_consensus(&self) -> String {
+        let session = self.session.lock().unwrap();
+
+        let framework = match &session.framework {
+            Some(f) => f,
+            None => return r#"{"error":"No framework loaded"}"#.to_string(),
+        };
+
+        if session.snn_networks.is_empty() {
+            return r#"{"error":"No SNN networks. Call eval_spawn first."}"#.to_string();
+        }
+
+        let config = &session.snn_config;
+
+        let mut criterion_stats: Vec<serde_json::Value> = Vec::new();
+        let mut total_variance = 0.0;
+
+        for criterion in &framework.criteria {
+            let mut scores_for_criterion: Vec<f64> = Vec::new();
+
+            for network in &session.snn_networks {
+                let scores = network.compute_scores(&framework.criteria, config);
+                if let Some((_, s)) = scores.iter().find(|(cid, _)| *cid == criterion.id) {
+                    scores_for_criterion.push(s.snn_score);
+                }
+            }
+
+            if scores_for_criterion.len() < 2 {
+                continue;
+            }
+
+            let mean = scores_for_criterion.iter().sum::<f64>()
+                / scores_for_criterion.len() as f64;
+            let variance = scores_for_criterion.iter()
+                .map(|s| (s - mean).powi(2))
+                .sum::<f64>() / scores_for_criterion.len() as f64;
+
+            total_variance += variance;
+
+            criterion_stats.push(serde_json::json!({
+                "criterion_id": criterion.id,
+                "criterion_title": criterion.title,
+                "mean_score": mean,
+                "variance": variance,
+                "agent_scores": scores_for_criterion,
+                "converged": variance < 1.0,
+            }));
+        }
+
+        let avg_variance = if criterion_stats.is_empty() {
+            0.0
+        } else {
+            total_variance / criterion_stats.len() as f64
+        };
+
+        let all_converged = criterion_stats.iter()
+            .all(|c| c["converged"].as_bool().unwrap_or(false));
+
+        serde_json::json!({
+            "ok": true,
+            "agent_count": session.snn_networks.len(),
+            "criteria_count": criterion_stats.len(),
+            "average_variance": avg_variance,
+            "converged": all_converged,
+            "per_criterion": criterion_stats,
+        })
+        .to_string()
+    }
 }
 
 // ============================================================================
@@ -1285,6 +1421,8 @@ mod tests {
         assert!(names.contains(&"eval_predict".to_string()));
         assert!(names.contains(&"eds_feed".to_string()));
         assert!(names.contains(&"eds_score".to_string()));
+        assert!(names.contains(&"eds_consensus".to_string()));
+        assert!(names.contains(&"eds_challenge".to_string()));
     }
 
     #[test]
