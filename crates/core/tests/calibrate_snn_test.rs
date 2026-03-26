@@ -4,13 +4,130 @@
 //! configurable SNN weights, and uses Nelder-Mead to find the weights
 //! that maximize Pearson correlation with expert scores.
 
+use brain_in_the_fish_core::agent;
 use brain_in_the_fish_core::benchmark::{
     load_dataset, mean_absolute_error, pearson_correlation, rmse,
 };
+use brain_in_the_fish_core::criteria;
+use brain_in_the_fish_core::moderation;
 use brain_in_the_fish_core::optimize::nelder_mead;
 use brain_in_the_fish_core::shoal::eds_score_essay_with_config;
-use brain_in_the_fish_core::snn::{SNNConfig, ScoreWeights};
+use brain_in_the_fish_core::snn::{self, SNNConfig, ScoreWeights};
+use brain_in_the_fish_core::types::*;
+use std::collections::HashMap;
 use std::path::Path;
+
+// --- LLM evidence types ---
+
+#[derive(serde::Deserialize)]
+struct LlmEvidence {
+    id: String,
+    evidence: Vec<LlmEvidenceItem>,
+}
+
+#[derive(serde::Deserialize, Clone)]
+struct LlmEvidenceItem {
+    source_id: String,
+    evidence_type: String,
+    strength: f64,
+    #[allow(dead_code)]
+    text: String,
+}
+
+// --- LLM evidence scoring helpers ---
+
+fn score_essay_llm(
+    evidence_items: &[LlmEvidenceItem],
+    agents: &[EvaluatorAgent],
+    framework: &EvaluationFramework,
+    config: &snn::SNNConfig,
+) -> f64 {
+    let mut networks: Vec<snn::AgentNetwork> = agents
+        .iter()
+        .map(|a| snn::AgentNetwork::new(a, &framework.criteria))
+        .collect();
+
+    for network in &mut networks {
+        for neuron in &mut network.neurons {
+            for (i, ev) in evidence_items.iter().enumerate() {
+                if i > 0 && i as u32 % config.refractory_period == 0 {
+                    neuron.clear_refractory();
+                }
+                let spike_type = match ev.evidence_type.as_str() {
+                    "quantified_data" => snn::SpikeType::QuantifiedData,
+                    "evidence" => snn::SpikeType::Evidence,
+                    "citation" => snn::SpikeType::Citation,
+                    "alignment" => snn::SpikeType::Alignment,
+                    _ => snn::SpikeType::Claim,
+                };
+                neuron.receive_spike(
+                    snn::Spike {
+                        source_id: ev.source_id.clone(),
+                        strength: ev.strength.clamp(0.0, 1.0),
+                        spike_type,
+                        timestep: i as u32 % config.timesteps,
+                    },
+                    config,
+                );
+            }
+        }
+    }
+
+    let mut all_scores = Vec::new();
+    for network in &networks {
+        let snn_scores = network.compute_scores(&framework.criteria, config);
+        for (criterion_id, snn_score) in &snn_scores {
+            let max_score = framework
+                .criteria
+                .iter()
+                .find(|c| c.id == *criterion_id)
+                .map(|c| c.max_score)
+                .unwrap_or(10.0);
+            all_scores.push(Score {
+                agent_id: network.agent_id.clone(),
+                criterion_id: criterion_id.clone(),
+                score: snn_score.snn_score,
+                max_score,
+                round: 1,
+                justification: String::new(),
+                evidence_used: vec![],
+                gaps_identified: vec![],
+            });
+        }
+    }
+
+    let moderated = moderation::calculate_moderated_scores(&all_scores, agents);
+    let overall = moderation::calculate_overall_score(&moderated, framework);
+    overall.percentage / 100.0 * 5.0 // ELLIPSE scale
+}
+
+fn objective_llm(
+    params: &[f64],
+    essay_data: &[(Vec<LlmEvidenceItem>, f64)],
+    agents: &[EvaluatorAgent],
+    framework: &EvaluationFramework,
+) -> f64 {
+    let weights = snn::ScoreWeights::from_params(&params[..9]);
+    let mut config = snn::SNNConfig::default();
+    config.weights = weights;
+    config.decay_rate = params[9].clamp(0.01, 0.5);
+
+    let mut predicted = Vec::new();
+    let mut actual = Vec::new();
+    for (evidence, expert_score) in essay_data {
+        let score = score_essay_llm(evidence, agents, framework, &config);
+        predicted.push(score);
+        actual.push(*expert_score);
+    }
+
+    let range = predicted.iter().cloned().fold(f64::INFINITY, f64::min)
+        ..=predicted.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    if (range.end() - range.start()).abs() < 1e-10 {
+        return 1.0;
+    }
+
+    1.0 - pearson_correlation(&predicted, &actual)
+}
 
 /// Score all essays with given SNN config, return (predicted, actual) vectors.
 fn score_all(
@@ -182,5 +299,137 @@ fn test_default_config_produces_scores() {
         non_zero > 0,
         "At least some essays should produce non-zero scores: {:?}",
         predicted
+    );
+}
+
+#[test]
+fn calibrate_snn_weights_llm_evidence() {
+    let data_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/ellipse-sample.json");
+    let evidence_path = Path::new("/tmp/bitf-eds-test/llm_evidence.json");
+
+    if !data_path.exists() || !evidence_path.exists() {
+        eprintln!("Skipping: missing data files");
+        return;
+    }
+
+    let samples = load_dataset(&data_path).unwrap();
+    let evidence_json = std::fs::read_to_string(evidence_path).unwrap();
+    let llm_evidence: Vec<LlmEvidence> = serde_json::from_str(&evidence_json).unwrap();
+    let evidence_map: HashMap<String, Vec<LlmEvidenceItem>> = llm_evidence
+        .into_iter()
+        .map(|e| (e.id, e.evidence))
+        .collect();
+
+    let intent = "academic essay evaluation";
+    let framework = criteria::framework_for_intent(intent);
+    let agents = agent::spawn_panel(intent, &framework);
+
+    // Build (evidence, expert_score) pairs
+    let essay_data: Vec<(Vec<LlmEvidenceItem>, f64)> = samples
+        .iter()
+        .filter_map(|s| evidence_map.get(&s.id).map(|ev| (ev.clone(), s.expert_score)))
+        .collect();
+
+    println!(
+        "\nCalibrating SNN weights with LLM evidence ({} essays)...",
+        essay_data.len()
+    );
+
+    // Score with DEFAULT weights
+    let default_config = snn::SNNConfig::default();
+    let mut default_pred = Vec::new();
+    let mut actual_scores = Vec::new();
+    for (evidence, expert_score) in &essay_data {
+        default_pred.push(score_essay_llm(
+            evidence,
+            &agents,
+            &framework,
+            &default_config,
+        ));
+        actual_scores.push(*expert_score);
+    }
+    let default_pearson = pearson_correlation(&default_pred, &actual_scores);
+    let default_mae = mean_absolute_error(&default_pred, &actual_scores);
+
+    println!(
+        "Default:   Pearson {:.3} | MAE {:.2}",
+        default_pearson, default_mae
+    );
+
+    // Optimize
+    let initial = snn::ScoreWeights::default().to_params();
+    let mut initial_with_decay = initial.clone();
+    initial_with_decay.push(0.1); // decay_rate
+
+    let agents_clone = agents.clone();
+    let framework_clone = framework.clone();
+    let essay_data_clone = essay_data.clone();
+
+    let (best_params, best_loss) = nelder_mead(
+        &|params: &[f64]| objective_llm(params, &essay_data_clone, &agents_clone, &framework_clone),
+        &initial_with_decay,
+        3000,
+        1e-6,
+    );
+
+    println!(
+        "Optimized: Pearson {:.3} | Loss {:.4}",
+        1.0 - best_loss,
+        best_loss
+    );
+
+    // Score with OPTIMIZED weights
+    let opt_weights = snn::ScoreWeights::from_params(&best_params[..9]);
+    let mut opt_config = snn::SNNConfig::default();
+    opt_config.weights = opt_weights.clone();
+    opt_config.decay_rate = best_params[9].clamp(0.01, 0.5);
+
+    let mut opt_pred = Vec::new();
+    for (evidence, _) in &essay_data {
+        opt_pred.push(score_essay_llm(
+            evidence,
+            &agents,
+            &framework,
+            &opt_config,
+        ));
+    }
+    let opt_pearson = pearson_correlation(&opt_pred, &actual_scores);
+    let opt_mae = mean_absolute_error(&opt_pred, &actual_scores);
+    let opt_qwk = brain_in_the_fish_core::benchmark::quadratic_weighted_kappa(
+        &opt_pred,
+        &actual_scores,
+        0.0,
+        5.0,
+    );
+
+    println!("\n| Method             | Pearson r | QWK   | MAE  |");
+    println!("|---------------------|-----------|-------|------|");
+    println!(
+        "| LLM+EDS default     | {:.3}     | -     | {:.2} |",
+        default_pearson, default_mae
+    );
+    println!(
+        "| LLM+EDS calibrated  | {:.3}     | {:.3} | {:.2} |",
+        opt_pearson, opt_qwk, opt_mae
+    );
+
+    // Print optimized weights
+    println!("\nOptimized weights:");
+    println!("  w_saturation:  {:.3}", opt_weights.w_saturation);
+    println!("  w_quality:     {:.3}", opt_weights.w_quality);
+    println!("  w_firing:      {:.3}", opt_weights.w_firing);
+    println!("  saturation_base: {:.1}", opt_weights.saturation_base);
+    println!("  lr_quantified: {:.2}", opt_weights.lr_quantified);
+    println!("  lr_evidence:   {:.2}", opt_weights.lr_evidence);
+    println!("  lr_citation:   {:.2}", opt_weights.lr_citation);
+    println!("  lr_alignment:  {:.2}", opt_weights.lr_alignment);
+    println!("  lr_claim:      {:.2}", opt_weights.lr_claim);
+    println!("  decay_rate:    {:.3}", opt_config.decay_rate);
+
+    assert!(
+        opt_pearson >= default_pearson - 0.01,
+        "Calibrated should not be worse: {:.3} vs {:.3}",
+        opt_pearson,
+        default_pearson
     );
 }
