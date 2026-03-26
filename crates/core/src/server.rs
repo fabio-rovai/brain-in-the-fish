@@ -557,7 +557,7 @@ impl EvalServer {
                             .find(|n| n.criterion_id == input.criterion_id)
                         {
                             for (i, ev_ref) in evidence_refs.iter().enumerate() {
-                                if i > 0 && i as u32 % config.refractory_period == 0 {
+                                if i > 0 && (i as u32).is_multiple_of(config.refractory_period) {
                                     neuron.clear_refractory();
                                 }
                                 neuron.receive_spike(
@@ -1074,7 +1074,7 @@ impl EvalServer {
                 _ => crate::snn::SpikeType::Claim,
             };
 
-            if i > 0 && i as u32 % config.refractory_period == 0 {
+            if i > 0 && (i as u32).is_multiple_of(config.refractory_period) {
                 neuron.clear_refractory();
             }
 

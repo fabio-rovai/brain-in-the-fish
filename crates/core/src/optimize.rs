@@ -61,9 +61,9 @@ where
 
         // Centroid of all points except worst
         let mut centroid = vec![0.0; n];
-        for i in 0..n {
-            for j in 0..n {
-                centroid[j] += simplex[i][j];
+        for vertex in simplex.iter().take(n) {
+            for (j, c) in centroid.iter_mut().enumerate() {
+                *c += vertex[j];
             }
         }
         for c in centroid.iter_mut() {
@@ -103,9 +103,10 @@ where
                 values[n] = fc;
             } else {
                 // Shrink
+                let best_vertex = simplex[0].clone();
                 for i in 1..=n {
                     for j in 0..n {
-                        simplex[i][j] = simplex[0][j] + sigma * (simplex[i][j] - simplex[0][j]);
+                        simplex[i][j] = best_vertex[j] + sigma * (simplex[i][j] - best_vertex[j]);
                     }
                     values[i] = f(&simplex[i]);
                 }
