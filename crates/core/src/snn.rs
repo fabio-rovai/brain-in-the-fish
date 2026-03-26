@@ -37,6 +37,10 @@ pub struct Spike {
     pub spike_type: SpikeType,
     /// Timestamp (simulation step)
     pub timestep: u32,
+    /// Audit trail: the evidence text this spike was generated from.
+    pub source_text: Option<String>,
+    /// Audit trail: why this strength was assigned.
+    pub justification: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -513,6 +517,8 @@ impl AgentNetwork {
                                     strength,
                                     spike_type,
                                     timestep,
+                                    source_text: None,
+                                    justification: None,
                                 },
                                 config,
                             );
@@ -547,6 +553,8 @@ impl AgentNetwork {
                                     strength,
                                     spike_type,
                                     timestep,
+                                    source_text: None,
+                                    justification: None,
                                 },
                                 config,
                             );
@@ -568,6 +576,8 @@ impl AgentNetwork {
                                     strength,
                                     spike_type: SpikeType::Alignment,
                                     timestep,
+                                    source_text: None,
+                                    justification: None,
                                 },
                                 config,
                             );
@@ -611,6 +621,14 @@ impl AgentNetwork {
                 )
             })
             .collect()
+    }
+
+    /// Get the spike log for a specific criterion's neuron.
+    pub fn spike_log_for(&self, criterion_id: &str) -> Option<&Vec<Spike>> {
+        self.neurons
+            .iter()
+            .find(|n| n.criterion_id == criterion_id)
+            .map(|n| &n.spike_log)
     }
 
     /// Apply debate inhibition to a specific neuron.
@@ -778,6 +796,8 @@ fn feed_subsection_spikes(
                 strength,
                 spike_type,
                 timestep,
+                source_text: None,
+                justification: None,
             },
             config,
         );
@@ -798,6 +818,8 @@ fn feed_subsection_spikes(
                 strength,
                 spike_type,
                 timestep,
+                source_text: None,
+                justification: None,
             },
             config,
         );
@@ -943,6 +965,8 @@ mod tests {
                 strength: 0.8,
                 spike_type: SpikeType::QuantifiedData,
                 timestep: 0,
+                source_text: None,
+                justification: None,
             },
             &config,
         );
@@ -966,6 +990,8 @@ mod tests {
                     strength: 0.9,
                     spike_type: SpikeType::QuantifiedData,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1000,6 +1026,8 @@ mod tests {
                 strength: 0.5,
                 spike_type: SpikeType::Evidence,
                 timestep: 0,
+                source_text: None,
+                justification: None,
             },
             &config,
         );
@@ -1151,6 +1179,8 @@ mod tests {
                     strength: 0.9,
                     spike_type: SpikeType::QuantifiedData,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1178,6 +1208,8 @@ mod tests {
                     strength: 1.0,
                     spike_type: SpikeType::QuantifiedData,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1205,6 +1237,8 @@ mod tests {
                     strength: 0.95,
                     spike_type: SpikeType::QuantifiedData,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1237,6 +1271,8 @@ mod tests {
                     strength: 0.7,
                     spike_type: SpikeType::Evidence,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1253,6 +1289,8 @@ mod tests {
                     strength: 0.7,
                     spike_type: SpikeType::Evidence,
                     timestep: i % config.timesteps,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1282,6 +1320,8 @@ mod tests {
                 strength: 0.7,
                 spike_type: SpikeType::Evidence,
                 timestep: 0,
+                source_text: None,
+                justification: None,
             },
             &config,
         );

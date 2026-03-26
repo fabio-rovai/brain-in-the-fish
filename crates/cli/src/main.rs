@@ -463,6 +463,8 @@ async fn run_evaluate(
                             strength: sim.min(1.0),
                             spike_type: snn::SpikeType::Alignment,
                             timestep: 0,
+                            source_text: None,
+                            justification: None,
                         }, &snn_config);
                     }
                 }
@@ -489,6 +491,8 @@ async fn run_evaluate(
                                     snn::SpikeType::Claim
                                 },
                                 timestep: 0,
+                                source_text: None,
+                                justification: None,
                             },
                             &snn_config,
                         );
@@ -1004,6 +1008,8 @@ fn run_benchmark(
                                                     snn::SpikeType::Claim
                                                 },
                                                 timestep: 0,
+                                                source_text: None,
+                                                justification: None,
                                             },
                                             &snn_config,
                                         );

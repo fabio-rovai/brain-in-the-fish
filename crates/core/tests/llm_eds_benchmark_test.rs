@@ -61,6 +61,8 @@ fn score_with_llm_evidence(
                         strength: ev.strength.clamp(0.0, 1.0),
                         spike_type: spike_type_from_str(&ev.evidence_type),
                         timestep: i as u32 % config.timesteps,
+                        source_text: None,
+                        justification: None,
                     },
                     config,
                 );

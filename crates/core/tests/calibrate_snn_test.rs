@@ -66,6 +66,8 @@ fn score_essay_llm(
                         strength: ev.strength.clamp(0.0, 1.0),
                         spike_type,
                         timestep: i as u32 % config.timesteps,
+                        source_text: None,
+                        justification: None,
                     },
                     config,
                 );

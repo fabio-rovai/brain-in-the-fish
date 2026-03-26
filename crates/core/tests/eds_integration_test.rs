@@ -29,6 +29,8 @@ fn test_eds_full_flow() {
                 strength: 0.9,
                 spike_type: snn::SpikeType::QuantifiedData,
                 timestep: i,
+                source_text: None,
+                justification: None,
             }, &config);
         }
     }
@@ -46,6 +48,8 @@ fn test_eds_full_flow() {
                 strength: 0.4,
                 spike_type: snn::SpikeType::Claim,
                 timestep: i,
+                source_text: None,
+                justification: None,
             }, &config);
         }
     }

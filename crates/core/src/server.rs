@@ -133,6 +133,9 @@ pub struct EdsFeedEvidence {
     pub strength: f64,
     /// The evidence text (for audit trail).
     pub text: String,
+    /// Why this strength was assigned (e.g. "contains specific statistic with source citation").
+    /// Stored for audit trail, not used in scoring.
+    pub justification: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -563,6 +566,8 @@ impl EvalServer {
                                         strength: 0.7,
                                         spike_type: crate::snn::SpikeType::Evidence,
                                         timestep: i as u32 % config.timesteps,
+                                        source_text: None,
+                                        justification: None,
                                     },
                                     &config,
                                 );
@@ -1079,6 +1084,8 @@ impl EvalServer {
                     strength: ev.strength.clamp(0.0, 1.0),
                     spike_type,
                     timestep: i as u32 % config.timesteps,
+                    source_text: Some(ev.text.clone()),
+                    justification: ev.justification.clone(),
                 },
                 &config,
             );
@@ -1128,6 +1135,17 @@ impl EvalServer {
         };
 
         let score_details: Vec<serde_json::Value> = filtered.iter().map(|(cid, s)| {
+            let spike_audit: Vec<serde_json::Value> = if let Some(log) = network.spike_log_for(cid) {
+                log.iter().map(|s| serde_json::json!({
+                    "source_id": s.source_id,
+                    "strength": s.strength,
+                    "type": format!("{:?}", s.spike_type),
+                    "text": s.source_text,
+                    "justification": s.justification,
+                })).collect()
+            } else {
+                vec![]
+            };
             serde_json::json!({
                 "criterion_id": cid,
                 "snn_score": s.snn_score,
@@ -1140,6 +1158,7 @@ impl EvalServer {
                 "falsification_checked": s.falsification_checked,
                 "confidence_interval": [s.confidence_interval.0, s.confidence_interval.1],
                 "explanation": s.explanation,
+                "spike_audit": spike_audit,
             })
         }).collect();
 

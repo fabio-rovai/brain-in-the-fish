@@ -348,6 +348,8 @@ pub fn eds_score_essay(sample: &LabeledSample, intent: &str) -> f64 {
                                     snn::SpikeType::Claim
                                 },
                                 timestep: 0,
+                                source_text: None,
+                                justification: None,
                             },
                             &snn_config,
                         );
@@ -475,6 +477,8 @@ pub fn eds_score_essay_with_config(
                                     snn::SpikeType::Claim
                                 },
                                 timestep: 0,
+                                source_text: None,
+                                justification: None,
                             },
                             snn_config,
                         );
