@@ -37,6 +37,10 @@ pub struct Spike {
     pub spike_type: SpikeType,
     /// Timestamp (simulation step)
     pub timestep: u32,
+    /// Audit trail: the evidence text this spike was generated from.
+    pub source_text: Option<String>,
+    /// Audit trail: why this strength was assigned.
+    pub justification: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -88,6 +92,80 @@ pub struct AgentNetwork {
     pub neurons: Vec<Neuron>,
 }
 
+/// Tunable weights for the score formula.
+#[derive(Debug, Clone)]
+pub struct ScoreWeights {
+    /// Weight for evidence saturation signal (default 0.50)
+    pub w_saturation: f64,
+    /// Weight for spike quality signal (default 0.35)
+    pub w_quality: f64,
+    /// Weight for firing rate signal (default 0.15)
+    pub w_firing: f64,
+    /// Saturation reference — ln(1+spikes)/ln(1+saturation_base) (default 15.0)
+    pub saturation_base: f64,
+    /// Bayesian LR for QuantifiedData spikes (default 2.5)
+    pub lr_quantified: f64,
+    /// Bayesian LR for Evidence spikes (default 2.0)
+    pub lr_evidence: f64,
+    /// Bayesian LR for Citation spikes (default 1.8)
+    pub lr_citation: f64,
+    /// Bayesian LR for Alignment spikes (default 1.5)
+    pub lr_alignment: f64,
+    /// Bayesian LR for Claim spikes (default 1.3)
+    pub lr_claim: f64,
+}
+
+impl Default for ScoreWeights {
+    fn default() -> Self {
+        Self {
+            w_saturation: 0.50,
+            w_quality: 0.35,
+            w_firing: 0.15,
+            saturation_base: 15.0,
+            lr_quantified: 2.5,
+            lr_evidence: 2.0,
+            lr_citation: 1.8,
+            lr_alignment: 1.5,
+            lr_claim: 1.3,
+        }
+    }
+}
+
+impl ScoreWeights {
+    /// Convert a parameter vector to ScoreWeights (for optimizer).
+    /// Order: [w_saturation, w_quality, w_firing, saturation_base,
+    ///         lr_quantified, lr_evidence, lr_citation, lr_alignment, lr_claim]
+    pub fn from_params(params: &[f64]) -> Self {
+        assert!(params.len() >= 9, "Need at least 9 parameters for ScoreWeights");
+        Self {
+            w_saturation: params[0].clamp(0.01, 1.0),
+            w_quality: params[1].clamp(0.01, 1.0),
+            w_firing: params[2].clamp(0.0, 1.0),
+            saturation_base: params[3].clamp(2.0, 100.0),
+            lr_quantified: params[4].clamp(1.0, 10.0),
+            lr_evidence: params[5].clamp(1.0, 10.0),
+            lr_citation: params[6].clamp(1.0, 10.0),
+            lr_alignment: params[7].clamp(1.0, 10.0),
+            lr_claim: params[8].clamp(1.0, 5.0),
+        }
+    }
+
+    /// Convert to a parameter vector (for optimizer).
+    pub fn to_params(&self) -> Vec<f64> {
+        vec![
+            self.w_saturation,
+            self.w_quality,
+            self.w_firing,
+            self.saturation_base,
+            self.lr_quantified,
+            self.lr_evidence,
+            self.lr_citation,
+            self.lr_alignment,
+            self.lr_claim,
+        ]
+    }
+}
+
 /// SNN configuration parameters.
 #[derive(Debug, Clone)]
 pub struct SNNConfig {
@@ -101,6 +179,8 @@ pub struct SNNConfig {
     pub timesteps: u32,
     /// Minimum spikes required before any score is valid
     pub min_spikes_for_score: u32,
+    /// Tunable weights for the score formula
+    pub weights: ScoreWeights,
 }
 
 impl Default for SNNConfig {
@@ -111,6 +191,7 @@ impl Default for SNNConfig {
             inhibition_strength: 0.15,
             timesteps: 10,
             min_spikes_for_score: 1,
+            weights: ScoreWeights::default(),
         }
     }
 }
@@ -174,16 +255,12 @@ impl Neuron {
         self.membrane_potential += effective_strength;
 
         // After accumulating the spike, update Bayesian confidence
-        let lr = if spike.spike_type == SpikeType::QuantifiedData {
-            2.5
-        } else if spike.spike_type == SpikeType::Evidence {
-            2.0
-        } else if spike.spike_type == SpikeType::Citation {
-            1.8
-        } else if spike.spike_type == SpikeType::Alignment {
-            1.5
-        } else {
-            1.3 // Claim
+        let lr = match spike.spike_type {
+            SpikeType::QuantifiedData => config.weights.lr_quantified,
+            SpikeType::Evidence => config.weights.lr_evidence,
+            SpikeType::Citation => config.weights.lr_citation,
+            SpikeType::Alignment => config.weights.lr_alignment,
+            SpikeType::Claim => config.weights.lr_claim,
         };
         self.bayesian_update(lr);
 
@@ -242,9 +319,10 @@ impl Neuron {
         // Score formula: three signals combined
         //
         // 1. Evidence saturation: how much evidence exists relative to a "full" amount
-        //    Uses log scale so 1 spike = ~0.30, 3 = ~0.55, 7 = ~0.75, 15+ = ~0.90
+        //    Uses log scale — configurable base controls the saturation curve.
         //    This is the primary signal — more evidence = higher score.
-        let evidence_saturation = (1.0 + self.total_spikes as f64).ln() / (1.0 + 15.0_f64).ln();
+        let sat_base = config.weights.saturation_base;
+        let evidence_saturation = (1.0 + self.total_spikes as f64).ln() / (1.0 + sat_base).ln();
         let evidence_saturation = evidence_saturation.min(1.0);
 
         // 2. Spike quality: how strong the evidence is (average strength)
@@ -253,8 +331,11 @@ impl Neuron {
         // 3. Firing rate: how often the neuron fired (traditional SNN signal)
         //    This captures temporal dynamics — evidence arriving in bursts vs spread out.
 
-        // Weighted combination: evidence volume matters most, quality second, dynamics third
-        let raw_score = (evidence_saturation * 0.50 + spike_quality * 0.35 + firing_rate * 0.15).min(1.0);
+        // Weighted combination: configurable weights for each signal
+        let raw_score = (evidence_saturation * config.weights.w_saturation
+            + spike_quality * config.weights.w_quality
+            + firing_rate * config.weights.w_firing)
+            .min(1.0);
 
         // Apply inhibition penalty (from debate challenges or negative validation)
         let after_inhibition = raw_score * (1.0 - self.inhibition);
@@ -436,6 +517,8 @@ impl AgentNetwork {
                                     strength,
                                     spike_type,
                                     timestep,
+                                    source_text: None,
+                                    justification: None,
                                 },
                                 config,
                             );
@@ -470,6 +553,8 @@ impl AgentNetwork {
                                     strength,
                                     spike_type,
                                     timestep,
+                                    source_text: None,
+                                    justification: None,
                                 },
                                 config,
                             );
@@ -491,6 +576,8 @@ impl AgentNetwork {
                                     strength,
                                     spike_type: SpikeType::Alignment,
                                     timestep,
+                                    source_text: None,
+                                    justification: None,
                                 },
                                 config,
                             );
@@ -534,6 +621,14 @@ impl AgentNetwork {
                 )
             })
             .collect()
+    }
+
+    /// Get the spike log for a specific criterion's neuron.
+    pub fn spike_log_for(&self, criterion_id: &str) -> Option<&Vec<Spike>> {
+        self.neurons
+            .iter()
+            .find(|n| n.criterion_id == criterion_id)
+            .map(|n| &n.spike_log)
     }
 
     /// Apply debate inhibition to a specific neuron.
@@ -701,6 +796,8 @@ fn feed_subsection_spikes(
                 strength,
                 spike_type,
                 timestep,
+                source_text: None,
+                justification: None,
             },
             config,
         );
@@ -721,6 +818,8 @@ fn feed_subsection_spikes(
                 strength,
                 spike_type,
                 timestep,
+                source_text: None,
+                justification: None,
             },
             config,
         );
@@ -866,6 +965,8 @@ mod tests {
                 strength: 0.8,
                 spike_type: SpikeType::QuantifiedData,
                 timestep: 0,
+                source_text: None,
+                justification: None,
             },
             &config,
         );
@@ -889,6 +990,8 @@ mod tests {
                     strength: 0.9,
                     spike_type: SpikeType::QuantifiedData,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -923,6 +1026,8 @@ mod tests {
                 strength: 0.5,
                 spike_type: SpikeType::Evidence,
                 timestep: 0,
+                source_text: None,
+                justification: None,
             },
             &config,
         );
@@ -1074,6 +1179,8 @@ mod tests {
                     strength: 0.9,
                     spike_type: SpikeType::QuantifiedData,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1101,6 +1208,8 @@ mod tests {
                     strength: 1.0,
                     spike_type: SpikeType::QuantifiedData,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1128,6 +1237,8 @@ mod tests {
                     strength: 0.95,
                     spike_type: SpikeType::QuantifiedData,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1160,6 +1271,8 @@ mod tests {
                     strength: 0.7,
                     spike_type: SpikeType::Evidence,
                     timestep: i,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1176,6 +1289,8 @@ mod tests {
                     strength: 0.7,
                     spike_type: SpikeType::Evidence,
                     timestep: i % config.timesteps,
+                    source_text: None,
+                    justification: None,
                 },
                 &config,
             );
@@ -1205,6 +1320,8 @@ mod tests {
                 strength: 0.7,
                 spike_type: SpikeType::Evidence,
                 timestep: 0,
+                source_text: None,
+                justification: None,
             },
             &config,
         );
@@ -1410,5 +1527,32 @@ mod tests {
             compliance_scores[0].1.snn_score,
             "Finance and compliance roles should produce different scores"
         );
+    }
+
+    #[test]
+    fn test_default_weights_unchanged() {
+        // Verify that default ScoreWeights match the original hardcoded values.
+        // If this test fails, it means the defaults were changed — which would
+        // silently alter all existing scoring behaviour.
+        let w = ScoreWeights::default();
+        assert!((w.w_saturation - 0.50).abs() < 1e-10, "w_saturation default changed");
+        assert!((w.w_quality - 0.35).abs() < 1e-10, "w_quality default changed");
+        assert!((w.w_firing - 0.15).abs() < 1e-10, "w_firing default changed");
+        assert!((w.saturation_base - 15.0).abs() < 1e-10, "saturation_base default changed");
+        assert!((w.lr_quantified - 2.5).abs() < 1e-10, "lr_quantified default changed");
+        assert!((w.lr_evidence - 2.0).abs() < 1e-10, "lr_evidence default changed");
+        assert!((w.lr_citation - 1.8).abs() < 1e-10, "lr_citation default changed");
+        assert!((w.lr_alignment - 1.5).abs() < 1e-10, "lr_alignment default changed");
+        assert!((w.lr_claim - 1.3).abs() < 1e-10, "lr_claim default changed");
+    }
+
+    #[test]
+    fn test_score_weights_roundtrip() {
+        let w = ScoreWeights::default();
+        let params = w.to_params();
+        let w2 = ScoreWeights::from_params(&params);
+        assert!((w2.w_saturation - w.w_saturation).abs() < 1e-10);
+        assert!((w2.saturation_base - w.saturation_base).abs() < 1e-10);
+        assert!((w2.lr_claim - w.lr_claim).abs() < 1e-10);
     }
 }

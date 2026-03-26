@@ -113,6 +113,51 @@ pub struct EvalHistoryInput {
     pub dir: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdsFeedInput {
+    /// Agent ID (from eval_spawn).
+    pub agent_id: String,
+    /// Criterion ID to feed evidence into.
+    pub criterion_id: String,
+    /// Structured evidence items extracted by the subagent.
+    pub evidence: Vec<EdsFeedEvidence>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdsFeedEvidence {
+    /// Source identifier for audit trail.
+    pub source_id: String,
+    /// Evidence type: "claim", "evidence", "quantified_data", "citation", "alignment".
+    pub evidence_type: String,
+    /// Strength/quality of this evidence (0.0-1.0).
+    pub strength: f64,
+    /// The evidence text (for audit trail).
+    pub text: String,
+    /// Why this strength was assigned (e.g. "contains specific statistic with source citation").
+    /// Stored for audit trail, not used in scoring.
+    pub justification: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdsScoreInput {
+    /// Agent ID. Returns scores for this agent's SNN network.
+    pub agent_id: String,
+    /// Optional criterion ID. If omitted, returns scores for all criteria.
+    pub criterion_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdsChallengeInput {
+    /// Agent ID of the challenger.
+    pub challenger_agent_id: String,
+    /// Agent ID of the target whose score is being challenged.
+    pub target_agent_id: String,
+    /// Criterion being challenged.
+    pub criterion_id: String,
+    /// Counter-evidence supporting the challenge.
+    pub counter_evidence: Vec<EdsFeedEvidence>,
+}
+
 // ============================================================================
 // Session state
 // ============================================================================
@@ -127,6 +172,8 @@ struct SessionState {
     rounds: Vec<DebateRound>,
     current_round: u32,
     intent: String,
+    snn_networks: Vec<crate::snn::AgentNetwork>,
+    snn_config: crate::snn::SNNConfig,
 }
 
 impl SessionState {
@@ -139,6 +186,8 @@ impl SessionState {
             rounds: Vec::new(),
             current_round: 0,
             intent: String::new(),
+            snn_networks: Vec::new(),
+            snn_config: crate::snn::SNNConfig::default(),
         }
     }
 }
@@ -417,11 +466,18 @@ impl EvalServer {
         session.agents = agents;
         session.current_round = 1;
 
+        // Create SNN networks for each agent
+        let snn_networks: Vec<crate::snn::AgentNetwork> = session.agents.iter()
+            .map(|a| crate::snn::AgentNetwork::new(a, &framework.criteria))
+            .collect();
+        session.snn_networks = snn_networks;
+
         serde_json::json!({
             "ok": true,
             "agent_count": session.agents.len(),
             "agents": agent_summary,
             "triples_loaded": total_triples,
+            "snn_neurons_per_agent": framework.criteria.len(),
         })
         .to_string()
     }
@@ -476,6 +532,7 @@ impl EvalServer {
 
     #[tool(name = "eval_record_score", description = "Record a score from an agent for a criterion. Stores in the graph store.")]
     async fn eval_record_score(&self, Parameters(input): Parameters<EvalRecordScoreInput>) -> String {
+        let evidence_refs = input.evidence_used.clone();
         let score = Score {
             agent_id: input.agent_id.clone(),
             criterion_id: input.criterion_id.clone(),
@@ -489,6 +546,41 @@ impl EvalServer {
 
         match crate::scoring::record_score(&self.graph, &score) {
             Ok(triples) => {
+                // Auto-feed evidence into EDS if networks exist
+                let eds_spikes_fed = {
+                    let mut session = self.session.lock().unwrap();
+                    let config = session.snn_config.clone();
+                    if let Some(network) = session.snn_networks.iter_mut()
+                        .find(|n| n.agent_id == input.agent_id)
+                    {
+                        if let Some(neuron) = network.neurons.iter_mut()
+                            .find(|n| n.criterion_id == input.criterion_id)
+                        {
+                            for (i, ev_ref) in evidence_refs.iter().enumerate() {
+                                if i > 0 && i as u32 % config.refractory_period == 0 {
+                                    neuron.clear_refractory();
+                                }
+                                neuron.receive_spike(
+                                    crate::snn::Spike {
+                                        source_id: ev_ref.clone(),
+                                        strength: 0.7,
+                                        spike_type: crate::snn::SpikeType::Evidence,
+                                        timestep: i as u32 % config.timesteps,
+                                        source_text: None,
+                                        justification: None,
+                                    },
+                                    &config,
+                                );
+                            }
+                            evidence_refs.len()
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                };
+
                 serde_json::json!({
                     "ok": true,
                     "agent_id": input.agent_id,
@@ -496,6 +588,7 @@ impl EvalServer {
                     "score": input.score,
                     "round": input.round,
                     "triples_inserted": triples,
+                    "eds_spikes_fed": eds_spikes_fed,
                 })
                 .to_string()
             }
@@ -944,6 +1037,269 @@ impl EvalServer {
             Err(e) => format!(r#"{{"error":"{}"}}"#, e),
         }
     }
+
+    // ── EDS Feed ───────────────────────────────────────────────────────────
+
+    #[tool(name = "eds_feed", description = "Push structured evidence into the SNN for a specific agent and criterion. Returns updated neuron state.")]
+    async fn eds_feed(&self, Parameters(input): Parameters<EdsFeedInput>) -> String {
+        let mut session = self.session.lock().unwrap();
+        let config = session.snn_config.clone();
+
+        let network = match session.snn_networks.iter_mut()
+            .find(|n| n.agent_id == input.agent_id)
+        {
+            Some(n) => n,
+            None => return format!(
+                r#"{{"error":"No SNN network for agent_id '{}'. Call eval_spawn first."}}"#,
+                input.agent_id
+            ),
+        };
+
+        let neuron = match network.neurons.iter_mut()
+            .find(|n| n.criterion_id == input.criterion_id)
+        {
+            Some(n) => n,
+            None => return format!(
+                r#"{{"error":"No neuron for criterion_id '{}'"}}"#,
+                input.criterion_id
+            ),
+        };
+
+        for (i, ev) in input.evidence.iter().enumerate() {
+            let spike_type = match ev.evidence_type.as_str() {
+                "quantified_data" => crate::snn::SpikeType::QuantifiedData,
+                "evidence" => crate::snn::SpikeType::Evidence,
+                "citation" => crate::snn::SpikeType::Citation,
+                "alignment" => crate::snn::SpikeType::Alignment,
+                _ => crate::snn::SpikeType::Claim,
+            };
+
+            if i > 0 && i as u32 % config.refractory_period == 0 {
+                neuron.clear_refractory();
+            }
+
+            neuron.receive_spike(
+                crate::snn::Spike {
+                    source_id: ev.source_id.clone(),
+                    strength: ev.strength.clamp(0.0, 1.0),
+                    spike_type,
+                    timestep: i as u32 % config.timesteps,
+                    source_text: Some(ev.text.clone()),
+                    justification: ev.justification.clone(),
+                },
+                &config,
+            );
+        }
+
+        serde_json::json!({
+            "ok": true,
+            "agent_id": input.agent_id,
+            "criterion_id": input.criterion_id,
+            "spikes_fed": input.evidence.len(),
+            "membrane_potential": neuron.membrane_potential,
+            "fire_count": neuron.fire_count,
+            "total_spikes": neuron.total_spikes,
+            "bayesian_confidence": neuron.bayesian_confidence,
+            "refractory": neuron.refractory,
+        })
+        .to_string()
+    }
+
+    // ── EDS Score ─────────────────────────────────────────────────────────
+
+    #[tool(name = "eds_score", description = "Get SNN scores for an agent. Returns score, confidence, firing rate, and low-confidence criteria.")]
+    async fn eds_score(&self, Parameters(input): Parameters<EdsScoreInput>) -> String {
+        let session = self.session.lock().unwrap();
+
+        let network = match session.snn_networks.iter()
+            .find(|n| n.agent_id == input.agent_id)
+        {
+            Some(n) => n,
+            None => return format!(
+                r#"{{"error":"No SNN network for agent_id '{}'"}}"#,
+                input.agent_id
+            ),
+        };
+
+        let framework = match &session.framework {
+            Some(f) => f,
+            None => return r#"{"error":"No framework loaded"}"#.to_string(),
+        };
+
+        let scores = network.compute_scores(&framework.criteria, &session.snn_config);
+
+        let filtered: Vec<_> = if let Some(ref cid) = input.criterion_id {
+            scores.into_iter().filter(|(id, _)| id == cid).collect()
+        } else {
+            scores
+        };
+
+        let score_details: Vec<serde_json::Value> = filtered.iter().map(|(cid, s)| {
+            let spike_audit: Vec<serde_json::Value> = if let Some(log) = network.spike_log_for(cid) {
+                log.iter().map(|s| serde_json::json!({
+                    "source_id": s.source_id,
+                    "strength": s.strength,
+                    "type": format!("{:?}", s.spike_type),
+                    "text": s.source_text,
+                    "justification": s.justification,
+                })).collect()
+            } else {
+                vec![]
+            };
+            serde_json::json!({
+                "criterion_id": cid,
+                "snn_score": s.snn_score,
+                "confidence": s.confidence,
+                "bayesian_confidence": s.bayesian_confidence,
+                "firing_rate": s.firing_rate,
+                "evidence_count": s.evidence_count,
+                "spike_quality": s.spike_quality,
+                "grounded": s.grounded,
+                "falsification_checked": s.falsification_checked,
+                "confidence_interval": [s.confidence_interval.0, s.confidence_interval.1],
+                "explanation": s.explanation,
+                "spike_audit": spike_audit,
+            })
+        }).collect();
+
+        let low_confidence: Vec<String> = filtered.iter()
+            .filter(|(_, s)| s.bayesian_confidence < 0.6 && s.grounded)
+            .map(|(cid, _)| cid.clone())
+            .collect();
+
+        serde_json::json!({
+            "ok": true,
+            "agent_id": input.agent_id,
+            "criteria_scored": score_details.len(),
+            "scores": score_details,
+            "low_confidence_criteria": low_confidence,
+        })
+        .to_string()
+    }
+
+    // ── EDS Challenge ─────────────────────────────────────────────────────
+
+    #[tool(name = "eds_challenge", description = "Challenge another agent's SNN score on a criterion. Applies lateral inhibition and feeds counter-evidence.")]
+    async fn eds_challenge(&self, Parameters(input): Parameters<EdsChallengeInput>) -> String {
+        let mut session = self.session.lock().unwrap();
+        let config = session.snn_config.clone();
+        let framework = match &session.framework {
+            Some(f) => f.clone(),
+            None => return r#"{"error":"No framework loaded"}"#.to_string(),
+        };
+
+        let target_network = match session.snn_networks.iter_mut()
+            .find(|n| n.agent_id == input.target_agent_id)
+        {
+            Some(n) => n,
+            None => return format!(
+                r#"{{"error":"No SNN network for target agent '{}'"}}"#,
+                input.target_agent_id
+            ),
+        };
+
+        let avg_strength = if input.counter_evidence.is_empty() {
+            0.0
+        } else {
+            input.counter_evidence.iter().map(|e| e.strength).sum::<f64>()
+                / input.counter_evidence.len() as f64
+        };
+        let inhibition_amount = avg_strength * config.inhibition_strength;
+
+        target_network.inhibit(&input.criterion_id, inhibition_amount);
+
+        let scores = target_network.compute_scores(&framework.criteria, &config);
+        let updated = scores.iter()
+            .find(|(cid, _)| *cid == input.criterion_id)
+            .map(|(_, s)| serde_json::json!({
+                "snn_score": s.snn_score,
+                "confidence": s.confidence,
+                "bayesian_confidence": s.bayesian_confidence,
+            }));
+
+        serde_json::json!({
+            "ok": true,
+            "challenger": input.challenger_agent_id,
+            "target": input.target_agent_id,
+            "criterion_id": input.criterion_id,
+            "inhibition_applied": inhibition_amount,
+            "counter_evidence_count": input.counter_evidence.len(),
+            "updated_score": updated,
+        })
+        .to_string()
+    }
+
+    // ── EDS Consensus ────────────────────────────────────────────────────
+
+    #[tool(name = "eds_consensus", description = "Check if agents' SNN scores have converged. Returns drift velocity and per-criterion variance.")]
+    async fn eds_consensus(&self) -> String {
+        let session = self.session.lock().unwrap();
+
+        let framework = match &session.framework {
+            Some(f) => f,
+            None => return r#"{"error":"No framework loaded"}"#.to_string(),
+        };
+
+        if session.snn_networks.is_empty() {
+            return r#"{"error":"No SNN networks. Call eval_spawn first."}"#.to_string();
+        }
+
+        let config = &session.snn_config;
+
+        let mut criterion_stats: Vec<serde_json::Value> = Vec::new();
+        let mut total_variance = 0.0;
+
+        for criterion in &framework.criteria {
+            let mut scores_for_criterion: Vec<f64> = Vec::new();
+
+            for network in &session.snn_networks {
+                let scores = network.compute_scores(&framework.criteria, config);
+                if let Some((_, s)) = scores.iter().find(|(cid, _)| *cid == criterion.id) {
+                    scores_for_criterion.push(s.snn_score);
+                }
+            }
+
+            if scores_for_criterion.len() < 2 {
+                continue;
+            }
+
+            let mean = scores_for_criterion.iter().sum::<f64>()
+                / scores_for_criterion.len() as f64;
+            let variance = scores_for_criterion.iter()
+                .map(|s| (s - mean).powi(2))
+                .sum::<f64>() / scores_for_criterion.len() as f64;
+
+            total_variance += variance;
+
+            criterion_stats.push(serde_json::json!({
+                "criterion_id": criterion.id,
+                "criterion_title": criterion.title,
+                "mean_score": mean,
+                "variance": variance,
+                "agent_scores": scores_for_criterion,
+                "converged": variance < 1.0,
+            }));
+        }
+
+        let avg_variance = if criterion_stats.is_empty() {
+            0.0
+        } else {
+            total_variance / criterion_stats.len() as f64
+        };
+
+        let all_converged = criterion_stats.iter()
+            .all(|c| c["converged"].as_bool().unwrap_or(false));
+
+        serde_json::json!({
+            "ok": true,
+            "agent_count": session.snn_networks.len(),
+            "criteria_count": criterion_stats.len(),
+            "average_variance": avg_variance,
+            "converged": all_converged,
+            "per_criterion": criterion_stats,
+        })
+        .to_string()
+    }
 }
 
 // ============================================================================
@@ -1117,5 +1473,16 @@ mod tests {
         assert!(names.contains(&"eval_whatif".to_string()));
         assert!(names.contains(&"eval_report".to_string()));
         assert!(names.contains(&"eval_predict".to_string()));
+        assert!(names.contains(&"eds_feed".to_string()));
+        assert!(names.contains(&"eds_score".to_string()));
+        assert!(names.contains(&"eds_consensus".to_string()));
+        assert!(names.contains(&"eds_challenge".to_string()));
+    }
+
+    #[test]
+    fn test_session_has_snn_networks() {
+        let state = SessionState::new();
+        assert!(state.snn_networks.is_empty());
+        assert_eq!(state.snn_config.timesteps, 10);
     }
 }
