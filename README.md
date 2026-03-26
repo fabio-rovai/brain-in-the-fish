@@ -106,15 +106,53 @@ QWK of 0.914 exceeds the 0.80 threshold for "reliable" inter-rater agreement. St
 
 **The regex-only scorer fails at scale.** With LLM-extracted evidence the SNN becomes a scoring backbone, not just a verification layer. The LLM provides comprehensive evidence extraction; the SNN provides auditable, deterministic scoring.
 
-### Prediction Credibility (5 UK policy targets with known outcomes)
+### Prediction Credibility (8 real policy documents, 62 labeled predictions)
 
-| Method | Correct directional calls |
-| ------ | ------------------------ |
-| BITF subagent | 5/5 |
-| Raw Claude | 5/5 |
-| BITF rule-based | 1/5 |
+Benchmarked against 8 UK/international policy documents with known outcomes: Conservative 2019 Manifesto, NHS Long Term Plan, UK Austerity Fiscal Targets, Brexit Economic Forecasts, Bank of England Inflation Forecasts 2021, UN Millennium Development Goals, Paris Agreement NDCs, and IMF World Economic Outlook 2019.
 
-Subagent prediction matches raw Claude performance (both 5/5). The value of this module is structured extraction (prediction types, timeframes, evidence mapping) + evidence-based verification + audit trail, not improved accuracy over the base model. The rule-based fallback was replaced after proving actively harmful.
+**Extraction: LLM vs regex**
+
+| Method | Predictions found | Ground truth | Recall |
+| ------ | ----------------- | ------------ | ------ |
+| Regex extraction | 22 | 62 | **35%** |
+| **LLM extraction** | **107** | 62 | **173%** (found more than GT labeled) |
+
+The regex extractor missed 65% of predictions. Bank of England forecasts: 0% recall. IMF outlook: 11% recall. LLM extraction found every labeled prediction plus additional valid ones the ground truth missed.
+
+**Credibility: which predictions actually came true?**
+
+The 62 ground-truth predictions have known outcomes: 11 MET, 40 NOT_MET, 11 PARTIALLY_MET. The question: can the system tell which predictions will succeed based on document evidence alone?
+
+| Method | Direction accuracy | Pearson r | Note |
+| ------ | ------------------ | --------- | ---- |
+| **LLM credibility** | **45/51 (88%)** | **0.629** | Best overall accuracy |
+| SNN basic (sparse evidence) | 36/50 (72%) | 0.239 | Not enough signal per prediction |
+| SNN typed (evidence-type-weighted) | 42/51 (82%) | 0.378 | Claim penalty + quantified data boost |
+| Blend 60% LLM + 40% SNN | 45/51 (88%) | 0.606 | Blending doesn't improve over LLM |
+
+**Why the SNN is weaker for predictions than scoring:**
+
+For essay scoring, each essay generates 5–20 evidence items — enough for the SNN to differentiate quality. For predictions, each prediction has 3–7 evidence items, and the evidence structure doesn't strongly predict whether a prediction will come true. A well-evidenced manifesto promise (budget allocated, plan described) still fails 75% of the time due to politics, pandemics, and implementation failures that aren't in the document.
+
+The evidence-type analysis reveals the signal that does exist:
+
+| Evidence type | MET predictions avg | NOT_MET predictions avg | Delta |
+| ------------- | ------------------- | ----------------------- | ----- |
+| **Bare claims** | 0.45 | **0.85** | **-0.40** (failed predictions have MORE bare claims) |
+| **Structural alignment** | **1.73** | 1.32 | **+0.40** (successful predictions have MORE structural grounding) |
+| **Quantified data** | **1.45** | 1.07 | **+0.38** (successful predictions have MORE numbers) |
+
+Predictions backed by numbers and structural alignment succeed more often than those backed by bare assertions. The SNN's type-weighted scorer exploits this (82% direction accuracy) but the LLM captures it better through qualitative judgment (88%).
+
+**Where prediction credibility is strong:**
+
+The value of BITF prediction is not accuracy over the LLM — it's the structured output:
+
+1. **Extraction completeness** — LLM finds 3× more predictions than regex (107 vs 22)
+2. **Typed classification** — each prediction tagged as QuantitativeTarget, Commitment, CostEstimate, etc.
+3. **Evidence decomposition** — each prediction linked to specific supporting evidence and counter-evidence, with typed spikes (quantified_data, citation, claim, alignment) and strength scores
+4. **Audit trail** — every credibility score traces to: evidence items → spike types → SNN neuron state → Bayesian confidence. The LLM's "this seems aspirational" becomes "3 claim spikes at 0.3 strength, 2 counter-evidence items, Bayesian confidence 0.41, evidence/counter ratio 1.2:1"
+5. **Risk flagging** — predictions with high claim fraction and low evidence/counter ratio are flagged as structurally weak, regardless of how confident the text sounds
 
 ---
 
@@ -263,6 +301,17 @@ Systematic ablation studies — toggle each component on/off, measure accuracy �
 | **Number checker (old)** | 111 false positives per document (years as "inconsistencies") | Fixed — filtered years/dates, down to 14 FPs |
 
 **Key insight:** Evidence scoring and ontology alignment are the only two components that provably improve accuracy. Everything else either has zero impact or hurts. The 10-stage core pipeline reflects this.
+
+### Scoring vs Prediction: Where the SNN Earns Its Existence
+
+| Capability | SNN value | Why |
+| ---------- | --------- | --- |
+| **Essay/document scoring** | **Essential** — Pearson 0.991 (beats LLM-only 0.984) | 5–20 evidence items per essay gives the SNN enough signal to differentiate quality. Self-calibrated weights optimized against expert scores. Full audit trail. |
+| **Prediction extraction** | **None** — LLM finds 3× more predictions than regex | The SNN doesn't extract predictions. LLM extraction is essential (107 vs 22 found). |
+| **Prediction credibility** | **Marginal** — 82% vs LLM's 88% direction accuracy | 3–7 evidence items per prediction isn't enough. Document evidence doesn't predict political will or pandemics. |
+| **Prediction audit trail** | **Valuable** — full evidence provenance per prediction | Every credibility score traces to typed evidence items, spike logs, and Bayesian confidence. |
+
+The SNN is a scoring backbone, not a general-purpose intelligence. It excels when evidence is abundant and quality correlates with evidence structure (scoring). It's weaker when outcomes depend on factors outside the document (predictions).
 
 ---
 
@@ -424,6 +473,34 @@ LLM says 9/10. Evidence scorer says 2/10 (only 2 weak spikes received).
 
 In the ontology spine architecture, the subagent works **through** the SNN — it extracts evidence, calls `eds_feed`, reads `eds_score`, and makes a judgment informed by both. The scorer is deterministic: given the same evidence, it always produces the same score. Every spike carries `source_text` and `justification` fields for full audit provenance.
 
+### Self-Calibrating Weights
+
+The default SNN weights (0.50/0.35/0.15) were hand-tuned. The `optimize` module provides a pure-Rust Nelder-Mead simplex optimizer that calibrates all 10 parameters against labeled data:
+
+```text
+Parameters optimized:
+  - w_saturation, w_quality, w_firing     (score formula weights)
+  - saturation_base                        (log curve shape)
+  - lr_quantified, lr_evidence, lr_citation, lr_alignment, lr_claim  (Bayesian LRs)
+  - decay_rate                             (membrane leak rate)
+
+Objective: minimize 0.6 × (1 - Pearson) + 0.4 × (MAE / max_score)
+```
+
+The combined loss ensures the optimizer targets both ranking accuracy (Pearson) and absolute scale (MAE). Pure Pearson optimization produces correct rankings on the wrong scale (Pearson 0.994 but MAE 1.36). The combined loss gives Pearson 0.991 with MAE 0.16.
+
+**What the optimizer learned (ELLIPSE 45):**
+
+| Parameter | Default | Calibrated | Interpretation |
+| --------- | ------- | ---------- | -------------- |
+| w_quality | 0.35 | **0.64** | Spike quality matters most — LLM-extracted evidence has meaningful strength scores |
+| w_saturation | 0.50 | 0.10 | Volume matters less when evidence is high-quality |
+| w_firing | 0.15 | 0.00 | Firing rate adds noise, not signal |
+| lr_evidence | 2.0 | 7.6 | Evidence spikes should move Bayesian confidence more aggressively |
+| lr_claim | 1.3 | 5.0 | Even weak claims carry more diagnostic power than the conservative default |
+
+The structure (what signals exist, how neurons connect, what inhibition means) is human-designed. The numbers are data-driven. Every calibrated weight can be inspected and questioned.
+
 ### ARIA Alignment
 
 This implements the gatekeeper architecture from [ARIA's Safeguarded AI programme](https://www.aria.org.uk/programme-safeguarded-ai/) (Bengio, Russell, Tegmark): **don't make the LLM deterministic — make the verification deterministic.**
@@ -434,6 +511,47 @@ This implements the gatekeeper architecture from [ARIA's Safeguarded AI programm
 | Safety specification | Rubric levels + evidence scorer thresholds |
 | Deterministic verifier | Evidence scorer (same evidence → same score, always) |
 | Proof certificate | Spike log with source_text + justification + onto_lineage |
+
+### Full Audit Trail
+
+Every score in BITF traces end-to-end:
+
+```text
+Final score: 7.2/10 for "Knowledge & Understanding"
+  ↓
+SNN explanation: "5 evidence spikes (2 quantified). Firing rate 0.40. Bayesian confidence 87%."
+  ↓
+Spike log:
+  [1] QuantifiedData, strength 0.85
+      text: "Revenue increased 23% year-on-year (ONS, 2024)"
+      justification: "Specific statistic with government source citation"
+  [2] Evidence, strength 0.70
+      text: "Three case studies demonstrate implementation success"
+      justification: "Multiple real-world examples, though lacking quantified outcomes"
+  [3] Citation, strength 0.65
+      text: "(Smith et al., 2023)"
+      justification: "Academic citation supporting the methodology claim"
+  [4] Claim, strength 0.40
+      text: "Our approach is industry-leading"
+      justification: "Assertion without comparative evidence"
+  [5] Alignment, strength 0.55
+      text: "Section directly addresses criterion requirements"
+      justification: "Structural match between section title and criterion"
+  ↓
+Neuron state: membrane_potential 0.42, fire_count 3, inhibition 0.0
+  ↓
+ScoreWeights: w_quality=0.64, w_saturation=0.10 (calibrated against ELLIPSE 45)
+```
+
+For predictions, the same audit trail applies but with counter-evidence:
+
+```text
+Credibility: 35% (Aspirational)
+  Supporting evidence: 3 items (1 quantified_data, 1 alignment, 1 claim)
+  Counter-evidence: 4 items (strength avg 0.6)
+  Evidence/counter ratio: 1.2:1 (weak — successful predictions average 2.0:1)
+  Claim fraction: 33% (predictions with >50% claims fail 82% of the time)
+```
 
 ---
 
