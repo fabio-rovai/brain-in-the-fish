@@ -27,9 +27,12 @@ pub struct BenchmarkResults {
     pub pearson_r: f64,
     pub qwk: f64,
     pub mae: f64,
+    pub nmae: f64,
     pub rmse: f64,
     pub mean_predicted: f64,
     pub mean_actual: f64,
+    pub hallucination_count: usize,
+    pub hallucination_rate: f64,
     pub config: BenchmarkConfig,
 }
 
@@ -235,15 +238,94 @@ pub fn ablation_configs() -> Vec<BenchmarkConfig> {
 /// Format results as a markdown table.
 pub fn results_table(results: &[BenchmarkResults]) -> String {
     let mut t = String::from(
-        "| Config | N | Pearson r | QWK | MAE | RMSE |\n|---|---|---|---|---|---|\n",
+        "| Config | N | Pearson r | QWK | MAE | NMAE | RMSE | Halluc. | Halluc. Rate |\n|---|---|---|---|---|---|---|---|---|\n",
     );
     for r in results {
         t.push_str(&format!(
-            "| {} | {} | {:.3} | {:.3} | {:.2} | {:.2} |\n",
-            r.name, r.samples, r.pearson_r, r.qwk, r.mae, r.rmse
+            "| {} | {} | {:.3} | {:.3} | {:.2} | {:.3} | {:.2} | {} | {:.1}% |\n",
+            r.name, r.samples, r.pearson_r, r.qwk, r.mae, r.nmae, r.rmse,
+            r.hallucination_count, r.hallucination_rate * 100.0
         ));
     }
     t
+}
+
+/// Compute per-group (per-rubric) benchmark results from samples and predictions.
+/// Groups samples by rubric field, computes metrics for each group.
+pub fn per_group_results(
+    samples: &[LabeledSample],
+    predicted: &[f64],
+) -> Vec<BenchmarkResults> {
+    use std::collections::BTreeMap;
+
+    assert_eq!(samples.len(), predicted.len());
+
+    // Group indices by rubric
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, sample) in samples.iter().enumerate() {
+        let key = if sample.rubric.is_empty() {
+            "default".to_string()
+        } else {
+            sample.rubric.clone()
+        };
+        groups.entry(key).or_default().push(i);
+    }
+
+    let mut results = Vec::new();
+    for (rubric, indices) in &groups {
+        if indices.len() < 2 {
+            continue;
+        }
+        let pred: Vec<f64> = indices.iter().map(|&i| predicted[i]).collect();
+        let actual: Vec<f64> = indices.iter().map(|&i| samples[i].expert_score).collect();
+        let max_score_val = indices
+            .iter()
+            .map(|&i| samples[i].max_score)
+            .fold(0.0f64, f64::max);
+        let score_range = max_score_val; // min is always 0
+
+        let pearson_r = pearson_correlation(&pred, &actual);
+        let qwk = quadratic_weighted_kappa(&pred, &actual, 0.0, max_score_val);
+        let mae_val = mean_absolute_error(&pred, &actual);
+        let nmae = if score_range > 0.0 {
+            mae_val / score_range
+        } else {
+            0.0
+        };
+        let rmse_val = rmse(&pred, &actual);
+        let mean_predicted = pred.iter().sum::<f64>() / pred.len() as f64;
+        let mean_actual = actual.iter().sum::<f64>() / actual.len() as f64;
+
+        // Hallucination detection
+        let mut hallucination_count = 0usize;
+        for &i in indices {
+            let ms = samples[i].max_score;
+            if ms > 0.0 {
+                let normalized_pred = predicted[i] / ms;
+                let normalized_actual = samples[i].expert_score / ms;
+                if (normalized_pred - normalized_actual).abs() > 0.3 {
+                    hallucination_count += 1;
+                }
+            }
+        }
+        let hallucination_rate = hallucination_count as f64 / indices.len() as f64;
+
+        results.push(BenchmarkResults {
+            name: format!("rubric:{}", rubric),
+            samples: indices.len(),
+            pearson_r,
+            qwk,
+            mae: mae_val,
+            nmae,
+            rmse: rmse_val,
+            mean_predicted,
+            mean_actual,
+            hallucination_count,
+            hallucination_rate,
+            config: BenchmarkConfig::default(),
+        });
+    }
+    results
 }
 
 /// Create a small synthetic benchmark dataset for testing.
@@ -409,13 +491,18 @@ mod tests {
             pearson_r: 0.85,
             qwk: 0.78,
             mae: 0.5,
+            nmae: 0.05,
             rmse: 0.7,
             mean_predicted: 6.0,
             mean_actual: 6.2,
+            hallucination_count: 2,
+            hallucination_rate: 0.2,
             config: BenchmarkConfig::default(),
         }];
         let table = results_table(&results);
         assert!(table.contains("0.850"));
         assert!(table.contains("0.780"));
+        assert!(table.contains("0.050"));
+        assert!(table.contains("20.0%"));
     }
 }

@@ -73,6 +73,10 @@ enum Commands {
         #[arg(long)]
         ablation: bool,
 
+        /// Run benchmark across all available datasets for cross-domain comparison
+        #[arg(long)]
+        multi_dataset: bool,
+
         /// Output directory for results
         #[arg(long)]
         output: Option<PathBuf>,
@@ -138,8 +142,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Graph { path } => {
             run_graph(path)
         }
-        Commands::Benchmark { dataset, ablation, output } => {
-            run_benchmark(dataset, ablation, output)
+        Commands::Benchmark { dataset, ablation, multi_dataset, output } => {
+            run_benchmark(dataset, ablation, multi_dataset, output)
         }
         Commands::History { dir } => {
             run_history(dir)
@@ -907,6 +911,71 @@ fn extract_first_phrase(text: &str, max_words: usize) -> String {
 fn run_benchmark(
     dataset_path: Option<PathBuf>,
     ablation: bool,
+    multi_dataset: bool,
+    output: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    // Multi-dataset mode: run across all available datasets and compare
+    if multi_dataset {
+        let data_dir = PathBuf::from("data");
+        let dataset_names = ["ellipse-sample.json", "asap-set1.json", "asap-stratified-100.json"];
+        let mut cross_results: Vec<benchmark::BenchmarkResults> = Vec::new();
+
+        for name in &dataset_names {
+            let path = data_dir.join(name);
+            if !path.exists() {
+                println!("Skipping {} (not found)", path.display());
+                continue;
+            }
+            println!("\n========== Dataset: {} ==========", name);
+            let result = run_single_benchmark(&path, false)?;
+            for mut r in result {
+                r.name = format!("{} ({})", r.name, name);
+                cross_results.push(r);
+            }
+        }
+
+        if cross_results.is_empty() {
+            println!("No datasets found in data/ directory. Running synthetic benchmark instead.");
+            return run_single_benchmark_full(None, ablation, output);
+        }
+
+        println!("\n\n===== Cross-Dataset Comparison =====\n");
+        println!("{}", benchmark::results_table(&cross_results));
+
+        if let Some(output_dir) = output {
+            std::fs::create_dir_all(&output_dir)?;
+            let results_path = output_dir.join("multi-dataset-results.json");
+            std::fs::write(&results_path, serde_json::to_string_pretty(&cross_results)?)?;
+            println!("Results saved to: {}", results_path.display());
+        }
+
+        return Ok(());
+    }
+
+    run_single_benchmark_full(dataset_path, ablation, output)
+}
+
+/// Run benchmark on a single dataset path, returning results (no output/ablation).
+fn run_single_benchmark(
+    dataset_path: &std::path::Path,
+    _ablation: bool,
+) -> anyhow::Result<Vec<benchmark::BenchmarkResults>> {
+    let samples = benchmark::load_dataset(dataset_path)?;
+    println!("Loaded {} samples", samples.len());
+
+    let configs = vec![benchmark::BenchmarkConfig::default()];
+    let mut all_results = Vec::new();
+
+    for config in &configs {
+        let (result, _predicted) = run_benchmark_config(&samples, config)?;
+        all_results.push(result);
+    }
+    Ok(all_results)
+}
+
+fn run_single_benchmark_full(
+    dataset_path: Option<PathBuf>,
+    ablation: bool,
     output: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let samples = if let Some(ref path) = dataset_path {
@@ -926,189 +995,27 @@ fn run_benchmark(
     };
 
     let mut all_results = Vec::new();
+    let mut last_predicted: Vec<f64> = Vec::new();
 
     for config in &configs {
-        println!("--- Config: {} ---", config.label);
-        let mut predicted_scores: Vec<f64> = Vec::new();
-        let mut actual_scores: Vec<f64> = Vec::new();
-
-        for sample in &samples {
-            let mut doc = EvalDocument::new(
-                format!("Benchmark: {}", sample.id),
-                "essay".into(),
-            );
-            let word_count = sample.text.split_whitespace().count() as u32;
-            let mut section = Section {
-                id: uuid::Uuid::new_v4().to_string(),
-                title: sample.id.clone(),
-                text: sample.text.clone(),
-                word_count,
-                page_range: None,
-                claims: vec![],
-                evidence: vec![],
-                subsections: vec![],
-            };
-            // Use hybrid extraction for better evidence detection
-            let extracted = extract::extract_all(&section.text);
-            let (claims, evidence) = extract::to_claims_and_evidence(&extracted);
-            if !claims.is_empty() || !evidence.is_empty() {
-                section.claims = claims;
-                section.evidence = evidence;
-            } else {
-                extract_claims_and_evidence(&mut section);
-            }
-            doc.sections.push(section);
-            doc.total_word_count = Some(word_count);
-
-            let intent = if sample.domain.is_empty() {
-                "academic essay evaluation".to_string()
-            } else {
-                format!("{} essay evaluation", sample.domain)
-            };
-            let framework = criteria::framework_for_intent(&intent);
-
-            let (alignments, _gaps) = if config.use_ontology_alignment {
-                alignment::align_sections_to_criteria(&doc, &framework)
-            } else {
-                (vec![], vec![])
-            };
-
-            let validation_signals = if config.use_validation {
-                validate::validate_document(&doc, &framework)
-            } else {
-                vec![]
-            };
-
-            let agents = agent::spawn_panel(&intent, &framework);
-
-            let predicted = if config.use_snn {
-                let snn_config = snn::SNNConfig::default();
-                let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
-                for agent_item in &agents {
-                    let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-                    network.feed_evidence(&doc, &alignments, &snn_config);
-                    snn_networks.push(network);
-                }
-
-                if config.use_validation {
-                    for signal in &validation_signals {
-                        if signal.spike_effect.abs() > 0.01 {
-                            for network in &mut snn_networks {
-                                for neuron in &mut network.neurons {
-                                    let matches = signal.criterion_id.is_none()
-                                        || signal.criterion_id.as_deref() == Some(&neuron.criterion_id);
-                                    if matches {
-                                        neuron.receive_spike(
-                                            snn::Spike {
-                                                source_id: signal.id.clone(),
-                                                strength: signal.spike_effect.abs(),
-                                                spike_type: if signal.spike_effect > 0.0 {
-                                                    snn::SpikeType::Evidence
-                                                } else {
-                                                    snn::SpikeType::Claim
-                                                },
-                                                timestep: 0,
-                                                source_text: None,
-                                                justification: None,
-                                            },
-                                            &snn_config,
-                                        );
-                                        if signal.spike_effect < 0.0 {
-                                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.2); // gentler inhibition
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let mut round1_scores: Vec<Score> = Vec::new();
-                for network in &snn_networks {
-                    let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
-                    for (criterion_id, snn_score) in &snn_scores {
-                        let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
-                        let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
-                        round1_scores.push(Score {
-                            agent_id: network.agent_id.clone(),
-                            criterion_id: criterion_id.clone(),
-                            score: snn_score.snn_score,
-                            max_score,
-                            round: 1,
-                            justification: snn_score.explanation.clone(),
-                            evidence_used: vec![],
-                            gaps_identified: vec![],
-                        });
-                    }
-                }
-
-                let final_scores = if config.use_debate && round1_scores.len() > 1 {
-                    let mut current_scores = round1_scores;
-                    for _round_num in 2..=5 {
-                        let disagreements = debate::find_disagreements(&current_scores, 2.0);
-                        if disagreements.is_empty() { break; }
-                        let mut new_scores = current_scores.clone();
-                        for disagreement in &disagreements {
-                            if let Some(target_score) = new_scores.iter_mut().find(|s| {
-                                s.agent_id == disagreement.agent_b_id
-                                    && s.criterion_id == disagreement.criterion_id
-                            }) {
-                                let challenger_val = current_scores.iter()
-                                    .find(|s| s.agent_id == disagreement.agent_a_id
-                                        && s.criterion_id == disagreement.criterion_id)
-                                    .map(|s| s.score)
-                                    .unwrap_or(target_score.score);
-                                let adjustment = (challenger_val - target_score.score) * 0.3;
-                                target_score.score = (target_score.score + adjustment)
-                                    .min(target_score.max_score).max(0.0);
-                            }
-                        }
-                        let drift = debate::calculate_drift_velocity(&current_scores, &new_scores);
-                        current_scores = new_scores;
-                        if debate::check_convergence(drift, 0.5) { break; }
-                    }
-                    current_scores
-                } else {
-                    round1_scores
-                };
-
-                let moderated = moderation::calculate_moderated_scores(&final_scores, &agents);
-                let overall = moderation::calculate_overall_score(&moderated, &framework);
-                overall.percentage / 100.0 * sample.max_score
-            } else {
-                sample.max_score * 0.5
-            };
-
-            predicted_scores.push(predicted);
-            actual_scores.push(sample.expert_score);
-            println!("  {} | predicted: {:.1} | actual: {:.1} | delta: {:.1}",
-                sample.id, predicted, sample.expert_score, (predicted - sample.expert_score).abs());
-        }
-
-        let pearson_r = benchmark::pearson_correlation(&predicted_scores, &actual_scores);
-        let qwk = benchmark::quadratic_weighted_kappa(&predicted_scores, &actual_scores, 0.0, 10.0);
-        let mae = benchmark::mean_absolute_error(&predicted_scores, &actual_scores);
-        let rmse_val = benchmark::rmse(&predicted_scores, &actual_scores);
-        let mean_predicted = predicted_scores.iter().sum::<f64>() / predicted_scores.len() as f64;
-        let mean_actual = actual_scores.iter().sum::<f64>() / actual_scores.len() as f64;
-
-        let result = benchmark::BenchmarkResults {
-            name: config.label.clone(),
-            samples: samples.len(),
-            pearson_r,
-            qwk,
-            mae,
-            rmse: rmse_val,
-            mean_predicted,
-            mean_actual,
-            config: config.clone(),
-        };
-        println!("  Pearson r: {:.3} | QWK: {:.3} | MAE: {:.2} | RMSE: {:.2}\n",
-            pearson_r, qwk, mae, rmse_val);
+        let (result, predicted) = run_benchmark_config(&samples, config)?;
+        println!("  Pearson r: {:.3} | QWK: {:.3} | MAE: {:.2} | NMAE: {:.3} | RMSE: {:.2} | Halluc: {} ({:.1}%)\n",
+            result.pearson_r, result.qwk, result.mae, result.nmae, result.rmse,
+            result.hallucination_count, result.hallucination_rate * 100.0);
+        last_predicted = predicted;
         all_results.push(result);
     }
 
     println!("\n{}", benchmark::results_table(&all_results));
+
+    // Per-rubric breakdown (Fix 2)
+    if !last_predicted.is_empty() {
+        let per_group = benchmark::per_group_results(&samples, &last_predicted);
+        if per_group.len() > 1 {
+            println!("\n===== Per-Rubric Breakdown =====\n");
+            println!("{}", benchmark::results_table(&per_group));
+        }
+    }
 
     if let Some(output_dir) = output {
         std::fs::create_dir_all(&output_dir)?;
@@ -1121,6 +1028,216 @@ fn run_benchmark(
     }
 
     Ok(())
+}
+
+/// Run a single benchmark configuration against samples, returning results and predicted scores.
+fn run_benchmark_config(
+    samples: &[benchmark::LabeledSample],
+    config: &benchmark::BenchmarkConfig,
+) -> anyhow::Result<(benchmark::BenchmarkResults, Vec<f64>)> {
+    println!("--- Config: {} ---", config.label);
+    let mut predicted_scores: Vec<f64> = Vec::new();
+    let mut actual_scores: Vec<f64> = Vec::new();
+    let mut hallucination_count: usize = 0;
+
+    for sample in samples {
+        let mut doc = EvalDocument::new(
+            format!("Benchmark: {}", sample.id),
+            "essay".into(),
+        );
+        let word_count = sample.text.split_whitespace().count() as u32;
+        let mut section = Section {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: sample.id.clone(),
+            text: sample.text.clone(),
+            word_count,
+            page_range: None,
+            claims: vec![],
+            evidence: vec![],
+            subsections: vec![],
+        };
+        // Use hybrid extraction for better evidence detection
+        let extracted = extract::extract_all(&section.text);
+        let (claims, evidence) = extract::to_claims_and_evidence(&extracted);
+        if !claims.is_empty() || !evidence.is_empty() {
+            section.claims = claims;
+            section.evidence = evidence;
+        } else {
+            extract_claims_and_evidence(&mut section);
+        }
+        doc.sections.push(section);
+        doc.total_word_count = Some(word_count);
+
+        let intent = if sample.domain.is_empty() {
+            "academic essay evaluation".to_string()
+        } else {
+            format!("{} essay evaluation", sample.domain)
+        };
+        let framework = criteria::framework_for_intent(&intent);
+
+        let (alignments, _gaps) = if config.use_ontology_alignment {
+            alignment::align_sections_to_criteria(&doc, &framework)
+        } else {
+            (vec![], vec![])
+        };
+
+        let validation_signals = if config.use_validation {
+            validate::validate_document(&doc, &framework)
+        } else {
+            vec![]
+        };
+
+        let agents = agent::spawn_panel(&intent, &framework);
+
+        let predicted = if config.use_snn {
+            let snn_config = snn::SNNConfig::default();
+            let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
+            for agent_item in &agents {
+                let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+                network.feed_evidence(&doc, &alignments, &snn_config);
+                snn_networks.push(network);
+            }
+
+            if config.use_validation {
+                for signal in &validation_signals {
+                    if signal.spike_effect.abs() > 0.01 {
+                        for network in &mut snn_networks {
+                            for neuron in &mut network.neurons {
+                                let matches = signal.criterion_id.is_none()
+                                    || signal.criterion_id.as_deref() == Some(&neuron.criterion_id);
+                                if matches {
+                                    neuron.receive_spike(
+                                        snn::Spike {
+                                            source_id: signal.id.clone(),
+                                            strength: signal.spike_effect.abs(),
+                                            spike_type: if signal.spike_effect > 0.0 {
+                                                snn::SpikeType::Evidence
+                                            } else {
+                                                snn::SpikeType::Claim
+                                            },
+                                            timestep: 0,
+                                            source_text: None,
+                                            justification: None,
+                                        },
+                                        &snn_config,
+                                    );
+                                    if signal.spike_effect < 0.0 {
+                                        neuron.apply_inhibition(signal.spike_effect.abs() * 0.2); // gentler inhibition
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut round1_scores: Vec<Score> = Vec::new();
+            for network in &snn_networks {
+                let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
+                for (criterion_id, snn_score) in &snn_scores {
+                    let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
+                    let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+                    round1_scores.push(Score {
+                        agent_id: network.agent_id.clone(),
+                        criterion_id: criterion_id.clone(),
+                        score: snn_score.snn_score,
+                        max_score,
+                        round: 1,
+                        justification: snn_score.explanation.clone(),
+                        evidence_used: vec![],
+                        gaps_identified: vec![],
+                    });
+                }
+            }
+
+            let final_scores = if config.use_debate && round1_scores.len() > 1 {
+                let mut current_scores = round1_scores;
+                for _round_num in 2..=5 {
+                    let disagreements = debate::find_disagreements(&current_scores, 2.0);
+                    if disagreements.is_empty() { break; }
+                    let mut new_scores = current_scores.clone();
+                    for disagreement in &disagreements {
+                        if let Some(target_score) = new_scores.iter_mut().find(|s| {
+                            s.agent_id == disagreement.agent_b_id
+                                && s.criterion_id == disagreement.criterion_id
+                        }) {
+                            let challenger_val = current_scores.iter()
+                                .find(|s| s.agent_id == disagreement.agent_a_id
+                                    && s.criterion_id == disagreement.criterion_id)
+                                .map(|s| s.score)
+                                .unwrap_or(target_score.score);
+                            let adjustment = (challenger_val - target_score.score) * 0.3;
+                            target_score.score = (target_score.score + adjustment)
+                                .min(target_score.max_score).max(0.0);
+                        }
+                    }
+                    let drift = debate::calculate_drift_velocity(&current_scores, &new_scores);
+                    current_scores = new_scores;
+                    if debate::check_convergence(drift, 0.5) { break; }
+                }
+                current_scores
+            } else {
+                round1_scores
+            };
+
+            let moderated = moderation::calculate_moderated_scores(&final_scores, &agents);
+            let overall = moderation::calculate_overall_score(&moderated, &framework);
+            overall.percentage / 100.0 * sample.max_score
+        } else {
+            sample.max_score * 0.5
+        };
+
+        // Hallucination detection (Fix 3): predicted deviates > 30% from actual on normalized scale
+        if sample.max_score > 0.0 {
+            let normalized_pred = predicted / sample.max_score;
+            let normalized_actual = sample.expert_score / sample.max_score;
+            if (normalized_pred - normalized_actual).abs() > 0.3 {
+                hallucination_count += 1;
+            }
+        }
+
+        predicted_scores.push(predicted);
+        actual_scores.push(sample.expert_score);
+        println!("  {} | predicted: {:.1} | actual: {:.1} | delta: {:.1}",
+            sample.id, predicted, sample.expert_score, (predicted - sample.expert_score).abs());
+    }
+
+    // Fix 1: Dynamic QWK range — use 0.0 and the max of all sample max_scores
+    let max_score_val = samples.iter().map(|s| s.max_score).fold(0.0f64, f64::max);
+
+    let pearson_r = benchmark::pearson_correlation(&predicted_scores, &actual_scores);
+    let qwk = benchmark::quadratic_weighted_kappa(&predicted_scores, &actual_scores, 0.0, max_score_val);
+    let mae = benchmark::mean_absolute_error(&predicted_scores, &actual_scores);
+    let rmse_val = benchmark::rmse(&predicted_scores, &actual_scores);
+    let mean_predicted = predicted_scores.iter().sum::<f64>() / predicted_scores.len() as f64;
+    let mean_actual = actual_scores.iter().sum::<f64>() / actual_scores.len() as f64;
+
+    // Fix 7: Normalized MAE — divide by score range for cross-set comparability
+    let score_range = max_score_val; // min is always 0
+    let nmae = if score_range > 0.0 { mae / score_range } else { 0.0 };
+
+    let hallucination_rate = if samples.is_empty() {
+        0.0
+    } else {
+        hallucination_count as f64 / samples.len() as f64
+    };
+
+    let result = benchmark::BenchmarkResults {
+        name: config.label.clone(),
+        samples: samples.len(),
+        pearson_r,
+        qwk,
+        mae,
+        nmae,
+        rmse: rmse_val,
+        mean_predicted,
+        mean_actual,
+        hallucination_count,
+        hallucination_rate,
+        config: config.clone(),
+    };
+
+    Ok((result, predicted_scores))
 }
 
 fn run_history(dir: Option<PathBuf>) -> anyhow::Result<()> {

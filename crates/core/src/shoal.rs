@@ -252,9 +252,12 @@ pub fn compute_metrics(
             pearson_r: 0.0,
             qwk: 0.0,
             mae: 0.0,
+            nmae: 0.0,
             rmse: 0.0,
             mean_predicted: 0.0,
             mean_actual: 0.0,
+            hallucination_count: 0,
+            hallucination_rate: 0.0,
             config: BenchmarkConfig::default(),
         };
     }
@@ -262,15 +265,21 @@ pub fn compute_metrics(
     let mean_p = predicted.iter().sum::<f64>() / n as f64;
     let mean_a = actual.iter().sum::<f64>() / n as f64;
 
+    let mae_val = mean_absolute_error(&predicted, &actual);
+    let nmae = if config.max_score > 0.0 { mae_val / config.max_score } else { 0.0 };
+
     BenchmarkResults {
         name: "shoal_subagent".into(),
         samples: n,
         pearson_r: pearson_correlation(&predicted, &actual),
         qwk: quadratic_weighted_kappa(&predicted, &actual, 0.0, config.max_score),
-        mae: mean_absolute_error(&predicted, &actual),
+        mae: mae_val,
+        nmae,
         rmse: rmse(&predicted, &actual),
         mean_predicted: mean_p,
         mean_actual: mean_a,
+        hallucination_count: 0,
+        hallucination_rate: 0.0,
         config: BenchmarkConfig {
             use_llm_scoring: true,
             label: "shoal_subagent".into(),
@@ -621,45 +630,58 @@ pub fn compute_blended_metrics_full(
 
     let n = actual.len();
 
+    let ms = config.max_score;
+    let subagent_mae = mean_absolute_error(&subagent_pred, &actual);
     let subagent_results = BenchmarkResults {
         name: "shoal_subagent".into(),
         samples: n,
         pearson_r: pearson_correlation(&subagent_pred, &actual),
-        qwk: quadratic_weighted_kappa(&subagent_pred, &actual, 0.0, config.max_score),
-        mae: mean_absolute_error(&subagent_pred, &actual),
+        qwk: quadratic_weighted_kappa(&subagent_pred, &actual, 0.0, ms),
+        mae: subagent_mae,
+        nmae: if ms > 0.0 { subagent_mae / ms } else { 0.0 },
         rmse: rmse(&subagent_pred, &actual),
         mean_predicted: subagent_pred.iter().sum::<f64>() / n.max(1) as f64,
         mean_actual: actual.iter().sum::<f64>() / n.max(1) as f64,
+        hallucination_count: 0,
+        hallucination_rate: 0.0,
         config: BenchmarkConfig {
             label: "subagent".into(),
             ..Default::default()
         },
     };
 
+    let eds_mae = mean_absolute_error(&eds_pred, &actual);
     let eds_results = BenchmarkResults {
         name: "shoal_eds".into(),
         samples: n,
         pearson_r: pearson_correlation(&eds_pred, &actual),
-        qwk: quadratic_weighted_kappa(&eds_pred, &actual, 0.0, config.max_score),
-        mae: mean_absolute_error(&eds_pred, &actual),
+        qwk: quadratic_weighted_kappa(&eds_pred, &actual, 0.0, ms),
+        mae: eds_mae,
+        nmae: if ms > 0.0 { eds_mae / ms } else { 0.0 },
         rmse: rmse(&eds_pred, &actual),
         mean_predicted: eds_pred.iter().sum::<f64>() / n.max(1) as f64,
         mean_actual: actual.iter().sum::<f64>() / n.max(1) as f64,
+        hallucination_count: 0,
+        hallucination_rate: 0.0,
         config: BenchmarkConfig {
             label: "eds".into(),
             ..Default::default()
         },
     };
 
+    let blended_mae = mean_absolute_error(&blended_pred, &actual);
     let blended_results = BenchmarkResults {
         name: "shoal_blended".into(),
         samples: n,
         pearson_r: pearson_correlation(&blended_pred, &actual),
-        qwk: quadratic_weighted_kappa(&blended_pred, &actual, 0.0, config.max_score),
-        mae: mean_absolute_error(&blended_pred, &actual),
+        qwk: quadratic_weighted_kappa(&blended_pred, &actual, 0.0, ms),
+        mae: blended_mae,
+        nmae: if ms > 0.0 { blended_mae / ms } else { 0.0 },
         rmse: rmse(&blended_pred, &actual),
         mean_predicted: blended_pred.iter().sum::<f64>() / n.max(1) as f64,
         mean_actual: actual.iter().sum::<f64>() / n.max(1) as f64,
+        hallucination_count: 0,
+        hallucination_rate: 0.0,
         config: BenchmarkConfig {
             label: "blended".into(),
             ..Default::default()
@@ -667,15 +689,19 @@ pub fn compute_blended_metrics_full(
     };
 
     let calibrated_results = if !calibrated_pred.is_empty() && calibrated_pred.len() == n {
+        let cal_mae = mean_absolute_error(&calibrated_pred, &actual);
         Some(BenchmarkResults {
             name: "shoal_calibrated".into(),
             samples: n,
             pearson_r: pearson_correlation(&calibrated_pred, &actual),
-            qwk: quadratic_weighted_kappa(&calibrated_pred, &actual, 0.0, config.max_score),
-            mae: mean_absolute_error(&calibrated_pred, &actual),
+            qwk: quadratic_weighted_kappa(&calibrated_pred, &actual, 0.0, ms),
+            mae: cal_mae,
+            nmae: if ms > 0.0 { cal_mae / ms } else { 0.0 },
             rmse: rmse(&calibrated_pred, &actual),
             mean_predicted: calibrated_pred.iter().sum::<f64>() / n.max(1) as f64,
             mean_actual: actual.iter().sum::<f64>() / n.max(1) as f64,
+            hallucination_count: 0,
+            hallucination_rate: 0.0,
             config: BenchmarkConfig {
                 label: "calibrated".into(),
                 ..Default::default()

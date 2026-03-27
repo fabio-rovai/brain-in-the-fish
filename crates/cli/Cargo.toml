@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 brain-in-the-fish-core = { path = "../core" }
+# Path assumes open-ontologies is checked out alongside this repo (../../../open-ontologies).
+# CI rewrites this path via sed to match its checkout layout (see .github/workflows/ci.yml).
 open-ontologies = { path = "../../../open-ontologies", features = ["embeddings"] }
 rmcp = { version = "1", features = ["server", "transport-io", "transport-streamable-http-server"] }
 clap = { version = "4", features = ["derive", "env"] }
