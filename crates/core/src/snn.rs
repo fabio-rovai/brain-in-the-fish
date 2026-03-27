@@ -55,6 +55,17 @@ pub enum SpikeType {
     Citation,
     /// Section-criterion alignment signal
     Alignment,
+    // Graph-structural signals (from argument graph topology)
+    /// Node has high PageRank / many supporting edges
+    Connectivity,
+    /// Node is deeply nested in argument structure
+    Depth,
+    /// Node is well-supported (many incoming "supports" edges)
+    Support,
+    /// Negative: node is isolated in the graph
+    Isolation,
+    /// Node has counter-argument + rebuttal (dialectical strength)
+    CounterBalance,
 }
 
 /// A single neuron representing one criterion for one agent.
@@ -261,6 +272,11 @@ impl Neuron {
             SpikeType::Citation => config.weights.lr_citation,
             SpikeType::Alignment => config.weights.lr_alignment,
             SpikeType::Claim => config.weights.lr_claim,
+            SpikeType::Connectivity => 1.6,
+            SpikeType::Depth => 1.2,
+            SpikeType::Support => 2.0,
+            SpikeType::Isolation => 0.5, // < 1.0 = negative evidence
+            SpikeType::CounterBalance => 1.8,
         };
         self.bayesian_update(lr);
 
@@ -623,6 +639,153 @@ impl AgentNetwork {
             .collect()
     }
 
+    /// Feed scored argument graph nodes into the SNN, weighting by graph topology.
+    /// This is the Option B architecture: LLM scores nodes, SNN aggregates the graph.
+    pub fn feed_argument_graph(
+        &mut self,
+        graph: &crate::argument_graph::ArgumentGraph,
+        config: &SNNConfig,
+    ) {
+        use crate::argument_graph::{self, NodeType};
+
+        let pagerank = argument_graph::compute_pagerank(graph, 0.85, 20);
+        let metrics = argument_graph::compute_metrics(graph);
+
+        for timestep in 0..config.timesteps {
+            for neuron in &mut self.neurons {
+                if timestep > 0 && timestep % config.refractory_period == 0 {
+                    neuron.clear_refractory();
+                }
+
+                // Feed each scored node as a spike weighted by PageRank
+                for node in &graph.nodes {
+                    if node.node_type == NodeType::Structural {
+                        continue; // structural nodes don't generate content spikes
+                    }
+
+                    let pr_weight = pagerank.get(&node.iri).copied().unwrap_or(0.1);
+                    let llm_score = node.llm_score.unwrap_or(0.5);
+
+                    // Base spike from node type + LLM score
+                    let base_type = match node.node_type {
+                        NodeType::Thesis | NodeType::SubClaim => SpikeType::Claim,
+                        NodeType::Evidence => SpikeType::Evidence,
+                        NodeType::QuantifiedEvidence => SpikeType::QuantifiedData,
+                        NodeType::Citation => SpikeType::Citation,
+                        NodeType::Counter | NodeType::Rebuttal => SpikeType::Claim,
+                        NodeType::Structural => continue,
+                    };
+
+                    // Strength = LLM quality score * PageRank weight
+                    let strength = (llm_score * pr_weight).clamp(0.05, 1.0);
+
+                    neuron.receive_spike(
+                        Spike {
+                            source_id: node.iri.clone(),
+                            strength,
+                            spike_type: base_type,
+                            timestep,
+                            source_text: Some(node.text.clone()),
+                            justification: node.llm_justification.clone(),
+                        },
+                        config,
+                    );
+                }
+
+                // Structural signals (once per neuron, on timestep 0)
+                if timestep == 0 {
+                    // Connectivity signal
+                    if metrics.connectivity > 0.5 {
+                        neuron.receive_spike(
+                            Spike {
+                                source_id: "graph:connectivity".into(),
+                                strength: metrics.connectivity.clamp(0.0, 1.0),
+                                spike_type: SpikeType::Connectivity,
+                                timestep: 0,
+                                source_text: None,
+                                justification: Some(format!(
+                                    "Graph connectivity: {:.0}% of nodes connected",
+                                    metrics.connectivity * 100.0
+                                )),
+                            },
+                            config,
+                        );
+                    }
+
+                    // Evidence coverage signal
+                    if metrics.evidence_coverage > 0.0 {
+                        neuron.receive_spike(
+                            Spike {
+                                source_id: "graph:support".into(),
+                                strength: metrics.evidence_coverage.clamp(0.0, 1.0),
+                                spike_type: SpikeType::Support,
+                                timestep: 0,
+                                source_text: None,
+                                justification: Some(format!(
+                                    "Evidence coverage: {:.0}% of claims have support",
+                                    metrics.evidence_coverage * 100.0
+                                )),
+                            },
+                            config,
+                        );
+                    }
+
+                    // Depth signal
+                    if metrics.max_depth >= 2 {
+                        neuron.receive_spike(
+                            Spike {
+                                source_id: "graph:depth".into(),
+                                strength: (metrics.max_depth as f64 / 5.0).clamp(0.1, 1.0),
+                                spike_type: SpikeType::Depth,
+                                timestep: 0,
+                                source_text: None,
+                                justification: Some(format!("Argument depth: {} levels", metrics.max_depth)),
+                            },
+                            config,
+                        );
+                    }
+
+                    // Isolation signal (negative — many disconnected nodes)
+                    if metrics.connectivity < 0.5 && metrics.node_count > 3 {
+                        neuron.receive_spike(
+                            Spike {
+                                source_id: "graph:isolation".into(),
+                                strength: (1.0 - metrics.connectivity).clamp(0.1, 0.8),
+                                spike_type: SpikeType::Isolation,
+                                timestep: 0,
+                                source_text: None,
+                                justification: Some(format!(
+                                    "Low connectivity: {:.0}% nodes isolated",
+                                    (1.0 - metrics.connectivity) * 100.0
+                                )),
+                            },
+                            config,
+                        );
+                        neuron.apply_inhibition(0.1);
+                    }
+
+                    // Counter-balance (dialectical strength)
+                    if metrics.has_counter && metrics.has_rebuttal {
+                        neuron.receive_spike(
+                            Spike {
+                                source_id: "graph:counterbalance".into(),
+                                strength: 0.8,
+                                spike_type: SpikeType::CounterBalance,
+                                timestep: 0,
+                                source_text: None,
+                                justification: Some("Counter-argument with rebuttal present".into()),
+                            },
+                            config,
+                        );
+                    }
+                }
+
+                // Decay
+                neuron.membrane_potential *= 1.0 - config.decay_rate;
+            }
+        }
+    }
+
     /// Get the spike log for a specific criterion's neuron.
     pub fn spike_log_for(&self, criterion_id: &str) -> Option<&Vec<Spike>> {
         self.neurons
@@ -666,6 +829,9 @@ fn role_spike_multiplier(
             SpikeType::Citation => 1.2,
             SpikeType::Claim => 0.8,
             SpikeType::Alignment => 1.0,
+            SpikeType::Connectivity | SpikeType::Support | SpikeType::Depth => 1.1,
+            SpikeType::Isolation => 0.9,
+            SpikeType::CounterBalance => 1.2,
         };
     }
 
@@ -689,6 +855,10 @@ fn role_spike_multiplier(
             SpikeType::Citation => 0.9,
             SpikeType::QuantifiedData => 0.8,
             SpikeType::Evidence => 1.0,
+            SpikeType::Connectivity | SpikeType::Depth => 1.3,
+            SpikeType::Support => 1.1,
+            SpikeType::Isolation => 0.7,
+            SpikeType::CounterBalance => 1.2,
         };
     }
 
@@ -703,6 +873,9 @@ fn role_spike_multiplier(
             SpikeType::QuantifiedData => 1.2,
             SpikeType::Citation => 1.0,
             SpikeType::Alignment => 0.9,
+            SpikeType::Connectivity | SpikeType::Support => 1.3,
+            SpikeType::Depth | SpikeType::CounterBalance => 1.4,
+            SpikeType::Isolation => 0.6,
         };
     }
 
@@ -714,6 +887,9 @@ fn role_spike_multiplier(
             SpikeType::Citation => 1.1,
             SpikeType::Claim => 0.9,
             SpikeType::Alignment => 1.0,
+            SpikeType::Connectivity | SpikeType::Support | SpikeType::Depth => 1.1,
+            SpikeType::Isolation => 0.9,
+            SpikeType::CounterBalance => 1.2,
         };
     }
 
@@ -729,6 +905,9 @@ fn role_spike_multiplier(
             SpikeType::Alignment => 1.3,
             SpikeType::QuantifiedData => 0.9,
             SpikeType::Citation => 0.8,
+            SpikeType::Connectivity | SpikeType::Support => 1.2,
+            SpikeType::Depth | SpikeType::CounterBalance => 1.1,
+            SpikeType::Isolation => 0.8,
         };
     }
 
@@ -743,6 +922,9 @@ fn role_spike_multiplier(
             SpikeType::Claim => 0.7,
             SpikeType::Citation => 0.9,
             SpikeType::Alignment => 1.0,
+            SpikeType::Connectivity | SpikeType::Support | SpikeType::Depth => 1.0,
+            SpikeType::Isolation => 0.8,
+            SpikeType::CounterBalance => 1.1,
         };
     }
 
@@ -758,6 +940,9 @@ fn role_spike_multiplier(
             SpikeType::QuantifiedData => 1.1,
             SpikeType::Claim => 0.8,
             SpikeType::Citation => 1.0,
+            SpikeType::Connectivity | SpikeType::Support => 1.3,
+            SpikeType::Depth | SpikeType::CounterBalance => 1.2,
+            SpikeType::Isolation => 0.7,
         };
     }
 

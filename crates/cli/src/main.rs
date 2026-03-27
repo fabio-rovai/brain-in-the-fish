@@ -77,6 +77,10 @@ enum Commands {
         #[arg(long)]
         multi_dataset: bool,
 
+        /// Path to LLM-extracted evidence JSON (produced by Claude subagent)
+        #[arg(long)]
+        extractions: Option<PathBuf>,
+
         /// Output directory for results
         #[arg(long)]
         output: Option<PathBuf>,
@@ -142,8 +146,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::Graph { path } => {
             run_graph(path)
         }
-        Commands::Benchmark { dataset, ablation, multi_dataset, output } => {
-            run_benchmark(dataset, ablation, multi_dataset, output)
+        Commands::Benchmark { dataset, ablation, multi_dataset, extractions, output } => {
+            if let Some(ext_path) = extractions {
+                run_benchmark_with_extractions(dataset, ext_path, output)
+            } else {
+                run_benchmark(dataset, ablation, multi_dataset, output)
+            }
         }
         Commands::History { dir } => {
             run_history(dir)
@@ -1238,6 +1246,297 @@ fn run_benchmark_config(
     };
 
     Ok((result, predicted_scores))
+}
+
+/// Subagent-produced extraction for a single sample.
+/// Format: Claude extracts evidence, saves as JSON, benchmark loads and feeds through SNN.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SubagentExtraction {
+    id: String,
+    claims: Vec<SubagentClaim>,
+    evidence: Vec<SubagentEvidence>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SubagentClaim {
+    text: String,
+    specificity: f64,
+    verifiable: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SubagentEvidence {
+    source: String,
+    #[serde(rename = "type")]
+    evidence_type: String,
+    text: String,
+    quantified: bool,
+}
+
+/// Run benchmark using subagent-produced extractions.
+/// The extractions JSON is produced by Claude (the subagent) and contains
+/// structured evidence for each essay. The benchmark feeds this through the SNN.
+///
+/// Usage: cargo run -- benchmark --dataset data/asap-set1.json --extractions data/asap-set1-extractions.json
+fn run_benchmark_with_extractions(
+    dataset_path: Option<PathBuf>,
+    extractions_path: PathBuf,
+    output: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    println!("Running subagent extraction → SNN benchmark");
+
+    let samples = if let Some(ref path) = dataset_path {
+        println!("Loading dataset: {}", path.display());
+        benchmark::load_dataset(path)?
+    } else {
+        println!("Using synthetic benchmark dataset (10 samples)");
+        benchmark::synthetic_dataset()
+    };
+
+    // Load subagent extractions
+    println!("Loading extractions: {}", extractions_path.display());
+    let ext_content = std::fs::read_to_string(&extractions_path)?;
+    let extractions: Vec<SubagentExtraction> = serde_json::from_str(&ext_content)?;
+    let ext_map: std::collections::HashMap<String, &SubagentExtraction> =
+        extractions.iter().map(|e| (e.id.clone(), e)).collect();
+    println!("Loaded {} extractions for {} samples\n", extractions.len(), samples.len());
+
+    let mut predicted_scores: Vec<f64> = Vec::new();
+    let mut actual_scores: Vec<f64> = Vec::new();
+    let mut hallucination_count: usize = 0;
+    let mut matched = 0usize;
+    let mut unmatched = 0usize;
+
+    for (i, sample) in samples.iter().enumerate() {
+        let intent = if sample.domain.is_empty() {
+            "academic essay evaluation".to_string()
+        } else {
+            format!("{} essay evaluation", sample.domain)
+        };
+
+        let framework = criteria::framework_for_intent(&intent);
+        let agents = agent::spawn_panel(&intent, &framework);
+        let snn_config = snn::SNNConfig::default();
+
+        let predicted = if let Some(extraction) = ext_map.get(&sample.id) {
+            matched += 1;
+
+            let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
+            for agent_item in &agents {
+                let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+
+                // Feed subagent-extracted claims as spikes
+                for claim in &extraction.claims {
+                    let spike_type = if claim.verifiable {
+                        snn::SpikeType::Evidence
+                    } else {
+                        snn::SpikeType::Claim
+                    };
+                    for neuron in &mut network.neurons {
+                        neuron.receive_spike(
+                            snn::Spike {
+                                source_id: format!("sub_claim_{}", uuid::Uuid::new_v4()),
+                                strength: claim.specificity.clamp(0.0, 1.0),
+                                spike_type: spike_type.clone(),
+                                timestep: 0,
+                                source_text: Some(claim.text.clone()),
+                                justification: Some(format!(
+                                    "Subagent-extracted claim, specificity={:.2}, verifiable={}",
+                                    claim.specificity, claim.verifiable
+                                )),
+                            },
+                            &snn_config,
+                        );
+                    }
+                }
+
+                // Feed subagent-extracted evidence as typed spikes
+                for ev in &extraction.evidence {
+                    let spike_type = match ev.evidence_type.as_str() {
+                        "statistical" => snn::SpikeType::QuantifiedData,
+                        "citation" => snn::SpikeType::Citation,
+                        _ => if ev.quantified {
+                            snn::SpikeType::QuantifiedData
+                        } else {
+                            snn::SpikeType::Evidence
+                        },
+                    };
+                    let strength = if ev.quantified { 0.85 } else { 0.7 };
+                    for neuron in &mut network.neurons {
+                        neuron.receive_spike(
+                            snn::Spike {
+                                source_id: format!("sub_ev_{}", uuid::Uuid::new_v4()),
+                                strength,
+                                spike_type: spike_type.clone(),
+                                timestep: 0,
+                                source_text: Some(ev.text.clone()),
+                                justification: Some(format!(
+                                    "Subagent-extracted {}, source={}, quantified={}",
+                                    ev.evidence_type, ev.source, ev.quantified
+                                )),
+                            },
+                            &snn_config,
+                        );
+                    }
+                }
+
+                snn_networks.push(network);
+            }
+
+            // Compute SNN scores
+            let mut round1_scores: Vec<Score> = Vec::new();
+            for network in &snn_networks {
+                let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
+                for (criterion_id, snn_score) in &snn_scores {
+                    let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
+                    let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+                    round1_scores.push(Score {
+                        agent_id: network.agent_id.clone(),
+                        criterion_id: criterion_id.clone(),
+                        score: snn_score.snn_score,
+                        max_score,
+                        round: 1,
+                        justification: snn_score.explanation.clone(),
+                        evidence_used: vec![],
+                        gaps_identified: vec![],
+                    });
+                }
+            }
+
+            let moderated = moderation::calculate_moderated_scores(&round1_scores, &agents);
+            let overall = moderation::calculate_overall_score(&moderated, &framework);
+            overall.percentage / 100.0 * sample.max_score
+        } else {
+            // No extraction for this sample — fall back to regex extraction
+            unmatched += 1;
+            let mut doc = EvalDocument::new(format!("Benchmark: {}", sample.id), "essay".into());
+            let word_count = sample.text.split_whitespace().count() as u32;
+            let mut section = Section {
+                id: uuid::Uuid::new_v4().to_string(),
+                title: sample.id.clone(),
+                text: sample.text.clone(),
+                word_count,
+                page_range: None,
+                claims: vec![],
+                evidence: vec![],
+                subsections: vec![],
+            };
+            let extracted = extract::extract_all(&section.text);
+            let (claims, evidence) = extract::to_claims_and_evidence(&extracted);
+            if !claims.is_empty() || !evidence.is_empty() {
+                section.claims = claims;
+                section.evidence = evidence;
+            } else {
+                extract_claims_and_evidence(&mut section);
+            }
+            doc.sections.push(section);
+            doc.total_word_count = Some(word_count);
+
+            let (alignments, _) = alignment::align_sections_to_criteria(&doc, &framework);
+            let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
+            for agent_item in &agents {
+                let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+                network.feed_evidence(&doc, &alignments, &snn_config);
+                snn_networks.push(network);
+            }
+            let mut round1_scores: Vec<Score> = Vec::new();
+            for network in &snn_networks {
+                let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
+                for (criterion_id, snn_score) in &snn_scores {
+                    let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
+                    let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+                    round1_scores.push(Score {
+                        agent_id: network.agent_id.clone(),
+                        criterion_id: criterion_id.clone(),
+                        score: snn_score.snn_score,
+                        max_score,
+                        round: 1,
+                        justification: snn_score.explanation.clone(),
+                        evidence_used: vec![],
+                        gaps_identified: vec![],
+                    });
+                }
+            }
+            let moderated = moderation::calculate_moderated_scores(&round1_scores, &agents);
+            let overall = moderation::calculate_overall_score(&moderated, &framework);
+            overall.percentage / 100.0 * sample.max_score
+        };
+
+        // Hallucination detection
+        if sample.max_score > 0.0 {
+            let normalized_pred = predicted / sample.max_score;
+            let normalized_actual = sample.expert_score / sample.max_score;
+            if (normalized_pred - normalized_actual).abs() > 0.3 {
+                hallucination_count += 1;
+            }
+        }
+
+        predicted_scores.push(predicted);
+        actual_scores.push(sample.expert_score);
+        if (i + 1) % 50 == 0 || i == samples.len() - 1 {
+            println!("  [{}/{}] {} | predicted: {:.1} | actual: {:.1} | delta: {:.1}",
+                i + 1, samples.len(), sample.id, predicted, sample.expert_score,
+                (predicted - sample.expert_score).abs());
+        }
+    }
+
+    println!("\nMatched extractions: {} | Fell back to regex: {}", matched, unmatched);
+
+    // Compute metrics
+    let max_score_val = samples.iter().map(|s| s.max_score).fold(0.0f64, f64::max);
+    let pearson_r = benchmark::pearson_correlation(&predicted_scores, &actual_scores);
+    let qwk = benchmark::quadratic_weighted_kappa(&predicted_scores, &actual_scores, 0.0, max_score_val);
+    let mae = benchmark::mean_absolute_error(&predicted_scores, &actual_scores);
+    let rmse_val = benchmark::rmse(&predicted_scores, &actual_scores);
+    let mean_predicted = predicted_scores.iter().sum::<f64>() / predicted_scores.len() as f64;
+    let mean_actual = actual_scores.iter().sum::<f64>() / actual_scores.len() as f64;
+    let nmae = if max_score_val > 0.0 { mae / max_score_val } else { 0.0 };
+    let hallucination_rate = if samples.is_empty() {
+        0.0
+    } else {
+        hallucination_count as f64 / samples.len() as f64
+    };
+
+    let result = benchmark::BenchmarkResults {
+        name: "subagent_extract_snn".to_string(),
+        samples: samples.len(),
+        pearson_r,
+        qwk,
+        mae,
+        nmae,
+        rmse: rmse_val,
+        mean_predicted,
+        mean_actual,
+        hallucination_count,
+        hallucination_rate,
+        config: benchmark::BenchmarkConfig {
+            use_snn: true,
+            use_llm_extraction: true,
+            label: "subagent_extract_snn".into(),
+            ..Default::default()
+        },
+    };
+
+    println!("\n  Pearson r: {:.3} | QWK: {:.3} | MAE: {:.2} | NMAE: {:.3} | RMSE: {:.2} | Halluc: {} ({:.1}%)\n",
+        result.pearson_r, result.qwk, result.mae, result.nmae, result.rmse,
+        result.hallucination_count, result.hallucination_rate * 100.0);
+    println!("{}", benchmark::results_table(std::slice::from_ref(&result)));
+
+    // Per-rubric breakdown
+    let per_group = benchmark::per_group_results(&samples, &predicted_scores);
+    if per_group.len() > 1 {
+        println!("\n===== Per-Rubric Breakdown =====\n");
+        println!("{}", benchmark::results_table(&per_group));
+    }
+
+    if let Some(output_dir) = output {
+        std::fs::create_dir_all(&output_dir)?;
+        let results_path = output_dir.join("subagent-benchmark-results.json");
+        std::fs::write(&results_path, serde_json::to_string_pretty(&[&result])?)?;
+        println!("Results saved to: {}", results_path.display());
+    }
+
+    Ok(())
 }
 
 fn run_history(dir: Option<PathBuf>) -> anyhow::Result<()> {
