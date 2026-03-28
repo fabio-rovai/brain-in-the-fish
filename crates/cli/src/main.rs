@@ -81,6 +81,10 @@ enum Commands {
         #[arg(long)]
         extractions: Option<PathBuf>,
 
+        /// Path to graph node scores JSON (Option B: subagent scores nodes, SNN aggregates)
+        #[arg(long)]
+        graph_scores: Option<PathBuf>,
+
         /// Output directory for results
         #[arg(long)]
         output: Option<PathBuf>,
@@ -146,8 +150,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::Graph { path } => {
             run_graph(path)
         }
-        Commands::Benchmark { dataset, ablation, multi_dataset, extractions, output } => {
-            if let Some(ext_path) = extractions {
+        Commands::Benchmark { dataset, ablation, multi_dataset, extractions, graph_scores, output } => {
+            if let Some(gs_path) = graph_scores {
+                run_benchmark_graph(dataset, gs_path, output)
+            } else if let Some(ext_path) = extractions {
                 run_benchmark_with_extractions(dataset, ext_path, output)
             } else {
                 run_benchmark(dataset, ablation, multi_dataset, output)
@@ -1532,6 +1538,169 @@ fn run_benchmark_with_extractions(
     if let Some(output_dir) = output {
         std::fs::create_dir_all(&output_dir)?;
         let results_path = output_dir.join("subagent-benchmark-results.json");
+        std::fs::write(&results_path, serde_json::to_string_pretty(&[&result])?)?;
+        println!("Results saved to: {}", results_path.display());
+    }
+
+    Ok(())
+}
+
+/// Run benchmark using Option B: argument graph + subagent node scores → SNN aggregation.
+/// The subagent builds the graph, scores each node, saves as JSON.
+/// The benchmark loads node scores, builds the graph, feeds through graph-SNN.
+fn run_benchmark_graph(
+    dataset_path: Option<PathBuf>,
+    graph_scores_path: PathBuf,
+    output: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    use brain_in_the_fish_core::argument_graph;
+
+    println!("Running Option B benchmark: argument graph → node scores → SNN aggregation");
+
+    let samples = if let Some(ref path) = dataset_path {
+        println!("Loading dataset: {}", path.display());
+        benchmark::load_dataset(path)?
+    } else {
+        println!("Using synthetic benchmark dataset (10 samples)");
+        benchmark::synthetic_dataset()
+    };
+
+    // Load subagent graph scores
+    println!("Loading graph scores: {}", graph_scores_path.display());
+    let gs_content = std::fs::read_to_string(&graph_scores_path)?;
+    let graph_score_entries: Vec<argument_graph::GraphScoreEntry> = serde_json::from_str(&gs_content)?;
+    let gs_map: std::collections::HashMap<String, &argument_graph::GraphScoreEntry> =
+        graph_score_entries.iter().map(|e| (e.id.clone(), e)).collect();
+    println!("Loaded {} graph score entries for {} samples\n", graph_score_entries.len(), samples.len());
+
+    let mut predicted_scores: Vec<f64> = Vec::new();
+    let mut actual_scores: Vec<f64> = Vec::new();
+    let mut hallucination_count: usize = 0;
+    let mut matched = 0usize;
+
+    for (i, sample) in samples.iter().enumerate() {
+        let intent = if sample.domain.is_empty() {
+            "academic essay evaluation".to_string()
+        } else {
+            format!("{} essay evaluation", sample.domain)
+        };
+
+        let framework = criteria::framework_for_intent(&intent);
+        let agents = agent::spawn_panel(&intent, &framework);
+        let snn_config = snn::SNNConfig::default();
+
+        // Build argument graph from subagent node scores (primary)
+        // or fall back to regex extraction if no scores available
+        let graph = if let Some(gs_entry) = gs_map.get(&sample.id) {
+            matched += 1;
+            // Build graph directly from subagent's node scores
+            argument_graph::build_from_node_scores(&sample.id, &gs_entry.node_scores)
+        } else {
+            // Fall back to regex extraction
+            argument_graph::build_from_text(&sample.text, &sample.id)
+        };
+
+        // Feed graph through SNN
+        let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
+        for agent_item in &agents {
+            let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+            network.feed_argument_graph(&graph, &snn_config);
+            snn_networks.push(network);
+        }
+
+        // Compute scores
+        let mut round1_scores: Vec<Score> = Vec::new();
+        for network in &snn_networks {
+            let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
+            for (criterion_id, snn_score) in &snn_scores {
+                let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
+                let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+                round1_scores.push(Score {
+                    agent_id: network.agent_id.clone(),
+                    criterion_id: criterion_id.clone(),
+                    score: snn_score.snn_score,
+                    max_score,
+                    round: 1,
+                    justification: snn_score.explanation.clone(),
+                    evidence_used: vec![],
+                    gaps_identified: vec![],
+                });
+            }
+        }
+
+        let moderated = moderation::calculate_moderated_scores(&round1_scores, &agents);
+        let overall = moderation::calculate_overall_score(&moderated, &framework);
+        let predicted = overall.percentage / 100.0 * sample.max_score;
+
+        // Hallucination detection
+        if sample.max_score > 0.0 {
+            let normalized_pred = predicted / sample.max_score;
+            let normalized_actual = sample.expert_score / sample.max_score;
+            if (normalized_pred - normalized_actual).abs() > 0.3 {
+                hallucination_count += 1;
+            }
+        }
+
+        predicted_scores.push(predicted);
+        actual_scores.push(sample.expert_score);
+
+        let metrics = argument_graph::compute_metrics(&graph);
+        if (i + 1) % 25 == 0 || i == samples.len() - 1 {
+            println!("  [{}/{}] {} | pred: {:.1} | actual: {:.1} | delta: {:.1} | nodes: {} edges: {} depth: {}",
+                i + 1, samples.len(), sample.id, predicted, sample.expert_score,
+                (predicted - sample.expert_score).abs(),
+                metrics.node_count, metrics.edge_count, metrics.max_depth);
+        }
+    }
+
+    println!("\nMatched graph scores: {} / {}", matched, samples.len());
+
+    // Compute metrics
+    let max_score_val = samples.iter().map(|s| s.max_score).fold(0.0f64, f64::max);
+    let pearson_r = benchmark::pearson_correlation(&predicted_scores, &actual_scores);
+    let qwk = benchmark::quadratic_weighted_kappa(&predicted_scores, &actual_scores, 0.0, max_score_val);
+    let mae = benchmark::mean_absolute_error(&predicted_scores, &actual_scores);
+    let rmse_val = benchmark::rmse(&predicted_scores, &actual_scores);
+    let mean_predicted = predicted_scores.iter().sum::<f64>() / predicted_scores.len() as f64;
+    let mean_actual = actual_scores.iter().sum::<f64>() / actual_scores.len() as f64;
+    let nmae = if max_score_val > 0.0 { mae / max_score_val } else { 0.0 };
+    let hallucination_rate = if samples.is_empty() { 0.0 } else { hallucination_count as f64 / samples.len() as f64 };
+
+    let result = benchmark::BenchmarkResults {
+        name: "graph_snn".to_string(),
+        samples: samples.len(),
+        pearson_r,
+        qwk,
+        mae,
+        nmae,
+        rmse: rmse_val,
+        mean_predicted,
+        mean_actual,
+        hallucination_count,
+        hallucination_rate,
+        config: benchmark::BenchmarkConfig {
+            use_snn: true,
+            use_llm_extraction: true,
+            label: "graph_snn".into(),
+            ..Default::default()
+        },
+    };
+
+    println!("\n  Pearson r: {:.3} | QWK: {:.3} | MAE: {:.2} | NMAE: {:.3} | RMSE: {:.2} | Halluc: {} ({:.1}%)\n",
+        result.pearson_r, result.qwk, result.mae, result.nmae, result.rmse,
+        result.hallucination_count, result.hallucination_rate * 100.0);
+    println!("{}", benchmark::results_table(std::slice::from_ref(&result)));
+
+    // Per-rubric breakdown
+    let per_group = benchmark::per_group_results(&samples, &predicted_scores);
+    if per_group.len() > 1 {
+        println!("\n===== Per-Rubric Breakdown =====\n");
+        println!("{}", benchmark::results_table(&per_group));
+    }
+
+    if let Some(output_dir) = output {
+        std::fs::create_dir_all(&output_dir)?;
+        let results_path = output_dir.join("graph-snn-results.json");
         std::fs::write(&results_path, serde_json::to_string_pretty(&[&result])?)?;
         println!("Results saved to: {}", results_path.display());
     }

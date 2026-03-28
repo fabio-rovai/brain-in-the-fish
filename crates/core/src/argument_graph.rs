@@ -282,6 +282,100 @@ pub fn build_from_text(text: &str, doc_id: &str) -> ArgumentGraph {
     build_from_document(&doc)
 }
 
+/// Build an argument graph directly from subagent node scores.
+/// The subagent determines the graph structure — no regex extraction needed.
+/// Nodes are inferred from the scores: first node = thesis, subsequent = sub-claims/evidence.
+/// Edges: each node supports the thesis, sequential nodes support each other.
+pub fn build_from_node_scores(doc_id: &str, node_scores: &[NodeScoreEntry]) -> ArgumentGraph {
+    if node_scores.is_empty() {
+        return ArgumentGraph {
+            doc_id: doc_id.to_string(),
+            nodes: vec![],
+            edges: vec![],
+        };
+    }
+
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+    let mut thesis_iri: Option<String> = None;
+
+    for (i, ns) in node_scores.iter().enumerate() {
+        // Infer node type from position and justification
+        let node_type = if i == 0 {
+            NodeType::Thesis
+        } else if ns.justification.to_lowercase().contains("evidence")
+            || ns.justification.to_lowercase().contains("statistic")
+            || ns.justification.to_lowercase().contains("data")
+            || ns.justification.to_lowercase().contains("citation")
+            || ns.justification.to_lowercase().contains("quote")
+        {
+            if ns.justification.to_lowercase().contains("statistic")
+                || ns.justification.to_lowercase().contains("quantif")
+                || ns.justification.to_lowercase().contains("number")
+            {
+                NodeType::QuantifiedEvidence
+            } else if ns.justification.to_lowercase().contains("citation")
+                || ns.justification.to_lowercase().contains("quote")
+                || ns.justification.to_lowercase().contains("reference")
+            {
+                NodeType::Citation
+            } else {
+                NodeType::Evidence
+            }
+        } else if ns.justification.to_lowercase().contains("counter") {
+            NodeType::Counter
+        } else if ns.justification.to_lowercase().contains("conclusion")
+            || ns.justification.to_lowercase().contains("closing")
+        {
+            NodeType::Structural
+        } else {
+            NodeType::SubClaim
+        };
+
+        let iri = ns.node_iri.clone();
+
+        if i == 0 {
+            thesis_iri = Some(iri.clone());
+        }
+
+        nodes.push(ArgumentNode {
+            iri: iri.clone(),
+            node_type,
+            text: ns.justification.clone(), // use justification as text since we don't have the raw text
+            llm_score: Some(ns.score.clamp(0.0, 1.0)),
+            llm_justification: Some(ns.justification.clone()),
+        });
+
+        // Edges: evidence/sub-claims support the thesis
+        if let Some(t_iri) = &thesis_iri
+            && i > 0
+            && iri != *t_iri
+        {
+            edges.push(ArgumentEdge {
+                from: iri.clone(),
+                edge_type: EdgeType::Supports,
+                to: t_iri.clone(),
+            });
+        }
+
+        // Sequential support: node N supports node N-1 (argument chain)
+        if i > 1 {
+            let prev_iri = node_scores[i - 1].node_iri.clone();
+            edges.push(ArgumentEdge {
+                from: iri,
+                edge_type: EdgeType::Supports,
+                to: prev_iri,
+            });
+        }
+    }
+
+    ArgumentGraph {
+        doc_id: doc_id.to_string(),
+        nodes,
+        edges,
+    }
+}
+
 /// Generate OWL Turtle representation of the argument graph.
 pub fn to_turtle(graph: &ArgumentGraph) -> String {
     let mut ttl = String::from(
