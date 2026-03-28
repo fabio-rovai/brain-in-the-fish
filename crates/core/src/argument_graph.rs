@@ -779,6 +779,55 @@ pub fn compute_metrics(graph: &ArgumentGraph) -> GraphMetrics {
     }
 }
 
+/// Compute a structural score from graph metrics alone — no LLM scores involved.
+/// Returns a normalized 0.0-1.0 score based purely on graph topology.
+///
+/// Signals (all derived from the OWL graph, not from LLM opinions):
+/// - Node density: how many argument nodes exist (log-scaled, saturates at 12)
+/// - Evidence ratio: fraction of nodes that are evidence (not bare claims)
+/// - Connectivity: fraction of non-structural nodes with edges
+/// - Evidence coverage: fraction of claims with supporting evidence
+/// - Depth: how deep the argument chains go (saturates at 4)
+/// - Counter/rebuttal bonus: addressing opposition shows sophistication
+pub fn structural_score(metrics: &GraphMetrics) -> f64 {
+    // Node density: log curve saturating at ~12 nodes
+    let density = (metrics.node_count as f64 + 1.0).ln() / 12.0_f64.ln();
+    let density = density.min(1.0);
+
+    // Evidence ratio: evidence / total nodes
+    let ev_ratio = if metrics.node_count > 0 {
+        metrics.evidence_count as f64 / metrics.node_count as f64
+    } else {
+        0.0
+    };
+
+    // Connectivity: already 0.0-1.0
+    let connectivity = metrics.connectivity;
+
+    // Evidence coverage: already 0.0-1.0
+    let coverage = metrics.evidence_coverage;
+
+    // Depth: saturates at 4 levels
+    let depth = (metrics.max_depth as f64 / 4.0).min(1.0);
+
+    // Counter/rebuttal bonus: 0.0, 0.5, or 1.0
+    let counter_bonus = match (metrics.has_counter, metrics.has_rebuttal) {
+        (true, true) => 1.0,
+        (true, false) | (false, true) => 0.5,
+        (false, false) => 0.0,
+    };
+
+    // Weighted combination — weights can be calibrated later
+    let raw = 0.25 * density
+        + 0.20 * ev_ratio
+        + 0.20 * connectivity
+        + 0.15 * coverage
+        + 0.10 * depth
+        + 0.10 * counter_bonus;
+
+    raw.clamp(0.0, 1.0)
+}
+
 fn compute_max_depth(graph: &ArgumentGraph) -> usize {
     let iri_to_idx: HashMap<&str, usize> = graph.nodes.iter()
         .enumerate()

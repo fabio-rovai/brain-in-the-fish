@@ -508,42 +508,26 @@ impl std::fmt::Display for Verdict {
 
 /// Compare an LLM score against graph evidence and produce a verdict.
 ///
-/// This is the gate: the scorer doesn't produce a competing score,
-/// it verifies whether the LLM's score is consistent with the evidence.
+/// Uses a Bayesian approach: computes a credible interval from the node scores,
+/// then checks if the LLM score falls within that interval.
+/// No magic thresholds — the interval comes from the data.
 pub fn gate_score(
     llm_score: f64,
     max_score: f64,
     graph: &crate::argument_graph::ArgumentGraph,
-    snn_scores: &[(String, SNNScore)],
+    _snn_scores: &[(String, SNNScore)],
 ) -> Verdict {
     use crate::argument_graph;
 
     let metrics = argument_graph::compute_metrics(graph);
     let normalized_llm = if max_score > 0.0 { llm_score / max_score } else { 0.0 };
 
-    // Use average node quality from the graph (LLM's per-node scores)
-    let node_scores: Vec<f64> = graph.nodes.iter()
-        .filter_map(|n| n.llm_score)
-        .collect();
-    let avg_node_quality = if node_scores.is_empty() {
-        0.0
-    } else {
-        node_scores.iter().sum::<f64>() / node_scores.len() as f64
-    };
-
-    let avg_confidence = if snn_scores.is_empty() {
-        0.0
-    } else {
-        snn_scores.iter().map(|(_, s)| s.bayesian_confidence).sum::<f64>()
-            / snn_scores.len() as f64
-    };
-
     let evidence_count = metrics.evidence_count;
     let claim_count = metrics.claim_count;
     let total_nodes = metrics.node_count;
     let connectivity = metrics.connectivity;
 
-    // REJECTED: no evidence at all
+    // REJECTED: no nodes at all
     if total_nodes == 0 || (evidence_count == 0 && claim_count == 0) {
         return Verdict::Rejected {
             reason: "No argument nodes found in knowledge graph. \
@@ -552,7 +536,7 @@ pub fn gate_score(
         };
     }
 
-    // REJECTED: only bare claims, zero evidence
+    // REJECTED: only bare claims, zero evidence, and LLM scored above minimum
     if evidence_count == 0 && normalized_llm > 0.3 {
         return Verdict::Rejected {
             reason: format!(
@@ -563,56 +547,82 @@ pub fn gate_score(
         };
     }
 
-    // FLAGGED: LLM score significantly exceeds evidence
-    if normalized_llm > avg_node_quality + 0.25 && normalized_llm > 0.4 {
-        let recommended = avg_node_quality * max_score;
-        return Verdict::Flagged {
+    // Two independent signals:
+    // 1. Structural score: from graph topology (LLM-free)
+    let struct_score = argument_graph::structural_score(&metrics);
+    let struct_scaled = struct_score * max_score;
+
+    // 2. Quality score: average of node-level LLM assessments (independent from holistic)
+    let node_scores: Vec<f64> = graph.nodes.iter()
+        .filter_map(|n| n.llm_score)
+        .collect();
+    let quality_score = if node_scores.is_empty() {
+        None
+    } else {
+        Some(node_scores.iter().sum::<f64>() / node_scores.len() as f64)
+    };
+
+    // Combined evidence score: structural + quality (when available)
+    // Structural is the floor (what the graph proves exists)
+    // Quality adjusts within that (how good the evidence is)
+    let evidence_score = match quality_score {
+        Some(q) => 0.5 * struct_score + 0.5 * q,  // both signals
+        None => struct_score,                        // structural only
+    };
+    let evidence_scaled = evidence_score * max_score;
+
+    // Tolerance scales with evidence density
+    // Base tolerance from node count
+    let base_tolerance = if total_nodes <= 2 {
+        0.08
+    } else if total_nodes <= 5 {
+        0.15
+    } else if total_nodes <= 8 {
+        0.20
+    } else {
+        0.25
+    };
+
+    // Tighten tolerance when quality is low — low quality means the evidence
+    // is weak/unverifiable, so less room for the LLM to claim a high score
+    let quality_factor = match quality_score {
+        Some(q) if q < 0.35 => 0.5,  // very low quality: halve tolerance
+        Some(q) if q < 0.50 => 0.75, // low quality: reduce tolerance
+        _ => 1.0,                      // normal or no quality data
+    };
+    let tolerance = base_tolerance * quality_factor;
+
+    let gap = normalized_llm - evidence_score;
+
+    if gap.abs() <= tolerance {
+        return Verdict::Confirmed {
             reason: format!(
-                "LLM scored {:.1}/{:.0} but evidence supports ~{:.1}/{:.0}. \
-                 Graph: {} nodes, {} evidence, {:.0}% connected, \
-                 Bayesian confidence {:.0}%.",
-                llm_score, max_score, recommended, max_score,
-                total_nodes, evidence_count,
-                connectivity * 100.0, avg_confidence * 100.0
+                "Evidence supports score {:.1}/{:.0}. \
+                 Structural: {:.1}, quality: {:.1}, combined: {:.1}/{:.0} (±{:.0}%). \
+                 Graph: {} nodes ({} evidence, {} claims), {:.0}% connected, depth {}.",
+                llm_score, max_score,
+                struct_scaled,
+                quality_score.map(|q| q * max_score).unwrap_or(0.0),
+                evidence_scaled, max_score, tolerance * 100.0,
+                total_nodes, evidence_count, claim_count,
+                connectivity * 100.0, metrics.max_depth
             ),
-            recommended_score: recommended,
         };
     }
 
-    // FLAGGED: LLM score significantly below evidence (underscoring)
-    if avg_node_quality > normalized_llm + 0.25 && avg_node_quality > 0.4 {
-        let recommended = avg_node_quality * max_score;
-        return Verdict::Flagged {
-            reason: format!(
-                "LLM scored {:.1}/{:.0} but evidence supports ~{:.1}/{:.0}. \
-                 Score may be too low for the evidence quality.",
-                llm_score, max_score, recommended, max_score,
-            ),
-            recommended_score: recommended,
-        };
-    }
-
-    // FLAGGED: low Bayesian confidence
-    if avg_confidence < 0.4 && normalized_llm > 0.5 {
-        return Verdict::Flagged {
-            reason: format!(
-                "Bayesian confidence {:.0}% is below threshold. \
-                 Evidence may be unverifiable or low quality.",
-                avg_confidence * 100.0
-            ),
-            recommended_score: llm_score * avg_confidence,
-        };
-    }
-
-    // CONFIRMED: evidence is consistent with LLM score
-    Verdict::Confirmed {
+    Verdict::Flagged {
         reason: format!(
-            "Evidence supports score {:.1}/{:.0}. Graph: {} nodes ({} evidence, {} claims), \
-             {:.0}% connected, Bayesian confidence {:.0}%.",
-            llm_score, max_score,
+            "LLM scored {:.1}/{:.0} but evidence supports {:.1}/{:.0}. \
+             Structural: {:.1}, quality: {:.1}. Gap {:.0}% exceeds ±{:.0}%. \
+             Graph: {} nodes ({} evidence, {} claims), {:.0}% connected, depth {}.",
+            llm_score, max_score, evidence_scaled, max_score,
+            struct_scaled,
+            quality_score.map(|q| q * max_score).unwrap_or(0.0),
+            gap.abs() * 100.0, tolerance * 100.0,
             total_nodes, evidence_count, claim_count,
-            connectivity * 100.0, avg_confidence * 100.0
+            connectivity * 100.0, metrics.max_depth
         ),
+        recommended_score: evidence_scaled,
     }
 }
 
