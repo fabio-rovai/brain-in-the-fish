@@ -352,7 +352,7 @@ Weights are calibrated via Nelder-Mead optimization against expert scores (train
 | Regex evidence extraction | Missed 65% of evidence in documents | Rule-based extraction can't handle natural language |
 | Flat LLM extraction → scorer | More evidence made scores worse | Counting evidence doesn't capture quality |
 | Full OWL ontology per essay | Flat star graphs, poor differentiation | Simple graphs don't differentiate — need meaningful topology |
-| Scorer competing with LLM on accuracy | LLM always wins (Pearson 0.998) | The scorer's job isn't accuracy — it's verification |
+| Scorer competing with LLM on accuracy | LLM wins on stratified samples | The scorer's job isn't accuracy — it's verification |
 | Blending LLM + scorer scores | Blend hurts both | Don't blend — let each do its job |
 
 **The insight that changed everything:** Stop using the scorer as an alternative to the LLM. Use it as a **gate** on the LLM. The LLM scores. The ontology maps. The scorer verifies. Three layers, three jobs.
