@@ -89,6 +89,10 @@ enum Commands {
         #[arg(long)]
         reference_ontology: Option<PathBuf>,
 
+        /// Self-calibrate SNN weights via Nelder-Mead optimization
+        #[arg(long)]
+        calibrate: bool,
+
         /// Output directory for results
         #[arg(long)]
         output: Option<PathBuf>,
@@ -154,9 +158,13 @@ async fn main() -> anyhow::Result<()> {
         Commands::Graph { path } => {
             run_graph(path)
         }
-        Commands::Benchmark { dataset, ablation, multi_dataset, extractions, graph_scores, reference_ontology, output } => {
+        Commands::Benchmark { dataset, ablation, multi_dataset, extractions, graph_scores, reference_ontology, calibrate, output } => {
             if let Some(gs_path) = graph_scores {
-                run_benchmark_graph(dataset, gs_path, reference_ontology, output)
+                if calibrate {
+                    run_calibrate_graph(dataset, gs_path, output)
+                } else {
+                    run_benchmark_graph(dataset, gs_path, reference_ontology, output)
+                }
             } else if let Some(ext_path) = extractions {
                 run_benchmark_with_extractions(dataset, ext_path, output)
             } else {
@@ -1745,6 +1753,199 @@ fn run_benchmark_graph(
         let results_path = output_dir.join("graph-snn-results.json");
         std::fs::write(&results_path, serde_json::to_string_pretty(&[&result])?)?;
         println!("Results saved to: {}", results_path.display());
+    }
+
+    Ok(())
+}
+
+/// Self-calibrate SNN weights for graph-SNN scoring via Nelder-Mead.
+/// Optimizes the 9 ScoreWeights parameters to maximize Pearson r against expert scores.
+fn run_calibrate_graph(
+    dataset_path: Option<PathBuf>,
+    graph_scores_path: PathBuf,
+    output: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    use brain_in_the_fish_core::argument_graph;
+    use brain_in_the_fish_core::optimize;
+
+    println!("Self-calibrating SNN weights for graph-SNN scoring...\n");
+
+    let samples = if let Some(ref path) = dataset_path {
+        benchmark::load_dataset(path)?
+    } else {
+        benchmark::synthetic_dataset()
+    };
+
+    let gs_content = std::fs::read_to_string(&graph_scores_path)?;
+    let graph_score_entries: Vec<argument_graph::GraphScoreEntry> = serde_json::from_str(&gs_content)?;
+    let gs_map: std::collections::HashMap<String, &argument_graph::GraphScoreEntry> =
+        graph_score_entries.iter().map(|e| (e.id.clone(), e)).collect();
+
+    println!("Loaded {} samples, {} graph scores", samples.len(), graph_score_entries.len());
+
+    // Pre-build all argument graphs (expensive, do once)
+    let graphs: Vec<argument_graph::ArgumentGraph> = samples.iter().map(|sample| {
+        if let Some(gs_entry) = gs_map.get(&sample.id) {
+            if let Some(ref turtle) = gs_entry.turtle {
+                argument_graph::build_from_turtle(&sample.id, turtle, &gs_entry.node_scores)
+                    .unwrap_or_else(|_| argument_graph::build_from_node_scores(&sample.id, &gs_entry.node_scores))
+            } else {
+                argument_graph::build_from_node_scores(&sample.id, &gs_entry.node_scores)
+            }
+        } else {
+            argument_graph::build_from_text(&sample.text, &sample.id)
+        }
+    }).collect();
+
+    let actual: Vec<f64> = samples.iter().map(|s| s.expert_score).collect();
+
+    // Default weights as starting point
+    let default_weights = snn::ScoreWeights::default();
+    let initial = default_weights.to_params();
+    println!("Initial weights: {:?}", initial);
+
+    // Objective: minimize negative Pearson (= maximize Pearson)
+    let objective = |params: &[f64]| -> f64 {
+        let weights = snn::ScoreWeights::from_params(params);
+        let config = snn::SNNConfig { weights, ..Default::default() };
+
+        let mut predicted: Vec<f64> = Vec::with_capacity(samples.len());
+        for (i, sample) in samples.iter().enumerate() {
+            let intent = if sample.domain.is_empty() {
+                "academic essay evaluation".to_string()
+            } else {
+                format!("{} essay evaluation", sample.domain)
+            };
+            let framework = criteria::framework_for_intent(&intent);
+            let agents = agent::spawn_panel(&intent, &framework);
+
+            let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
+            for agent_item in &agents {
+                let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+                network.feed_argument_graph(&graphs[i], &config);
+                snn_networks.push(network);
+            }
+
+            let mut round1_scores: Vec<Score> = Vec::new();
+            for network in &snn_networks {
+                let snn_scores = network.compute_scores(&framework.criteria, &config);
+                for (criterion_id, snn_score) in &snn_scores {
+                    let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
+                    let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+                    round1_scores.push(Score {
+                        agent_id: network.agent_id.clone(),
+                        criterion_id: criterion_id.clone(),
+                        score: snn_score.snn_score,
+                        max_score,
+                        round: 1,
+                        justification: String::new(),
+                        evidence_used: vec![],
+                        gaps_identified: vec![],
+                    });
+                }
+            }
+
+            let moderated = moderation::calculate_moderated_scores(&round1_scores, &agents);
+            let overall = moderation::calculate_overall_score(&moderated, &framework);
+            predicted.push(overall.percentage / 100.0 * sample.max_score);
+        }
+
+        let pearson = benchmark::pearson_correlation(&predicted, &actual);
+        let mae = benchmark::mean_absolute_error(&predicted, &actual);
+
+        // Multi-objective: maximize Pearson, minimize MAE
+        // Weight Pearson more heavily since it's the primary metric
+        -pearson + mae * 0.01
+    };
+
+    // Run before
+    let before_loss = objective(&initial);
+    println!("Before calibration: loss={:.4} (Pearson~{:.3})\n", before_loss, -before_loss);
+
+    println!("Running Nelder-Mead optimization (500 iterations)...");
+    let (best_params, best_loss) = optimize::nelder_mead(&objective, &initial, 500, 1e-8);
+
+    let best_weights = snn::ScoreWeights::from_params(&best_params);
+    println!("\nCalibrated weights:");
+    println!("  w_saturation:  {:.4}", best_weights.w_saturation);
+    println!("  w_quality:     {:.4}", best_weights.w_quality);
+    println!("  w_firing:      {:.4}", best_weights.w_firing);
+    println!("  saturation_base: {:.2}", best_weights.saturation_base);
+    println!("  lr_quantified: {:.3}", best_weights.lr_quantified);
+    println!("  lr_evidence:   {:.3}", best_weights.lr_evidence);
+    println!("  lr_citation:   {:.3}", best_weights.lr_citation);
+    println!("  lr_alignment:  {:.3}", best_weights.lr_alignment);
+    println!("  lr_claim:      {:.3}", best_weights.lr_claim);
+    println!("\nBest loss: {:.4} (Pearson~{:.3})", best_loss, -best_loss);
+    println!("Improvement: {:.4} → {:.4}", before_loss, best_loss);
+
+    // Run final benchmark with calibrated weights
+    println!("\n--- Final benchmark with calibrated weights ---");
+    let config = snn::SNNConfig { weights: best_weights, ..Default::default() };
+
+    let mut predicted: Vec<f64> = Vec::new();
+    let mut hallucination_count = 0usize;
+    for (i, sample) in samples.iter().enumerate() {
+        let intent = if sample.domain.is_empty() {
+            "academic essay evaluation".to_string()
+        } else {
+            format!("{} essay evaluation", sample.domain)
+        };
+        let framework = criteria::framework_for_intent(&intent);
+        let agents = agent::spawn_panel(&intent, &framework);
+
+        let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
+        for agent_item in &agents {
+            let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+            network.feed_argument_graph(&graphs[i], &config);
+            snn_networks.push(network);
+        }
+        let mut round1_scores: Vec<Score> = Vec::new();
+        for network in &snn_networks {
+            let snn_scores = network.compute_scores(&framework.criteria, &config);
+            for (criterion_id, snn_score) in &snn_scores {
+                let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
+                let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+                round1_scores.push(Score {
+                    agent_id: network.agent_id.clone(),
+                    criterion_id: criterion_id.clone(),
+                    score: snn_score.snn_score,
+                    max_score,
+                    round: 1,
+                    justification: String::new(),
+                    evidence_used: vec![],
+                    gaps_identified: vec![],
+                });
+            }
+        }
+        let moderated = moderation::calculate_moderated_scores(&round1_scores, &agents);
+        let overall = moderation::calculate_overall_score(&moderated, &framework);
+        let pred = overall.percentage / 100.0 * sample.max_score;
+
+        if sample.max_score > 0.0 {
+            let np = pred / sample.max_score;
+            let na = sample.expert_score / sample.max_score;
+            if (np - na).abs() > 0.3 { hallucination_count += 1; }
+        }
+        predicted.push(pred);
+    }
+
+    let max_score_val = samples.iter().map(|s| s.max_score).fold(0.0f64, f64::max);
+    let pearson_r = benchmark::pearson_correlation(&predicted, &actual);
+    let qwk = benchmark::quadratic_weighted_kappa(&predicted, &actual, 0.0, max_score_val);
+    let mae = benchmark::mean_absolute_error(&predicted, &actual);
+    let rmse_val = benchmark::rmse(&predicted, &actual);
+    let nmae = if max_score_val > 0.0 { mae / max_score_val } else { 0.0 };
+    let hr = hallucination_count as f64 / samples.len() as f64;
+
+    println!("\n  Pearson r: {:.3} | QWK: {:.3} | MAE: {:.2} | NMAE: {:.3} | RMSE: {:.2} | Halluc: {} ({:.1}%)",
+        pearson_r, qwk, mae, nmae, rmse_val, hallucination_count, hr * 100.0);
+
+    if let Some(output_dir) = output {
+        std::fs::create_dir_all(&output_dir)?;
+        let weights_path = output_dir.join("calibrated-weights.json");
+        std::fs::write(&weights_path, serde_json::to_string_pretty(&best_params)?)?;
+        println!("Calibrated weights saved to: {}", weights_path.display());
     }
 
     Ok(())
