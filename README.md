@@ -103,20 +103,19 @@ Evidence scorer verdict: CONFIRMED
 LLM subagent scores: 7.0/12
 
 Ontology mapping:
-  arg:node_1  "computers improve test scores"                        → Thesis
-  arg:node_2  "78% of students... Smith & Johnson, 2023"             → Citation
-  arg:node_3  "National Technology Council 2022 report"              → Citation
+  arg:thesis [Thesis] score: 0.50  "Common claim, plausible"
+    └─ source: "According to Smith & Johnson (2023), 78% of students who use computers..."
+  arg:cite_1 [Citation] score: 0.25  "Generic author names, no DOI, unverifiable"
+    └─ source: "According to Smith & Johnson (2023), 78% of students..."
+  arg:cite_2 [Citation] score: 0.20  "Organisation may not exist, no URL or reference number"
+    └─ source: "The National Technology Council confirmed these findings in their landmark..."
 
-  Evidence nodes: 2 (citations)
-  Supporting edges: 2
+  arg:cite_1 supports arg:thesis
+  arg:cite_2 supports arg:thesis
+  Nodes: 3 | Evidence: 2 | Claims: 1 | Connectivity: 100%
 
 Evidence scorer verdict: FLAGGED
-  LLM said 7.0 → Graph has citations, but:
-  - Citations are unverifiable (no DOI, no URL, generic author names)
-  - Statistics lack source methodology ("studies show" without naming studies)
-  - Bayesian confidence: 0.41 (below threshold)
-  Score may exceed what evidence actually supports.
-  Confidence: LOW — requires human review.
+  LLM scored 7.0/12 but evidence supports ~3.8/12. (recommended: 3.8)
 ```
 
 ---
@@ -268,7 +267,7 @@ Tested on 10 adversarial essays designed to fool scoring systems:
 
 | Trick | LLM score | Evidence scorer | Correct? |
 | ----- | --------- | --------------- | -------- |
-| Fluent but empty (no argument) | 6.9/12 | FLAGGED — 0 evidence nodes | Yes |
+| Fluent but empty (no argument) | 6.9/12 | REJECTED — 0 evidence nodes | Yes |
 | Fabricated citations | 7.2/12 | FLAGGED — citations unverifiable | Yes |
 | Circular reasoning | 6.7/12 | FLAGGED — same claim repeated 5x | Yes |
 | Copy-paste repetition | 6.5/12 | FLAGGED — duplicate nodes detected | Yes |
