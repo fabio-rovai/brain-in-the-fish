@@ -97,6 +97,8 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Run the demo — shows 3 examples of the full pipeline with verdicts
+    Demo,
     /// View cross-evaluation history and trends
     History {
         /// History directory (default: ~/.brain-in-the-fish/history/)
@@ -170,6 +172,9 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 run_benchmark(dataset, ablation, multi_dataset, output)
             }
+        }
+        Commands::Demo => {
+            run_demo()
         }
         Commands::History { dir } => {
             run_history(dir)
@@ -1783,6 +1788,20 @@ fn run_calibrate_graph(
 
     println!("Loaded {} samples, {} graph scores", samples.len(), graph_score_entries.len());
 
+    // Train/test split: 50/50, deterministic shuffle using a seeded RNG
+    let mut indices: Vec<usize> = (0..samples.len()).collect();
+    // Simple deterministic shuffle (Fisher-Yates with fixed seed)
+    let mut seed: u64 = 42;
+    for i in (1..indices.len()).rev() {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let j = (seed >> 33) as usize % (i + 1);
+        indices.swap(i, j);
+    }
+    let split = indices.len() / 2;
+    let train_indices: Vec<usize> = indices[..split].to_vec();
+    let test_indices: Vec<usize> = indices[split..].to_vec();
+    println!("Train/test split: {}/{}", train_indices.len(), test_indices.len());
+
     // Pre-build all argument graphs (expensive, do once)
     let graphs: Vec<argument_graph::ArgumentGraph> = samples.iter().map(|sample| {
         if let Some(gs_entry) = gs_map.get(&sample.id) {
@@ -1804,65 +1823,50 @@ fn run_calibrate_graph(
     let initial = default_weights.to_params();
     println!("Initial weights: {:?}", initial);
 
-    // Objective: minimize negative Pearson (= maximize Pearson)
-    let objective = |params: &[f64]| -> f64 {
-        let weights = snn::ScoreWeights::from_params(params);
-        let config = snn::SNNConfig { weights, ..Default::default() };
-
-        let mut predicted: Vec<f64> = Vec::with_capacity(samples.len());
-        for (i, sample) in samples.iter().enumerate() {
+    // Helper: score a subset of samples with given params
+    let score_subset = |idx: &[usize], params: &[f64]| -> Vec<f64> {
+        let w = snn::ScoreWeights::from_params(params);
+        let cfg = snn::SNNConfig { weights: w, ..Default::default() };
+        idx.iter().map(|&i| {
+            let sample = &samples[i];
             let intent = if sample.domain.is_empty() {
                 "academic essay evaluation".to_string()
             } else {
                 format!("{} essay evaluation", sample.domain)
             };
             let framework = criteria::framework_for_intent(&intent);
-            let agents = agent::spawn_panel(&intent, &framework);
-
-            let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
-            for agent_item in &agents {
-                let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-                network.feed_argument_graph(&graphs[i], &config);
-                snn_networks.push(network);
-            }
-
-            let mut round1_scores: Vec<Score> = Vec::new();
-            for network in &snn_networks {
-                let snn_scores = network.compute_scores(&framework.criteria, &config);
-                for (criterion_id, snn_score) in &snn_scores {
-                    let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
-                    let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
-                    round1_scores.push(Score {
-                        agent_id: network.agent_id.clone(),
-                        criterion_id: criterion_id.clone(),
-                        score: snn_score.snn_score,
-                        max_score,
-                        round: 1,
-                        justification: String::new(),
-                        evidence_used: vec![],
-                        gaps_identified: vec![],
-                    });
+            let panel = agent::spawn_panel(&intent, &framework);
+            let nets: Vec<snn::AgentNetwork> = panel.iter().map(|a| {
+                let mut n = snn::AgentNetwork::new(a, &framework.criteria);
+                n.feed_argument_graph(&graphs[i], &cfg);
+                n
+            }).collect();
+            let mut scores: Vec<Score> = Vec::new();
+            for net in &nets {
+                for (cid, ss) in net.compute_scores(&framework.criteria, &cfg) {
+                    let ms = framework.criteria.iter().find(|c| c.id == cid).map(|c| c.max_score).unwrap_or(10.0);
+                    scores.push(Score { agent_id: net.agent_id.clone(), criterion_id: cid, score: ss.snn_score, max_score: ms, round: 1, justification: String::new(), evidence_used: vec![], gaps_identified: vec![] });
                 }
             }
-
-            let moderated = moderation::calculate_moderated_scores(&round1_scores, &agents);
+            let moderated = moderation::calculate_moderated_scores(&scores, &panel);
             let overall = moderation::calculate_overall_score(&moderated, &framework);
-            predicted.push(overall.percentage / 100.0 * sample.max_score);
-        }
+            overall.percentage / 100.0 * sample.max_score
+        }).collect()
+    };
 
-        let pearson = benchmark::pearson_correlation(&predicted, &actual);
-        let mae = benchmark::mean_absolute_error(&predicted, &actual);
-
-        // Multi-objective: maximize Pearson, minimize MAE
-        // Weight Pearson more heavily since it's the primary metric
+    // Objective: train on TRAIN set only
+    let objective = |params: &[f64]| -> f64 {
+        let predicted = score_subset(&train_indices, params);
+        let train_actual: Vec<f64> = train_indices.iter().map(|&i| actual[i]).collect();
+        let pearson = benchmark::pearson_correlation(&predicted, &train_actual);
+        let mae = benchmark::mean_absolute_error(&predicted, &train_actual);
         -pearson + mae * 0.01
     };
 
-    // Run before
     let before_loss = objective(&initial);
-    println!("Before calibration: loss={:.4} (Pearson~{:.3})\n", before_loss, -before_loss);
+    println!("Before calibration (train): loss={:.4}\n", before_loss);
 
-    println!("Running Nelder-Mead optimization (500 iterations)...");
+    println!("Running Nelder-Mead on TRAIN set ({} samples, 500 iterations)...", train_indices.len());
     let (best_params, best_loss) = optimize::nelder_mead(&objective, &initial, 500, 1e-8);
 
     let best_weights = snn::ScoreWeights::from_params(&best_params);
@@ -1876,77 +1880,195 @@ fn run_calibrate_graph(
     println!("  lr_citation:   {:.3}", best_weights.lr_citation);
     println!("  lr_alignment:  {:.3}", best_weights.lr_alignment);
     println!("  lr_claim:      {:.3}", best_weights.lr_claim);
-    println!("\nBest loss: {:.4} (Pearson~{:.3})", best_loss, -best_loss);
-    println!("Improvement: {:.4} → {:.4}", before_loss, best_loss);
+    println!("\nTrain loss: {:.4}", best_loss);
 
-    // Run final benchmark with calibrated weights
-    println!("\n--- Final benchmark with calibrated weights ---");
-    let config = snn::SNNConfig { weights: best_weights, ..Default::default() };
-
-    let mut predicted: Vec<f64> = Vec::new();
-    let mut hallucination_count = 0usize;
-    for (i, sample) in samples.iter().enumerate() {
-        let intent = if sample.domain.is_empty() {
-            "academic essay evaluation".to_string()
-        } else {
-            format!("{} essay evaluation", sample.domain)
-        };
-        let framework = criteria::framework_for_intent(&intent);
-        let agents = agent::spawn_panel(&intent, &framework);
-
-        let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
-        for agent_item in &agents {
-            let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-            network.feed_argument_graph(&graphs[i], &config);
-            snn_networks.push(network);
+    // Evaluate on HELD-OUT TEST set
+    println!("\n--- TEST set ({} held-out samples) ---", test_indices.len());
+    let test_pred = score_subset(&test_indices, &best_params);
+    let test_act: Vec<f64> = test_indices.iter().map(|&i| actual[i]).collect();
+    let test_max = test_indices.iter().map(|&i| samples[i].max_score).fold(0.0f64, f64::max);
+    let test_pearson = benchmark::pearson_correlation(&test_pred, &test_act);
+    let test_qwk = benchmark::quadratic_weighted_kappa(&test_pred, &test_act, 0.0, test_max);
+    let test_mae = benchmark::mean_absolute_error(&test_pred, &test_act);
+    let test_rmse = benchmark::rmse(&test_pred, &test_act);
+    let test_nmae = if test_max > 0.0 { test_mae / test_max } else { 0.0 };
+    let mut test_halluc = 0usize;
+    for (j, &i) in test_indices.iter().enumerate() {
+        if samples[i].max_score > 0.0 {
+            let np = test_pred[j] / samples[i].max_score;
+            let na = test_act[j] / samples[i].max_score;
+            if (np - na).abs() > 0.3 { test_halluc += 1; }
         }
-        let mut round1_scores: Vec<Score> = Vec::new();
-        for network in &snn_networks {
-            let snn_scores = network.compute_scores(&framework.criteria, &config);
-            for (criterion_id, snn_score) in &snn_scores {
-                let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
-                let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
-                round1_scores.push(Score {
-                    agent_id: network.agent_id.clone(),
-                    criterion_id: criterion_id.clone(),
-                    score: snn_score.snn_score,
-                    max_score,
-                    round: 1,
-                    justification: String::new(),
-                    evidence_used: vec![],
-                    gaps_identified: vec![],
-                });
-            }
-        }
-        let moderated = moderation::calculate_moderated_scores(&round1_scores, &agents);
-        let overall = moderation::calculate_overall_score(&moderated, &framework);
-        let pred = overall.percentage / 100.0 * sample.max_score;
-
-        if sample.max_score > 0.0 {
-            let np = pred / sample.max_score;
-            let na = sample.expert_score / sample.max_score;
-            if (np - na).abs() > 0.3 { hallucination_count += 1; }
-        }
-        predicted.push(pred);
     }
+    println!("  Pearson r: {:.3} | QWK: {:.3} | MAE: {:.2} | NMAE: {:.3} | RMSE: {:.2} | Halluc: {} ({:.1}%)",
+        test_pearson, test_qwk, test_mae, test_nmae, test_rmse, test_halluc, test_halluc as f64 / test_indices.len() as f64 * 100.0);
 
-    let max_score_val = samples.iter().map(|s| s.max_score).fold(0.0f64, f64::max);
-    let pearson_r = benchmark::pearson_correlation(&predicted, &actual);
-    let qwk = benchmark::quadratic_weighted_kappa(&predicted, &actual, 0.0, max_score_val);
-    let mae = benchmark::mean_absolute_error(&predicted, &actual);
-    let rmse_val = benchmark::rmse(&predicted, &actual);
-    let nmae = if max_score_val > 0.0 { mae / max_score_val } else { 0.0 };
-    let hr = hallucination_count as f64 / samples.len() as f64;
-
-    println!("\n  Pearson r: {:.3} | QWK: {:.3} | MAE: {:.2} | NMAE: {:.3} | RMSE: {:.2} | Halluc: {} ({:.1}%)",
-        pearson_r, qwk, mae, nmae, rmse_val, hallucination_count, hr * 100.0);
+    // Also report TRAIN set
+    println!("\n--- TRAIN set ({} samples) ---", train_indices.len());
+    let train_pred = score_subset(&train_indices, &best_params);
+    let train_act: Vec<f64> = train_indices.iter().map(|&i| actual[i]).collect();
+    let train_max = train_indices.iter().map(|&i| samples[i].max_score).fold(0.0f64, f64::max);
+    let train_pearson = benchmark::pearson_correlation(&train_pred, &train_act);
+    let train_qwk = benchmark::quadratic_weighted_kappa(&train_pred, &train_act, 0.0, train_max);
+    let train_mae = benchmark::mean_absolute_error(&train_pred, &train_act);
+    let train_rmse = benchmark::rmse(&train_pred, &train_act);
+    let train_nmae = if train_max > 0.0 { train_mae / train_max } else { 0.0 };
+    println!("  Pearson r: {:.3} | QWK: {:.3} | MAE: {:.2} | NMAE: {:.3} | RMSE: {:.2}",
+        train_pearson, train_qwk, train_mae, train_nmae, train_rmse);
 
     if let Some(output_dir) = output {
         std::fs::create_dir_all(&output_dir)?;
         let weights_path = output_dir.join("calibrated-weights.json");
         std::fs::write(&weights_path, serde_json::to_string_pretty(&best_params)?)?;
-        println!("Calibrated weights saved to: {}", weights_path.display());
+        println!("\nCalibrated weights saved to: {}", weights_path.display());
     }
+
+    Ok(())
+}
+
+/// Run the demo — 3 built-in examples showing the full pipeline with verdicts.
+fn run_demo() -> anyhow::Result<()> {
+    use brain_in_the_fish_core::argument_graph::{self, ArgumentGraph, ArgumentNode, ArgumentEdge, NodeType, EdgeType};
+
+    println!("Brain in the Fish — Demo\n");
+    println!("Three examples showing: LLM scores → ontology maps → evidence scorer gates.\n");
+    println!("{}\n", "=".repeat(70));
+
+    struct DemoCase {
+        title: &'static str,
+        text: &'static str,
+        llm_score: f64,
+        max_score: f64,
+        nodes: Vec<ArgumentNode>,
+        edges: Vec<ArgumentEdge>,
+    }
+
+    let cases = vec![
+        DemoCase {
+            title: "EXAMPLE 1: Eloquent essay, says nothing",
+            text: "In the grand tapestry of contemporary discourse, one finds oneself \
+                   inexorably drawn to the contemplation of matters that, by their very \
+                   nature, resist facile categorisation. The eloquence with which modern \
+                   thinkers have approached this particular question speaks volumes about \
+                   our collective capacity for nuanced engagement...",
+            llm_score: 6.9,
+            max_score: 12.0,
+            nodes: vec![
+                ArgumentNode { iri: "arg:node_1".into(), node_type: NodeType::SubClaim, text: "rhetorical flourish with zero identifiable claim".into(), llm_score: Some(0.10), llm_justification: Some("No subject, no position, no evidence".into()), source_text: Some("In the grand tapestry of contemporary discourse, one finds oneself inexorably drawn to the contemplation of matters that, by their very nature, resist facile categorisation.".into()), source_span: Some((0, 170)) },
+                ArgumentNode { iri: "arg:node_2".into(), node_type: NodeType::SubClaim, text: "admiring 'the conversation' without identifying it".into(), llm_score: Some(0.10), llm_justification: Some("Continues without substance".into()), source_text: Some("The eloquence with which modern thinkers have approached this particular question speaks volumes about our collective capacity for nuanced engagement.".into()), source_span: Some((171, 320)) },
+                ArgumentNode { iri: "arg:node_3".into(), node_type: NodeType::SubClaim, text: "claims implications but names none".into(), llm_score: Some(0.10), llm_justification: Some("Vague assertion".into()), source_text: Some("The implications of such considerations extend far beyond the boundaries of academic inquiry.".into()), source_span: Some((321, 413)) },
+                ArgumentNode { iri: "arg:node_4".into(), node_type: NodeType::SubClaim, text: "restates profundity without subject".into(), llm_score: Some(0.05), llm_justification: Some("Empty conclusion".into()), source_text: Some("It is precisely this quality of profundity that renders the matter worthy of our sustained attention.".into()), source_span: Some((414, 514)) },
+            ],
+            edges: vec![], // no connections — nothing supports anything
+        },
+        DemoCase {
+            title: "EXAMPLE 2: Three sentences, every word counts",
+            text: "Voting should be compulsory. Australia's mandatory voting, enacted in \
+                   1924, consistently yields 90%+ turnout and has produced more centrist \
+                   policy outcomes, according to Lijphart's analysis of 35 nations. \
+                   Compulsory voting eliminates the turnout gap between rich and poor that \
+                   Schlozman et al. documented at 30 percentage points.",
+            llm_score: 8.5,
+            max_score: 12.0,
+            nodes: vec![
+                ArgumentNode { iri: "arg:thesis".into(), node_type: NodeType::Thesis, text: "Voting should be compulsory".into(), llm_score: Some(0.85), llm_justification: Some("Clear, unambiguous thesis".into()), source_text: Some("Voting should be compulsory.".into()), source_span: Some((0, 28)) },
+                ArgumentNode { iri: "arg:ev_1".into(), node_type: NodeType::QuantifiedEvidence, text: "Australia 1924, 90%+ turnout, Lijphart 35 nations".into(), llm_score: Some(0.85), llm_justification: Some("Specific law, quantified outcome, named source".into()), source_text: Some("Australia's mandatory voting, enacted in 1924, consistently yields 90%+ turnout and has produced more centrist policy outcomes, according to Lijphart's analysis of 35 nations.".into()), source_span: Some((29, 203)) },
+                ArgumentNode { iri: "arg:ev_2".into(), node_type: NodeType::Citation, text: "Schlozman et al., 30pp turnout gap".into(), llm_score: Some(0.80), llm_justification: Some("Named researchers, specific statistic".into()), source_text: Some("Compulsory voting eliminates the turnout gap between rich and poor that Schlozman et al. documented at 30 percentage points.".into()), source_span: Some((204, 327)) },
+            ],
+            edges: vec![
+                ArgumentEdge { from: "arg:ev_1".into(), edge_type: EdgeType::Supports, to: "arg:thesis".into() },
+                ArgumentEdge { from: "arg:ev_2".into(), edge_type: EdgeType::Supports, to: "arg:thesis".into() },
+            ],
+        },
+        DemoCase {
+            title: "EXAMPLE 3: Well-written, fabricated citations",
+            text: "According to Smith & Johnson (2023), 78% of students who use computers \
+                   daily score 15% higher on standardised tests. The National Technology \
+                   Council confirmed these findings in their landmark 2022 report, which \
+                   surveyed over 50,000 students across 12 countries.",
+            llm_score: 7.0,
+            max_score: 12.0,
+            nodes: vec![
+                ArgumentNode { iri: "arg:thesis".into(), node_type: NodeType::Thesis, text: "computers improve test scores".into(), llm_score: Some(0.50), llm_justification: Some("Common claim, plausible".into()), source_text: Some("According to Smith & Johnson (2023), 78% of students who use computers daily score 15% higher on standardised tests.".into()), source_span: Some((0, 117)) },
+                ArgumentNode { iri: "arg:cite_1".into(), node_type: NodeType::Citation, text: "Smith & Johnson (2023), 78% statistic".into(), llm_score: Some(0.25), llm_justification: Some("Generic author names, no DOI, unverifiable".into()), source_text: Some("According to Smith & Johnson (2023), 78% of students who use computers daily score 15% higher on standardised tests.".into()), source_span: Some((0, 117)) },
+                ArgumentNode { iri: "arg:cite_2".into(), node_type: NodeType::Citation, text: "National Technology Council 2022 report".into(), llm_score: Some(0.20), llm_justification: Some("Organisation may not exist, no URL or reference number".into()), source_text: Some("The National Technology Council confirmed these findings in their landmark 2022 report, which surveyed over 50,000 students across 12 countries.".into()), source_span: Some((118, 260)) },
+            ],
+            edges: vec![
+                ArgumentEdge { from: "arg:cite_1".into(), edge_type: EdgeType::Supports, to: "arg:thesis".into() },
+                ArgumentEdge { from: "arg:cite_2".into(), edge_type: EdgeType::Supports, to: "arg:thesis".into() },
+            ],
+        },
+    ];
+
+    for case in &cases {
+        println!("{}\n", case.title);
+        println!("Text: \"{}...\"\n", &case.text[..case.text.len().min(120)]);
+        println!("LLM subagent score: {:.1}/{:.0}\n", case.llm_score, case.max_score);
+
+        // Build graph
+        let graph = ArgumentGraph {
+            doc_id: "demo".into(),
+            nodes: case.nodes.clone(),
+            edges: case.edges.clone(),
+        };
+
+        let metrics = argument_graph::compute_metrics(&graph);
+        println!("Ontology mapping:");
+        for node in &graph.nodes {
+            let type_str = match node.node_type {
+                NodeType::Thesis => "Thesis",
+                NodeType::SubClaim => "Claim",
+                NodeType::Evidence => "Evidence",
+                NodeType::QuantifiedEvidence => "QuantifiedEvidence",
+                NodeType::Citation => "Citation",
+                NodeType::Counter => "Counter",
+                NodeType::Rebuttal => "Rebuttal",
+                NodeType::Structural => "Structural",
+            };
+            println!("  {} [{:17}] score: {:.2}  \"{}\"",
+                node.iri, type_str,
+                node.llm_score.unwrap_or(0.0),
+                node.llm_justification.as_deref().unwrap_or(&node.text));
+            if let Some(ref src) = node.source_text {
+                let display = if src.len() > 80 { format!("{}...", &src[..80]) } else { src.clone() };
+                println!("    └─ source: \"{}\"", display);
+            }
+        }
+        for edge in &graph.edges {
+            let rel = match edge.edge_type {
+                EdgeType::Supports => "supports",
+                EdgeType::Counters => "counters",
+                EdgeType::Rebuts => "rebuts",
+                _ => "relates to",
+            };
+            println!("  {} {} {}", edge.from, rel, edge.to);
+        }
+        println!("\n  Nodes: {} | Evidence: {} | Claims: {} | Connectivity: {:.0}%",
+            metrics.node_count, metrics.evidence_count, metrics.claim_count,
+            metrics.connectivity * 100.0);
+
+        // Run SNN
+        let intent = "essay evaluation";
+        let framework = criteria::framework_for_intent(intent);
+        let agents = agent::spawn_panel(intent, &framework);
+        let snn_config = snn::SNNConfig::default();
+
+        let mut all_snn_scores = Vec::new();
+        for agent_item in &agents {
+            let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
+            network.feed_argument_graph(&graph, &snn_config);
+            let scores = network.compute_scores(&framework.criteria, &snn_config);
+            all_snn_scores.extend(scores);
+        }
+
+        // Gate
+        let verdict = snn::gate_score(case.llm_score, case.max_score, &graph, &all_snn_scores);
+        println!("\nEvidence scorer verdict: {}\n", verdict);
+        println!("{}\n", "-".repeat(70));
+    }
+
+    println!("Demo complete. The evidence scorer gates the LLM — it confirms,");
+    println!("flags, or rejects scores based on what the ontology actually contains.");
 
     Ok(())
 }

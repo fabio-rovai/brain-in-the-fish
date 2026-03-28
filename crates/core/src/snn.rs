@@ -476,6 +476,146 @@ pub struct SNNScore {
     pub confidence_interval: (f64, f64),
 }
 
+/// Verdict from the evidence scorer comparing LLM score against graph evidence.
+#[derive(Debug, Clone, Serialize)]
+pub enum Verdict {
+    /// Evidence supports the LLM score.
+    Confirmed {
+        reason: String,
+    },
+    /// Evidence is weaker than the LLM score implies. Includes recommended adjusted score.
+    Flagged {
+        reason: String,
+        recommended_score: f64,
+    },
+    /// No evidence at all. Score should be rejected.
+    Rejected {
+        reason: String,
+    },
+}
+
+impl std::fmt::Display for Verdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Verdict::Confirmed { reason } => write!(f, "CONFIRMED: {}", reason),
+            Verdict::Flagged { reason, recommended_score } => {
+                write!(f, "FLAGGED: {} (recommended: {:.1})", reason, recommended_score)
+            }
+            Verdict::Rejected { reason } => write!(f, "REJECTED: {}", reason),
+        }
+    }
+}
+
+/// Compare an LLM score against graph evidence and produce a verdict.
+///
+/// This is the gate: the scorer doesn't produce a competing score,
+/// it verifies whether the LLM's score is consistent with the evidence.
+pub fn gate_score(
+    llm_score: f64,
+    max_score: f64,
+    graph: &crate::argument_graph::ArgumentGraph,
+    snn_scores: &[(String, SNNScore)],
+) -> Verdict {
+    use crate::argument_graph;
+
+    let metrics = argument_graph::compute_metrics(graph);
+    let normalized_llm = if max_score > 0.0 { llm_score / max_score } else { 0.0 };
+
+    // Use average node quality from the graph (LLM's per-node scores)
+    let node_scores: Vec<f64> = graph.nodes.iter()
+        .filter_map(|n| n.llm_score)
+        .collect();
+    let avg_node_quality = if node_scores.is_empty() {
+        0.0
+    } else {
+        node_scores.iter().sum::<f64>() / node_scores.len() as f64
+    };
+
+    let avg_confidence = if snn_scores.is_empty() {
+        0.0
+    } else {
+        snn_scores.iter().map(|(_, s)| s.bayesian_confidence).sum::<f64>()
+            / snn_scores.len() as f64
+    };
+
+    let evidence_count = metrics.evidence_count;
+    let claim_count = metrics.claim_count;
+    let total_nodes = metrics.node_count;
+    let connectivity = metrics.connectivity;
+
+    // REJECTED: no evidence at all
+    if total_nodes == 0 || (evidence_count == 0 && claim_count == 0) {
+        return Verdict::Rejected {
+            reason: "No argument nodes found in knowledge graph. \
+                     Cannot verify any claims."
+                .into(),
+        };
+    }
+
+    // REJECTED: only bare claims, zero evidence
+    if evidence_count == 0 && normalized_llm > 0.3 {
+        return Verdict::Rejected {
+            reason: format!(
+                "{} claims found but 0 evidence nodes. \
+                 Score {:.1} has no evidentiary support.",
+                claim_count, llm_score
+            ),
+        };
+    }
+
+    // FLAGGED: LLM score significantly exceeds evidence
+    if normalized_llm > avg_node_quality + 0.25 && normalized_llm > 0.4 {
+        let recommended = avg_node_quality * max_score;
+        return Verdict::Flagged {
+            reason: format!(
+                "LLM scored {:.1}/{:.0} but evidence supports ~{:.1}/{:.0}. \
+                 Graph: {} nodes, {} evidence, {:.0}% connected, \
+                 Bayesian confidence {:.0}%.",
+                llm_score, max_score, recommended, max_score,
+                total_nodes, evidence_count,
+                connectivity * 100.0, avg_confidence * 100.0
+            ),
+            recommended_score: recommended,
+        };
+    }
+
+    // FLAGGED: LLM score significantly below evidence (underscoring)
+    if avg_node_quality > normalized_llm + 0.25 && avg_node_quality > 0.4 {
+        let recommended = avg_node_quality * max_score;
+        return Verdict::Flagged {
+            reason: format!(
+                "LLM scored {:.1}/{:.0} but evidence supports ~{:.1}/{:.0}. \
+                 Score may be too low for the evidence quality.",
+                llm_score, max_score, recommended, max_score,
+            ),
+            recommended_score: recommended,
+        };
+    }
+
+    // FLAGGED: low Bayesian confidence
+    if avg_confidence < 0.4 && normalized_llm > 0.5 {
+        return Verdict::Flagged {
+            reason: format!(
+                "Bayesian confidence {:.0}% is below threshold. \
+                 Evidence may be unverifiable or low quality.",
+                avg_confidence * 100.0
+            ),
+            recommended_score: llm_score * avg_confidence,
+        };
+    }
+
+    // CONFIRMED: evidence is consistent with LLM score
+    Verdict::Confirmed {
+        reason: format!(
+            "Evidence supports score {:.1}/{:.0}. Graph: {} nodes ({} evidence, {} claims), \
+             {:.0}% connected, Bayesian confidence {:.0}%.",
+            llm_score, max_score,
+            total_nodes, evidence_count, claim_count,
+            connectivity * 100.0, avg_confidence * 100.0
+        ),
+    }
+}
+
 impl AgentNetwork {
     /// Create a network for an agent with one neuron per criterion.
     pub fn new(agent: &EvaluatorAgent, criteria: &[EvaluationCriterion]) -> Self {

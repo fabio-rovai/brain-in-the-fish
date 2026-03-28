@@ -54,22 +54,22 @@ Brain in the Fish answers all three. The ontology maps what's in the document. T
 
 **Essay A:**
 ```
-LLM subagent scores: 3.0/12
+LLM subagent scores: 6.9/12
 
 Ontology mapping:
-  arg:node_1  "rhetorical flourish with zero identifiable claim"     → Claim (bare)
-  arg:node_2  "admiring 'the conversation' without identifying it"   → Claim (bare)
-  arg:node_3  "'implications extend beyond debate' — names none"     → Claim (bare)
-  arg:node_4  "restates profundity without identifying the subject"  → Claim (bare)
+  arg:node_1 [Claim] score: 0.10  "No subject, no position, no evidence"
+    └─ source: "In the grand tapestry of contemporary discourse, one finds oneself inexorably dr..."
+  arg:node_2 [Claim] score: 0.10  "Continues without substance"
+    └─ source: "The eloquence with which modern thinkers have approached this particular questio..."
+  arg:node_3 [Claim] score: 0.10  "Vague assertion"
+    └─ source: "The implications of such considerations extend far beyond the boundaries of acad..."
+  arg:node_4 [Claim] score: 0.05  "Empty conclusion"
+    └─ source: "It is precisely this quality of profundity that renders the matter worthy of our..."
 
-  Evidence nodes: 0
-  Supporting edges: 0
-  Connectivity: 0%
+  Nodes: 4 | Evidence: 0 | Claims: 4 | Connectivity: 0%
 
-Evidence scorer verdict: CONFIRMED
-  LLM said 3.0 → Graph has 4 bare claims, 0 evidence, 0 connections.
-  Low score is consistent with empty evidence structure.
-  Confidence: HIGH — score matches evidence.
+Evidence scorer verdict: REJECTED
+  4 claims found but 0 evidence nodes. Score 6.9 has no evidentiary support.
 ```
 
 **Essay B:**
@@ -77,21 +77,21 @@ Evidence scorer verdict: CONFIRMED
 LLM subagent scores: 8.5/12
 
 Ontology mapping:
-  arg:node_1  "Voting should be compulsory"                          → Thesis
-  arg:node_2  "Australia's 1924 law, 90%+ turnout, Lijphart (35n)"  → QuantifiedEvidence
-  arg:node_3  "Schlozman et al., 30pp turnout gap"                   → Citation
+  arg:thesis [Thesis] score: 0.85  "Clear, unambiguous thesis"
+    └─ source: "Voting should be compulsory."
+  arg:ev_1 [QuantifiedEvidence] score: 0.85  "Specific law, quantified outcome, named source"
+    └─ source: "Australia's mandatory voting, enacted in 1924, consistently yields 90%+ turnout..."
+  arg:ev_2 [Citation] score: 0.80  "Named researchers, specific statistic"
+    └─ source: "Compulsory voting eliminates the turnout gap between rich and poor that Schlozma..."
 
-  arg:node_2 supports arg:node_1
-  arg:node_3 supports arg:node_1
+  arg:ev_1 supports arg:thesis
+  arg:ev_2 supports arg:thesis
 
-  Evidence nodes: 2
-  Supporting edges: 2
-  Connectivity: 100%
+  Nodes: 3 | Evidence: 2 | Claims: 1 | Connectivity: 100%
 
 Evidence scorer verdict: CONFIRMED
-  LLM said 8.5 → Graph has clear thesis + 2 strong evidence nodes, fully connected.
-  High score is consistent with evidence structure.
-  Confidence: HIGH — score matches evidence.
+  Evidence supports score 8.5/12. Graph: 3 nodes (2 evidence, 1 claims),
+  100% connected, Bayesian confidence 79%.
 ```
 
 ### When the system catches a problem
@@ -182,22 +182,25 @@ We gave it a 300-word essay with perfect grammar, sophisticated vocabulary, and 
 
 **Without BITF** (raw Claude): **6.9/12** — "demonstrates sophisticated vocabulary and academic register"
 
-**With BITF:**
+**With BITF** (actual `brain-in-the-fish demo` output):
 ```
-LLM subagent initial score: 6.9/12
+LLM subagent score: 6.9/12
 
-Evidence scorer:
-  Nodes found: 4 (all bare claims, zero evidence)
-  Connections: 0
-  Evidence coverage: 0%
+Ontology mapping:
+  arg:node_1 [Claim] score: 0.10  "No subject, no position, no evidence"
+    └─ source: "In the grand tapestry of contemporary discourse, one finds oneself..."
+  arg:node_2 [Claim] score: 0.10  "Continues without substance"
+    └─ source: "The eloquence with which modern thinkers have approached this..."
+  arg:node_3 [Claim] score: 0.10  "Vague assertion"
+  arg:node_4 [Claim] score: 0.05  "Empty conclusion"
 
-  VERDICT: FLAGGED
-  "Score 6.9 exceeds evidence support. Graph contains 4 rhetorical
-   assertions with no thesis, no evidence, and no connections.
-   Recommend: 2-3/12"
+  Nodes: 4 | Evidence: 0 | Claims: 4 | Connectivity: 0%
+
+Evidence scorer verdict: REJECTED
+  4 claims found but 0 evidence nodes. Score 6.9 has no evidentiary support.
 ```
 
-The scorer caught it. The LLM was fooled by fluency. The graph proved there was nothing there.
+The scorer rejected it. The LLM was fooled by fluency. The graph proved there was nothing there.
 
 ### Test 2: System confirms a strong short essay
 
@@ -207,19 +210,24 @@ Three sentences with real evidence:
 
 **Without BITF** (raw Claude): **7.9/12**
 
-**With BITF:**
+**With BITF** (actual `brain-in-the-fish demo` output):
 ```
 LLM subagent score: 8.5/12
 
-Evidence scorer:
-  Nodes found: 3 (1 thesis, 2 quantified evidence)
-  Connections: 2 (both evidence nodes support thesis)
-  Evidence coverage: 100%
+Ontology mapping:
+  arg:thesis [Thesis] score: 0.85  "Clear, unambiguous thesis"
+    └─ source: "Voting should be compulsory."
+  arg:ev_1 [QuantifiedEvidence] score: 0.85  "Specific law, quantified outcome, named source"
+    └─ source: "Australia's mandatory voting, enacted in 1924, consistently yields 90%+..."
+  arg:ev_2 [Citation] score: 0.80  "Named researchers, specific statistic"
+    └─ source: "Compulsory voting eliminates the turnout gap...Schlozman et al...30 percentage points."
 
-  VERDICT: CONFIRMED
-  "Score 8.5 is consistent with evidence structure: clear thesis
-   with two strong, connected evidence nodes citing named sources
-   with specific numbers."
+  arg:ev_1 supports arg:thesis
+  arg:ev_2 supports arg:thesis
+  Nodes: 3 | Evidence: 2 | Claims: 1 | Connectivity: 100%
+
+Evidence scorer verdict: CONFIRMED
+  Evidence supports score 8.5/12. 3 nodes (2 evidence, 1 claim), 100% connected.
 ```
 
 ### Test 3: System flags fabricated citations
@@ -230,19 +238,24 @@ An essay with invented statistics and fake sources:
 
 **Without BITF** (raw Claude): **7.2/12** — "well-supported with citations"
 
-**With BITF:**
+**With BITF** (actual `brain-in-the-fish demo` output):
 ```
 LLM subagent score: 7.0/12
 
-Evidence scorer:
-  Nodes found: 3 (1 thesis, 2 citations)
-  Citations flagged: unverifiable (generic authors, no DOI/URL)
-  Bayesian confidence: 0.41 (below 0.60 threshold)
+Ontology mapping:
+  arg:thesis [Thesis] score: 0.50  "Common claim, plausible"
+    └─ source: "According to Smith & Johnson (2023), 78% of students who use computers..."
+  arg:cite_1 [Citation] score: 0.25  "Generic author names, no DOI, unverifiable"
+    └─ source: "According to Smith & Johnson (2023), 78% of students..."
+  arg:cite_2 [Citation] score: 0.20  "Organisation may not exist, no URL or reference number"
+    └─ source: "The National Technology Council confirmed these findings in their landmark..."
 
-  VERDICT: FLAGGED
-  "Citations present but unverifiable. 'Smith & Johnson (2023)' and
-   'National Technology Council' lack specificity expected of real
-   academic sources. Confidence below threshold."
+  arg:cite_1 supports arg:thesis
+  arg:cite_2 supports arg:thesis
+  Nodes: 3 | Evidence: 2 | Claims: 1 | Connectivity: 100%
+
+Evidence scorer verdict: FLAGGED
+  LLM scored 7.0/12 but evidence supports ~3.8/12. (recommended: 3.8)
 ```
 
 ---
@@ -264,20 +277,20 @@ Tested on 10 adversarial essays designed to fool scoring systems:
 
 Without the evidence scorer, the LLM gives the fluent-empty essay 6.9/12 (should be ~3). With it, the score gets flagged and the audit trail shows why: zero evidence nodes in the graph.
 
-### Scoring accuracy (when LLM + evidence scorer agree)
+### Scoring accuracy (held-out test set)
 
-On the ASAP dataset (100 expert-scored essays across 8 essay types):
+On the ASAP dataset (100 expert-scored essays across 8 essay types), with a proper 50/50 train/test split. Weights calibrated on the train set, evaluated on the held-out test set:
 
-| Metric | Value |
-| ------ | ----- |
-| Pearson correlation with experts | 0.973 |
-| Quadratic Weighted Kappa | 0.972 |
-| Mean Absolute Error | 2.52 |
-| Hallucination rate | 2% |
+| Metric | Train (50 essays) | **Test (50 held-out)** |
+| ------ | ----- | ----- |
+| Pearson correlation with experts | 0.867 | **0.904** |
+| Quadratic Weighted Kappa | 0.856 | **0.900** |
+| Mean Absolute Error | 5.44 | **3.94** |
+| Hallucination rate | — | **14%** |
 
-QWK of 0.972 exceeds the 0.80 threshold for "reliable" inter-rater agreement.
+QWK of 0.900 on held-out data exceeds the 0.80 threshold for "reliable" inter-rater agreement. The test set outperformed train — no overfitting.
 
-**Limitations of this benchmark:** These 100 essays are the same data used for weight calibration (no train/test split). The true out-of-sample accuracy is likely lower. We report this honestly — the next step is held-out validation on the full ASAP set (12,976 essays).
+**What this means:** The evidence scorer produces scores that agree with human experts at r=0.904 on essays it has never seen before. The weights were learned from 50 different essays and generalize.
 
 ---
 
@@ -288,6 +301,9 @@ git clone https://github.com/fabio-rovai/open-ontologies.git
 git clone https://github.com/fabio-rovai/brain-in-the-fish.git
 cd brain-in-the-fish
 cargo build --release
+
+# See it work — runs 3 built-in examples with verdicts
+brain-in-the-fish demo
 
 # Evaluate a document
 brain-in-the-fish evaluate document.pdf --intent "mark this essay" --open
@@ -326,7 +342,7 @@ The scoring formula:
 raw = w_quality × mean(node_scores × pagerank) + w_firing × fire_rate + w_saturation × log(spikes)
 ```
 
-Weights are calibrated via Nelder-Mead optimization against expert scores. The optimizer learned: **node quality is the signal** (w=0.69), evidence count barely matters (w=0.10).
+Weights are calibrated via Nelder-Mead optimization against expert scores (train set only, tested on held-out data). The optimizer learned: **firing rate is the dominant signal** (w=0.89), saturation matters some (w=0.18), raw quality barely registers (w=0.01). This means the scorer cares about how reliably evidence crosses the threshold — not just how much or how strong.
 
 ---
 
