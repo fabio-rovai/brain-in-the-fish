@@ -12,8 +12,9 @@ pub mod llm;
 pub mod research;
 pub mod orchestrator;
 pub mod server;
+pub mod gate;
 pub mod rules;
-pub mod snn;
+pub mod snn; // deprecated — use gate module instead
 pub mod memory;
 pub mod batch;
 pub mod semantic;

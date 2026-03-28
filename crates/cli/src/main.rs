@@ -2047,22 +2047,9 @@ fn run_demo() -> anyhow::Result<()> {
             metrics.node_count, metrics.evidence_count, metrics.claim_count,
             metrics.connectivity * 100.0);
 
-        // Run SNN
-        let intent = "essay evaluation";
-        let framework = criteria::framework_for_intent(intent);
-        let agents = agent::spawn_panel(intent, &framework);
-        let snn_config = snn::SNNConfig::default();
-
-        let mut all_snn_scores = Vec::new();
-        for agent_item in &agents {
-            let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-            network.feed_argument_graph(&graph, &snn_config);
-            let scores = network.compute_scores(&framework.criteria, &snn_config);
-            all_snn_scores.extend(scores);
-        }
-
-        // Gate
-        let verdict = snn::gate_score(case.llm_score, case.max_score, &graph, &all_snn_scores);
+        // Gate — no SNN, just structural + quality verification
+        let gate_weights = brain_in_the_fish_core::gate::GateWeights::default();
+        let verdict = brain_in_the_fish_core::gate::check(case.llm_score, case.max_score, &graph, &gate_weights);
         println!("\nEvidence scorer verdict: {}\n", verdict);
         println!("{}\n", "-".repeat(70));
     }
