@@ -2,8 +2,8 @@
 //!
 //! An essay's argument structure is represented as a typed knowledge graph:
 //! nodes (claims, evidence, warrants, counters) connected by edges (supports,
-//! counters, warrants). The subagent scores individual nodes; the SNN aggregates
-//! using graph topology (PageRank-weighted).
+//! counters, warrants). The subagent scores individual nodes; structural scoring
+//! aggregates using graph topology (PageRank-weighted).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -657,7 +657,7 @@ pub fn compute_pagerank(graph: &ArgumentGraph, damping: f64, iterations: usize) 
 }
 
 /// Compute structural metrics from the argument graph.
-/// These become additional signals for the SNN.
+/// These become additional signals for the gate and structural scoring.
 pub struct GraphMetrics {
     pub node_count: usize,
     pub edge_count: usize,

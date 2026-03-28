@@ -4,8 +4,7 @@
 //! Stage 2: LLM-assisted (catches implicit claims, complex arguments)
 //! Stage 3: Confidence scoring (each item gets extraction_method + confidence + provenance)
 //!
-//! The SNN spike strength is modulated by extraction confidence:
-//!   spike_strength = base_strength × extraction_confidence
+//! Extraction confidence is used as a weight for structural scoring.
 
 use crate::types::*;
 use serde::{Deserialize, Serialize};
@@ -358,7 +357,11 @@ pub fn to_claims_and_evidence(items: &[ExtractedItem]) -> (Vec<Claim>, Vec<Evide
     (claims, evidence)
 }
 
-/// Compute SNN spike strength modulated by extraction confidence.
+/// Compute confidence-weighted strength for an extracted item.
+///
+/// Formerly `spike_strength` (SNN legacy). Now used as a general
+/// confidence multiplier for structural scoring pipelines.
+#[deprecated(note = "Use item.confidence directly — SNN removed")]
 pub fn spike_strength(base: f64, item: &ExtractedItem) -> f64 {
     base * item.confidence
 }
@@ -529,6 +532,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_spike_strength_modulation() {
         let item_high = ExtractedItem {
             id: "1".into(),

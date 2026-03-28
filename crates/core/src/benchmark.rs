@@ -39,6 +39,8 @@ pub struct BenchmarkResults {
 /// Which components are enabled for this run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkConfig {
+    /// Enable structural scoring (formerly SNN — legacy name kept for serde compat).
+    #[serde(alias = "use_structural_scoring")]
     pub use_snn: bool,
     pub use_ontology_alignment: bool,
     pub use_debate: bool,
@@ -51,7 +53,7 @@ pub struct BenchmarkConfig {
 impl Default for BenchmarkConfig {
     fn default() -> Self {
         Self {
-            use_snn: true,
+            use_snn: true, // structural scoring (SNN removed)
             use_ontology_alignment: true,
             use_debate: true,
             use_validation: true,
@@ -213,8 +215,8 @@ pub fn ablation_configs() -> Vec<BenchmarkConfig> {
             ..Default::default()
         },
         BenchmarkConfig {
-            use_snn: false,
-            label: "no_snn".into(),
+            use_snn: false, // disable structural scoring
+            label: "no_structural".into(),
             ..Default::default()
         },
         BenchmarkConfig {
@@ -479,8 +481,8 @@ mod tests {
     fn test_ablation_configs() {
         let configs = ablation_configs();
         assert_eq!(configs.len(), 5);
-        assert!(configs[0].use_snn); // full pipeline
-        assert!(!configs[1].use_snn); // no_snn
+        assert!(configs[0].use_snn); // full pipeline (structural scoring)
+        assert!(!configs[1].use_snn); // no_structural
     }
 
     #[test]

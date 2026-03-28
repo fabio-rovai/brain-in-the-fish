@@ -290,7 +290,7 @@ pub fn compute_metrics(
 
 /// Run the deterministic pipeline on a single essay and return the EDS score (0.0-1.0).
 pub fn eds_score_essay(sample: &LabeledSample, intent: &str) -> f64 {
-    use crate::{agent, alignment, criteria, extract, snn, validate};
+    use crate::{alignment, argument_graph, criteria, extract, validate};
 
     // 1. Build document
     let word_count = sample.text.split_whitespace().count() as u32;
@@ -326,84 +326,30 @@ pub fn eds_score_essay(sample: &LabeledSample, intent: &str) -> f64 {
     let framework = criteria::framework_for_intent(intent);
 
     // 4. Align
-    let (alignments, _) = alignment::align_sections_to_criteria(&doc, &framework);
+    let (_alignments, _) = alignment::align_sections_to_criteria(&doc, &framework);
 
     // 5. Validate
     let validation_signals = validate::validate_core(&doc, &framework);
 
-    // 6. Spawn agents + SNN score
-    let agents = agent::spawn_panel(intent, &framework);
-    let snn_config = snn::SNNConfig::default();
+    // 6. Structural scoring (replaces SNN)
+    let graph = argument_graph::build_from_document(&doc);
+    let metrics = argument_graph::compute_metrics(&graph);
+    let base_score = argument_graph::structural_score(&metrics);
 
-    let mut all_scores = Vec::new();
-    for agent_item in &agents {
-        let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-        network.feed_evidence(&doc, &alignments, &snn_config);
+    // Apply validation signal adjustments
+    let validation_adjustment: f64 = validation_signals
+        .iter()
+        .map(|s| s.spike_effect * 0.05) // scale signals to small adjustments
+        .sum();
 
-        // Feed validation signals
-        for signal in &validation_signals {
-            if signal.spike_effect.abs() > 0.01 {
-                for neuron in &mut network.neurons {
-                    let matches = signal.criterion_id.is_none()
-                        || signal.criterion_id.as_deref() == Some(&neuron.criterion_id);
-                    if matches {
-                        neuron.receive_spike(
-                            snn::Spike {
-                                source_id: signal.id.clone(),
-                                strength: signal.spike_effect.abs(),
-                                spike_type: if signal.spike_effect > 0.0 {
-                                    snn::SpikeType::Evidence
-                                } else {
-                                    snn::SpikeType::Claim
-                                },
-                                timestep: 0,
-                                source_text: None,
-                                justification: None,
-                            },
-                            &snn_config,
-                        );
-                        if signal.spike_effect < 0.0 {
-                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.2);
-                        }
-                    }
-                }
-            }
-        }
+    let score = (base_score + validation_adjustment).clamp(0.0, 1.0);
 
-        // Compute scores
-        for neuron in &network.neurons {
-            let criterion = framework
-                .criteria
-                .iter()
-                .find(|c| c.id == neuron.criterion_id);
-            if let Some(crit) = criterion {
-                let snn_score = neuron.compute_score(crit.max_score, &snn_config);
-                all_scores.push((snn_score.snn_score, crit.max_score, crit.weight));
-            }
-        }
-    }
-
-    // 7. Compute weighted average across all agents and criteria
-    if all_scores.is_empty() {
-        return 0.0;
-    }
-
-    // Average across agents for each criterion, then weighted sum
+    // 7. Weight by criteria
     let mut weighted_sum = 0.0;
     let mut weight_sum = 0.0;
-
     for crit in &framework.criteria {
-        let crit_scores: Vec<f64> = all_scores
-            .iter()
-            .filter(|(_, max, _)| (*max - crit.max_score).abs() < 0.01)
-            .map(|(score, max, _)| score / max)
-            .collect();
-
-        if !crit_scores.is_empty() {
-            let mean_pct = crit_scores.iter().sum::<f64>() / crit_scores.len() as f64;
-            weighted_sum += mean_pct * crit.weight;
-            weight_sum += crit.weight;
-        }
+        weighted_sum += score * crit.weight;
+        weight_sum += crit.weight;
     }
 
     if weight_sum > 0.0 {
@@ -413,132 +359,17 @@ pub fn eds_score_essay(sample: &LabeledSample, intent: &str) -> f64 {
     }
 }
 
-/// Run the deterministic pipeline on a single essay with a custom SNN config.
+/// Run the deterministic pipeline on a single essay.
 /// Returns the EDS score (0.0-1.0).
+///
+/// Previously accepted an `SNNConfig`; the SNN has been removed.
+/// This now delegates to `eds_score_essay` — kept for API compatibility.
+#[deprecated(note = "Use eds_score_essay instead — SNN config no longer used")]
 pub fn eds_score_essay_with_config(
     sample: &LabeledSample,
     intent: &str,
-    snn_config: &crate::snn::SNNConfig,
 ) -> f64 {
-    use crate::{agent, alignment, criteria, extract, snn, validate};
-
-    // 1. Build document
-    let word_count = sample.text.split_whitespace().count() as u32;
-    let mut section = crate::types::Section {
-        id: uuid::Uuid::new_v4().to_string(),
-        title: "Essay".into(),
-        text: sample.text.clone(),
-        word_count,
-        page_range: None,
-        claims: vec![],
-        evidence: vec![],
-        subsections: vec![],
-    };
-
-    // 2. Extract claims/evidence
-    let extracted = extract::extract_all(&section.text);
-    let (claims, evidence) = extract::to_claims_and_evidence(&extracted);
-    if !claims.is_empty() || !evidence.is_empty() {
-        section.claims = claims;
-        section.evidence = evidence;
-    }
-
-    let doc = crate::types::EvalDocument {
-        id: sample.id.clone(),
-        title: format!("Essay: {}", sample.id),
-        doc_type: "essay".into(),
-        total_pages: None,
-        total_word_count: Some(word_count),
-        sections: vec![section],
-    };
-
-    // 3. Load criteria
-    let framework = criteria::framework_for_intent(intent);
-
-    // 4. Align
-    let (alignments, _) = alignment::align_sections_to_criteria(&doc, &framework);
-
-    // 5. Validate
-    let validation_signals = validate::validate_core(&doc, &framework);
-
-    // 6. Spawn agents + SNN score
-    let agents = agent::spawn_panel(intent, &framework);
-
-    let mut all_scores = Vec::new();
-    for agent_item in &agents {
-        let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-        network.feed_evidence(&doc, &alignments, snn_config);
-
-        // Feed validation signals
-        for signal in &validation_signals {
-            if signal.spike_effect.abs() > 0.01 {
-                for neuron in &mut network.neurons {
-                    let matches = signal.criterion_id.is_none()
-                        || signal.criterion_id.as_deref() == Some(&neuron.criterion_id);
-                    if matches {
-                        neuron.receive_spike(
-                            snn::Spike {
-                                source_id: signal.id.clone(),
-                                strength: signal.spike_effect.abs(),
-                                spike_type: if signal.spike_effect > 0.0 {
-                                    snn::SpikeType::Evidence
-                                } else {
-                                    snn::SpikeType::Claim
-                                },
-                                timestep: 0,
-                                source_text: None,
-                                justification: None,
-                            },
-                            snn_config,
-                        );
-                        if signal.spike_effect < 0.0 {
-                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.2);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Compute scores
-        for neuron in &network.neurons {
-            let criterion = framework
-                .criteria
-                .iter()
-                .find(|c| c.id == neuron.criterion_id);
-            if let Some(crit) = criterion {
-                let snn_score = neuron.compute_score(crit.max_score, snn_config);
-                all_scores.push((snn_score.snn_score, crit.max_score, crit.weight));
-            }
-        }
-    }
-
-    // 7. Compute weighted average across all agents and criteria
-    if all_scores.is_empty() {
-        return 0.0;
-    }
-
-    let mut weighted_sum = 0.0;
-    let mut weight_sum = 0.0;
-
-    for crit in &framework.criteria {
-        let crit_scores: Vec<f64> = all_scores
-            .iter()
-            .filter(|(_, max, _)| (*max - crit.max_score).abs() < 0.01)
-            .map(|(score, max, _)| score / max)
-            .collect();
-
-        if !crit_scores.is_empty() {
-            let mean_pct = crit_scores.iter().sum::<f64>() / crit_scores.len() as f64;
-            weighted_sum += mean_pct * crit.weight;
-            weight_sum += crit.weight;
-        }
-    }
-
-    if weight_sum > 0.0 {
-        weighted_sum / weight_sum
-    } else {
-        0.0
-    }
+    eds_score_essay(sample, intent)
 }
 
 /// Blended metrics results: subagent, EDS, blended, and optionally calibrated.

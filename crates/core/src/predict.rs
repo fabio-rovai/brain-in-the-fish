@@ -4,11 +4,11 @@
 //! and assesses their credibility based on the evidence presented.
 //!
 //! NOTE: Benchmark shows subagent prediction matches raw Claude performance.
-//! The value of this module is structured extraction + SNN verification +
+//! The value of this module is structured extraction + evidence verification +
 //! audit trail, not improved accuracy over the base model.
 //!
 //! Stage 1: Subagent extraction (LLM-powered via extraction_prompt, with rule-based fallback)
-//! Stage 2: SNN verification (checks evidence actually exists and supports the prediction)
+//! Stage 2: Evidence verification (checks evidence actually exists and supports the prediction)
 //!
 //! This is NOT forecasting (MiroFish-style hallucination). It evaluates
 //! whether predictions WITHIN the document are supported by evidence
@@ -62,7 +62,7 @@ pub enum CredibilityVerdict {
     OverClaimed,        // Claims exceed what evidence supports
 }
 
-/// Result of SNN verification for a prediction.
+/// Result of evidence verification for a prediction.
 #[derive(Debug, Clone, Serialize)]
 pub struct VerificationResult {
     pub prediction_id: String,
@@ -510,13 +510,13 @@ pub fn assess_credibility(predictions: &mut [Prediction], doc: &EvalDocument) {
 }
 
 // ============================================================================
-// Stage 2: SNN Verification
+// Stage 2: Evidence Verification
 // ============================================================================
 
-/// Verify a prediction's credibility using the SNN evidence graph.
+/// Verify a prediction's credibility against extracted evidence.
 /// Checks if the claimed supporting evidence actually exists in the document
 /// and if evidence text actually supports what the prediction claims.
-pub fn verify_with_snn(
+pub fn verify_with_evidence(
     prediction: &Prediction,
     _doc: &EvalDocument,
     extracted_items: &[ExtractedItem],
@@ -560,9 +560,9 @@ pub fn verify_with_snn(
 
     let verified = evidence_found > 0;
     let flag = if !verified && prediction.credibility.score > 0.5 {
-        Some("UNVERIFIABLE: Subagent rated high credibility but SNN found no supporting evidence".into())
+        Some("UNVERIFIABLE: Subagent rated high credibility but no supporting evidence found".into())
     } else if verified && prediction.credibility.score < 0.2 {
-        Some("SNN CONFIRMS: Evidence exists but credibility rated low -- may be understated".into())
+        Some("EVIDENCE CONFIRMS: Evidence exists but credibility rated low -- may be understated".into())
     } else {
         None
     };
@@ -578,15 +578,25 @@ pub fn verify_with_snn(
     }
 }
 
-/// Run SNN verification on all predictions against extracted items.
+/// Run evidence verification on all predictions against extracted items.
 pub fn verify_all(
     predictions: &[Prediction],
     doc: &EvalDocument,
     extracted_items: &[ExtractedItem],
 ) -> Vec<VerificationResult> {
     predictions.iter()
-        .map(|p| verify_with_snn(p, doc, extracted_items))
+        .map(|p| verify_with_evidence(p, doc, extracted_items))
         .collect()
+}
+
+/// Backwards-compatible alias for `verify_with_evidence`.
+#[deprecated(note = "Renamed to verify_with_evidence — SNN removed")]
+pub fn verify_with_snn(
+    prediction: &Prediction,
+    doc: &EvalDocument,
+    extracted_items: &[ExtractedItem],
+) -> VerificationResult {
+    verify_with_evidence(prediction, doc, extracted_items)
 }
 
 // ============================================================================
@@ -598,7 +608,7 @@ pub fn prediction_report(predictions: &[Prediction]) -> String {
     prediction_report_with_verification(predictions, &[])
 }
 
-/// Generate a prediction credibility report section with SNN verification results.
+/// Generate a prediction credibility report section with evidence verification results.
 pub fn prediction_report_with_verification(
     predictions: &[Prediction],
     verifications: &[VerificationResult],
@@ -610,7 +620,7 @@ pub fn prediction_report_with_verification(
     let mut r = String::from("## Prediction Credibility\n\n");
     r.push_str(&format!("{} predictions/targets extracted from the document.\n\n", predictions.len()));
 
-    r.push_str("| Prediction | Type | Credibility | Verdict | SNN Verified | Flag |\n|---|---|---|---|---|---|\n");
+    r.push_str("| Prediction | Type | Credibility | Verdict | Verified | Flag |\n|---|---|---|---|---|---|\n");
     for pred in predictions {
         let text = truncate(&pred.text, 60);
         let verification = verifications.iter().find(|v| v.prediction_id == pred.id);
@@ -638,9 +648,9 @@ pub fn prediction_report_with_verification(
         }
         r.push_str(&format!("- Credibility: {:.0}% ({:?})\n", pred.credibility.score * 100.0, pred.credibility.verdict));
 
-        // Add SNN verification info
+        // Add evidence verification info
         if let Some(v) = verifications.iter().find(|v| v.prediction_id == pred.id) {
-            r.push_str(&format!("- SNN Verified: {} (score: {:.2}, evidence items: {}, counter-evidence: {})\n",
+            r.push_str(&format!("- Verified: {} (score: {:.2}, evidence items: {}, counter-evidence: {})\n",
                 if v.verified { "Yes" } else { "No" },
                 v.verification_score, v.evidence_found, v.counter_evidence));
             if let Some(flag) = &v.flag {
@@ -891,8 +901,8 @@ mod tests {
         let report = prediction_report(&preds);
         assert!(report.contains("Prediction Credibility"));
         assert!(report.contains("Credibility"));
-        // New: report should contain SNN Verified column
-        assert!(report.contains("SNN Verified"));
+        // New: report should contain Verified column
+        assert!(report.contains("Verified"));
     }
 
     #[test]
@@ -959,7 +969,7 @@ mod tests {
 
     #[test]
     fn test_verification_no_evidence() {
-        // Create a prediction and check SNN verification with no evidence
+        // Create a prediction and check evidence verification with no evidence
         let pred = Prediction {
             id: "p1".into(),
             text: "reduce costs by 50%".into(),
@@ -1084,7 +1094,7 @@ mod tests {
         };
         let report = prediction_report_with_verification(&[pred], &[verification]);
         assert!(report.contains("UNVERIFIABLE"));
-        assert!(report.contains("SNN Verified"));
+        assert!(report.contains("Verified"));
         assert!(report.contains("FLAG"));
     }
 }

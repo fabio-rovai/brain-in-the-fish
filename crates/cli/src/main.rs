@@ -8,7 +8,8 @@ use rmcp::ServiceExt;
 use brain_in_the_fish_core::*;
 use brain_in_the_fish_core::types::*;
 use brain_in_the_fish_core::alignment;
-use brain_in_the_fish_core::snn;
+use brain_in_the_fish_core::gate;
+use brain_in_the_fish_core::argument_graph;
 use brain_in_the_fish_core::memory;
 use brain_in_the_fish_core::semantic;
 use brain_in_the_fish_core::validate;
@@ -25,7 +26,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Evaluate a document (deterministic pipeline + SNN scoring)
+    /// Evaluate a document (deterministic pipeline + structural scoring)
     Evaluate {
         /// Path to the document to evaluate
         document: PathBuf,
@@ -81,7 +82,7 @@ enum Commands {
         #[arg(long)]
         extractions: Option<PathBuf>,
 
-        /// Path to graph node scores JSON (Option B: subagent scores nodes, SNN aggregates)
+        /// Path to graph node scores JSON (Option B: subagent scores nodes, gate aggregates)
         #[arg(long)]
         graph_scores: Option<PathBuf>,
 
@@ -89,7 +90,7 @@ enum Commands {
         #[arg(long)]
         reference_ontology: Option<PathBuf>,
 
-        /// Self-calibrate SNN weights via Nelder-Mead optimization
+        /// Self-calibrate gate weights via Nelder-Mead optimization
         #[arg(long)]
         calibrate: bool,
 
@@ -469,114 +470,53 @@ async fn run_evaluate(
         println!("   Embeddings skipped (run 'open-ontologies init' to enable)");
     }
 
-    // 7. SNN scoring (deterministic — no LLM needed)
-    println!("7. SNN scoring (deterministic)...");
-    let snn_config = snn::SNNConfig::default();
-    let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
+    // 7. Structural scoring + gate verdict (deterministic — no LLM needed)
+    println!("7. Structural scoring (deterministic)...");
 
-    for agent_item in &agents {
-        let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-        network.feed_evidence(&doc, &alignments, &snn_config);
-        snn_networks.push(network);
-    }
+    // Build argument graph from document evidence
+    let arg_graph = argument_graph::build_from_document(&doc);
+    let metrics = argument_graph::compute_metrics(&arg_graph);
+    let structural = argument_graph::structural_score(&metrics);
+    let gate_weights = gate::GateWeights::default();
 
-    // Boost SNN with semantic similarity signals
-    if semantic::models_available() {
-        for network in &mut snn_networks {
-            for neuron in &mut network.neurons {
-                for alignment in &alignments {
-                    if alignment.criterion_id == neuron.criterion_id
-                        && let Ok(sim) = semantic::semantic_similarity(
-                            &alignment.section_id,
-                            &alignment.criterion_id,
-                            &output_dir,
-                        )
-                        && sim > 0.3
-                    {
-                        neuron.receive_spike(snn::Spike {
-                            source_id: format!("semantic_{}", alignment.section_id),
-                            strength: sim.min(1.0),
-                            spike_type: snn::SpikeType::Alignment,
-                            timestep: 0,
-                            source_text: None,
-                            justification: None,
-                        }, &snn_config);
-                    }
-                }
-            }
-        }
-    }
+    println!("   Argument graph: {} nodes, {} edges, depth {}, connectivity {:.0}%",
+        metrics.node_count, metrics.edge_count, metrics.max_depth, metrics.connectivity * 100.0);
+    println!("   Structural score: {:.3}", structural);
 
-    // Feed validation signals into SNN
-    for signal in &validation_signals {
-        if signal.spike_effect.abs() > 0.01 {
-            for network in &mut snn_networks {
-                for neuron in &mut network.neurons {
-                    // Apply to all neurons (document-level signals) or matching criterion
-                    let matches = signal.criterion_id.is_none()
-                        || signal.criterion_id.as_deref() == Some(&neuron.criterion_id);
-                    if matches {
-                        neuron.receive_spike(
-                            snn::Spike {
-                                source_id: signal.id.clone(),
-                                strength: signal.spike_effect.abs(),
-                                spike_type: if signal.spike_effect > 0.0 {
-                                    snn::SpikeType::Evidence
-                                } else {
-                                    snn::SpikeType::Claim
-                                },
-                                timestep: 0,
-                                source_text: None,
-                                justification: None,
-                            },
-                            &snn_config,
-                        );
-                        if signal.spike_effect < 0.0 {
-                            neuron.apply_inhibition(signal.spike_effect.abs() * 0.2); // gentler inhibition
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // SNN scores ARE the actual scores
+    // Generate scores per agent per criterion using structural score
     let mut round1_scores: Vec<Score> = Vec::new();
-    for network in &snn_networks {
-        let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
-        for (criterion_id, snn_score) in &snn_scores {
-            let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
-            let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
-            let criterion_title = criterion.map(|c| c.title.as_str()).unwrap_or(criterion_id);
+    for agent_item in &agents {
+        for criterion in &framework.criteria {
+            let max_score = criterion.max_score;
+            // Scale structural score to criterion range
+            let score_val = (structural * max_score).min(max_score).max(0.0);
+
+            let verdict = gate::check(score_val, max_score, &arg_graph, &gate_weights);
+            let verdict_str = format!("{}", verdict);
 
             let score = Score {
-                agent_id: network.agent_id.clone(),
-                criterion_id: criterion_id.clone(),
-                score: snn_score.snn_score,
+                agent_id: agent_item.id.clone(),
+                criterion_id: criterion.id.clone(),
+                score: score_val,
                 max_score,
                 round: 1,
-                justification: snn_score.explanation.clone(),
-                evidence_used: network.neurons.iter()
-                    .find(|n| n.criterion_id == *criterion_id)
-                    .map(|n| n.spike_log.iter()
-                        .map(|s| format!("{} ({:?}, strength {:.2})", s.source_id, s.spike_type, s.strength))
-                        .collect::<Vec<_>>())
-                    .unwrap_or_default(),
-                gaps_identified: if !snn_score.grounded {
+                justification: format!("Structural score {:.3} — {}", structural, verdict_str),
+                evidence_used: vec![
+                    format!("nodes={} edges={} depth={} connectivity={:.2}",
+                        metrics.node_count, metrics.edge_count, metrics.max_depth, metrics.connectivity),
+                ],
+                gaps_identified: if metrics.evidence_count == 0 {
                     vec!["Insufficient evidence in the knowledge graph".into()]
                 } else {
                     vec![]
                 },
             };
 
-            println!("   {} -> {}: {:.1}/{:.0} (CI: {:.1}-{:.1}, Bayesian: {:.0}%, falsification: {})",
-                network.agent_name, criterion_title, snn_score.snn_score, max_score,
-                snn_score.confidence_interval.0, snn_score.confidence_interval.1,
-                snn_score.bayesian_confidence * 100.0,
-                if snn_score.falsification_checked { "passed" } else { "NOT CHECKED" });
+            println!("   {} -> {}: {:.1}/{:.0} [{}]",
+                agent_item.name, criterion.title, score_val, max_score, verdict_str);
 
-            if !snn_score.grounded {
-                println!("      LOW EVIDENCE: {}", criterion_title);
+            if metrics.evidence_count == 0 {
+                println!("      LOW EVIDENCE: {}", criterion.title);
             }
 
             scoring::record_score(&graph, &score)?;
@@ -584,7 +524,7 @@ async fn run_evaluate(
         }
     }
 
-    onto_lineage.record(&session_id, "A", "snn_score", &format!("{} scores computed", round1_scores.len()));
+    onto_lineage.record(&session_id, "A", "structural_score", &format!("{} scores computed", round1_scores.len()));
 
     // Version snapshot before debate (for drift detection after)
     let pre_debate_turtle = match graph.serialize("turtle") {
@@ -595,7 +535,7 @@ async fn run_evaluate(
         }
     };
 
-    // 8. Build debate rounds from SNN score disagreements
+    // 8. Build debate rounds from score disagreements
     println!("8. Debate (deterministic convergence)...");
     let mut all_rounds = vec![debate::build_debate_round(1, round1_scores.clone(), vec![], None, false)];
     let mut current_scores = round1_scores;
@@ -627,13 +567,6 @@ async fn run_evaluate(
                 } else {
                     (target, challenger)
                 };
-
-                // Also apply SNN lateral inhibition for the debate
-                for network in &mut snn_networks {
-                    if network.agent_id == actual_target.id {
-                        network.inhibit(&criterion.id, snn_config.inhibition_strength);
-                    }
-                }
 
                 // Mechanical convergence: move target 30% toward challenger
                 if let Some(target_score) = new_scores.iter_mut().find(|s|
@@ -1106,13 +1039,13 @@ fn run_benchmark_config(
         };
         let framework = criteria::framework_for_intent(&intent);
 
-        let (alignments, _gaps) = if config.use_ontology_alignment {
+        let (_alignments, _gaps) = if config.use_ontology_alignment {
             alignment::align_sections_to_criteria(&doc, &framework)
         } else {
             (vec![], vec![])
         };
 
-        let validation_signals = if config.use_validation {
+        let _validation_signals = if config.use_validation {
             validate::validate_document(&doc, &framework)
         } else {
             vec![]
@@ -1121,60 +1054,23 @@ fn run_benchmark_config(
         let agents = agent::spawn_panel(&intent, &framework);
 
         let predicted = if config.use_snn {
-            let snn_config = snn::SNNConfig::default();
-            let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
-            for agent_item in &agents {
-                let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-                network.feed_evidence(&doc, &alignments, &snn_config);
-                snn_networks.push(network);
-            }
-
-            if config.use_validation {
-                for signal in &validation_signals {
-                    if signal.spike_effect.abs() > 0.01 {
-                        for network in &mut snn_networks {
-                            for neuron in &mut network.neurons {
-                                let matches = signal.criterion_id.is_none()
-                                    || signal.criterion_id.as_deref() == Some(&neuron.criterion_id);
-                                if matches {
-                                    neuron.receive_spike(
-                                        snn::Spike {
-                                            source_id: signal.id.clone(),
-                                            strength: signal.spike_effect.abs(),
-                                            spike_type: if signal.spike_effect > 0.0 {
-                                                snn::SpikeType::Evidence
-                                            } else {
-                                                snn::SpikeType::Claim
-                                            },
-                                            timestep: 0,
-                                            source_text: None,
-                                            justification: None,
-                                        },
-                                        &snn_config,
-                                    );
-                                    if signal.spike_effect < 0.0 {
-                                        neuron.apply_inhibition(signal.spike_effect.abs() * 0.2); // gentler inhibition
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // Structural scoring via argument graph + gate
+            let arg_graph = argument_graph::build_from_document(&doc);
+            let metrics = argument_graph::compute_metrics(&arg_graph);
+            let structural = argument_graph::structural_score(&metrics);
 
             let mut round1_scores: Vec<Score> = Vec::new();
-            for network in &snn_networks {
-                let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
-                for (criterion_id, snn_score) in &snn_scores {
-                    let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
-                    let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+            for agent_item in &agents {
+                for criterion in &framework.criteria {
+                    let max_score = criterion.max_score;
+                    let score_val = (structural * max_score).min(max_score).max(0.0);
                     round1_scores.push(Score {
-                        agent_id: network.agent_id.clone(),
-                        criterion_id: criterion_id.clone(),
-                        score: snn_score.snn_score,
+                        agent_id: agent_item.id.clone(),
+                        criterion_id: criterion.id.clone(),
+                        score: score_val,
                         max_score,
                         round: 1,
-                        justification: snn_score.explanation.clone(),
+                        justification: format!("Structural score {:.3}", structural),
                         evidence_used: vec![],
                         gaps_identified: vec![],
                     });
@@ -1272,7 +1168,7 @@ fn run_benchmark_config(
 }
 
 /// Subagent-produced extraction for a single sample.
-/// Format: Claude extracts evidence, saves as JSON, benchmark loads and feeds through SNN.
+/// Format: Claude extracts evidence, saves as JSON, benchmark loads and scores structurally.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct SubagentExtraction {
     id: String,
@@ -1298,7 +1194,7 @@ struct SubagentEvidence {
 
 /// Run benchmark using subagent-produced extractions.
 /// The extractions JSON is produced by Claude (the subagent) and contains
-/// structured evidence for each essay. The benchmark feeds this through the SNN.
+/// structured evidence for each essay. The benchmark feeds this through structural scoring.
 ///
 /// Usage: cargo run -- benchmark --dataset data/asap-set1.json --extractions data/asap-set1-extractions.json
 fn run_benchmark_with_extractions(
@@ -1306,7 +1202,7 @@ fn run_benchmark_with_extractions(
     extractions_path: PathBuf,
     output: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    println!("Running subagent extraction → SNN benchmark");
+    println!("Running subagent extraction → structural scoring benchmark");
 
     let samples = if let Some(ref path) = dataset_path {
         println!("Loading dataset: {}", path.display());
@@ -1339,87 +1235,47 @@ fn run_benchmark_with_extractions(
 
         let framework = criteria::framework_for_intent(&intent);
         let agents = agent::spawn_panel(&intent, &framework);
-        let snn_config = snn::SNNConfig::default();
 
         let predicted = if let Some(extraction) = ext_map.get(&sample.id) {
             matched += 1;
 
-            let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
-            for agent_item in &agents {
-                let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-
-                // Feed subagent-extracted claims as spikes
-                for claim in &extraction.claims {
-                    let spike_type = if claim.verifiable {
-                        snn::SpikeType::Evidence
-                    } else {
-                        snn::SpikeType::Claim
-                    };
-                    for neuron in &mut network.neurons {
-                        neuron.receive_spike(
-                            snn::Spike {
-                                source_id: format!("sub_claim_{}", uuid::Uuid::new_v4()),
-                                strength: claim.specificity.clamp(0.0, 1.0),
-                                spike_type: spike_type.clone(),
-                                timestep: 0,
-                                source_text: Some(claim.text.clone()),
-                                justification: Some(format!(
-                                    "Subagent-extracted claim, specificity={:.2}, verifiable={}",
-                                    claim.specificity, claim.verifiable
-                                )),
-                            },
-                            &snn_config,
-                        );
-                    }
-                }
-
-                // Feed subagent-extracted evidence as typed spikes
-                for ev in &extraction.evidence {
-                    let spike_type = match ev.evidence_type.as_str() {
-                        "statistical" => snn::SpikeType::QuantifiedData,
-                        "citation" => snn::SpikeType::Citation,
-                        _ => if ev.quantified {
-                            snn::SpikeType::QuantifiedData
-                        } else {
-                            snn::SpikeType::Evidence
-                        },
-                    };
-                    let strength = if ev.quantified { 0.85 } else { 0.7 };
-                    for neuron in &mut network.neurons {
-                        neuron.receive_spike(
-                            snn::Spike {
-                                source_id: format!("sub_ev_{}", uuid::Uuid::new_v4()),
-                                strength,
-                                spike_type: spike_type.clone(),
-                                timestep: 0,
-                                source_text: Some(ev.text.clone()),
-                                justification: Some(format!(
-                                    "Subagent-extracted {}, source={}, quantified={}",
-                                    ev.evidence_type, ev.source, ev.quantified
-                                )),
-                            },
-                            &snn_config,
-                        );
-                    }
-                }
-
-                snn_networks.push(network);
+            // Build node scores from subagent extractions
+            let mut node_scores: Vec<argument_graph::NodeScoreEntry> = Vec::new();
+            for claim in &extraction.claims {
+                node_scores.push(argument_graph::NodeScoreEntry {
+                    node_iri: format!("arg:claim_{}", uuid::Uuid::new_v4()),
+                    score: claim.specificity.clamp(0.0, 1.0),
+                    justification: format!("specificity={:.2}, verifiable={}", claim.specificity, claim.verifiable),
+                    source_text: Some(claim.text.clone()),
+                    source_span: None,
+                });
+            }
+            for ev in &extraction.evidence {
+                node_scores.push(argument_graph::NodeScoreEntry {
+                    node_iri: format!("arg:ev_{}", uuid::Uuid::new_v4()),
+                    score: if ev.quantified { 0.85 } else { 0.7 },
+                    justification: format!("{}, source={}, quantified={}", ev.evidence_type, ev.source, ev.quantified),
+                    source_text: Some(ev.text.clone()),
+                    source_span: None,
+                });
             }
 
-            // Compute SNN scores
+            let arg_graph = argument_graph::build_from_node_scores(&sample.id, &node_scores);
+            let metrics = argument_graph::compute_metrics(&arg_graph);
+            let structural = argument_graph::structural_score(&metrics);
+
             let mut round1_scores: Vec<Score> = Vec::new();
-            for network in &snn_networks {
-                let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
-                for (criterion_id, snn_score) in &snn_scores {
-                    let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
-                    let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+            for agent_item in &agents {
+                for criterion in &framework.criteria {
+                    let max_score = criterion.max_score;
+                    let score_val = (structural * max_score).min(max_score).max(0.0);
                     round1_scores.push(Score {
-                        agent_id: network.agent_id.clone(),
-                        criterion_id: criterion_id.clone(),
-                        score: snn_score.snn_score,
+                        agent_id: agent_item.id.clone(),
+                        criterion_id: criterion.id.clone(),
+                        score: score_val,
                         max_score,
                         round: 1,
-                        justification: snn_score.explanation.clone(),
+                        justification: format!("Structural score {:.3}", structural),
                         evidence_used: vec![],
                         gaps_identified: vec![],
                     });
@@ -1455,26 +1311,22 @@ fn run_benchmark_with_extractions(
             doc.sections.push(section);
             doc.total_word_count = Some(word_count);
 
-            let (alignments, _) = alignment::align_sections_to_criteria(&doc, &framework);
-            let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
-            for agent_item in &agents {
-                let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-                network.feed_evidence(&doc, &alignments, &snn_config);
-                snn_networks.push(network);
-            }
+            let arg_graph = argument_graph::build_from_document(&doc);
+            let metrics = argument_graph::compute_metrics(&arg_graph);
+            let structural = argument_graph::structural_score(&metrics);
+
             let mut round1_scores: Vec<Score> = Vec::new();
-            for network in &snn_networks {
-                let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
-                for (criterion_id, snn_score) in &snn_scores {
-                    let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
-                    let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+            for agent_item in &agents {
+                for criterion in &framework.criteria {
+                    let max_score = criterion.max_score;
+                    let score_val = (structural * max_score).min(max_score).max(0.0);
                     round1_scores.push(Score {
-                        agent_id: network.agent_id.clone(),
-                        criterion_id: criterion_id.clone(),
-                        score: snn_score.snn_score,
+                        agent_id: agent_item.id.clone(),
+                        criterion_id: criterion.id.clone(),
+                        score: score_val,
                         max_score,
                         round: 1,
-                        justification: snn_score.explanation.clone(),
+                        justification: format!("Structural score {:.3}", structural),
                         evidence_used: vec![],
                         gaps_identified: vec![],
                     });
@@ -1521,7 +1373,7 @@ fn run_benchmark_with_extractions(
     };
 
     let result = benchmark::BenchmarkResults {
-        name: "subagent_extract_snn".to_string(),
+        name: "subagent_extract_structural".to_string(),
         samples: samples.len(),
         pearson_r,
         qwk,
@@ -1535,7 +1387,7 @@ fn run_benchmark_with_extractions(
         config: benchmark::BenchmarkConfig {
             use_snn: true,
             use_llm_extraction: true,
-            label: "subagent_extract_snn".into(),
+            label: "subagent_extract_structural".into(),
             ..Default::default()
         },
     };
@@ -1562,18 +1414,16 @@ fn run_benchmark_with_extractions(
     Ok(())
 }
 
-/// Run benchmark using Option B: argument graph + subagent node scores → SNN aggregation.
+/// Run benchmark using Option B: argument graph + subagent node scores → structural scoring.
 /// The subagent builds the graph, scores each node, saves as JSON.
-/// The benchmark loads node scores, builds the graph, feeds through graph-SNN.
+/// The benchmark loads node scores, builds the graph, feeds through structural scorer.
 fn run_benchmark_graph(
     dataset_path: Option<PathBuf>,
     graph_scores_path: PathBuf,
     reference_ontology_path: Option<PathBuf>,
     output: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    use brain_in_the_fish_core::argument_graph;
-
-    println!("Running Option B benchmark: argument graph → node scores → SNN aggregation");
+    println!("Running Option B benchmark: argument graph → node scores → structural scoring");
 
     // Load reference ontology if provided
     let reference_turtle = if let Some(ref path) = reference_ontology_path {
@@ -1615,7 +1465,6 @@ fn run_benchmark_graph(
 
         let framework = criteria::framework_for_intent(&intent);
         let agents = agent::spawn_panel(&intent, &framework);
-        let snn_config = snn::SNNConfig::default();
 
         // Build argument graph: prefer Turtle (full /sketch), then node scores, then regex
         let graph = if let Some(gs_entry) = gs_map.get(&sample.id) {
@@ -1645,7 +1494,7 @@ fn run_benchmark_graph(
         };
 
         // Compute alignment against reference ontology if Turtle is available
-        let alignment_candidates = if let (Some(ref_ttl), Some(gs_entry)) = (&reference_turtle, gs_map.get(&sample.id)) {
+        let _alignment_candidates = if let (Some(ref_ttl), Some(gs_entry)) = (&reference_turtle, gs_map.get(&sample.id)) {
             if let Some(ref essay_ttl) = gs_entry.turtle {
                 argument_graph::align_to_reference(essay_ttl, ref_ttl, 0.3).unwrap_or_default()
             } else {
@@ -1655,28 +1504,23 @@ fn run_benchmark_graph(
             vec![]
         };
 
-        // Feed graph through SNN (with alignment signals when available)
-        let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
-        for agent_item in &agents {
-            let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-            network.feed_argument_graph_with_alignment(&graph, &snn_config, &alignment_candidates);
-            snn_networks.push(network);
-        }
+        // Compute structural score from argument graph
+        let metrics = argument_graph::compute_metrics(&graph);
+        let structural = argument_graph::structural_score(&metrics);
 
-        // Compute scores
+        // Compute scores per agent per criterion
         let mut round1_scores: Vec<Score> = Vec::new();
-        for network in &snn_networks {
-            let snn_scores = network.compute_scores(&framework.criteria, &snn_config);
-            for (criterion_id, snn_score) in &snn_scores {
-                let criterion = framework.criteria.iter().find(|c| c.id == *criterion_id);
-                let max_score = criterion.map(|c| c.max_score).unwrap_or(10.0);
+        for agent_item in &agents {
+            for criterion in &framework.criteria {
+                let max_score = criterion.max_score;
+                let score_val = (structural * max_score).min(max_score).max(0.0);
                 round1_scores.push(Score {
-                    agent_id: network.agent_id.clone(),
-                    criterion_id: criterion_id.clone(),
-                    score: snn_score.snn_score,
+                    agent_id: agent_item.id.clone(),
+                    criterion_id: criterion.id.clone(),
+                    score: score_val,
                     max_score,
                     round: 1,
-                    justification: snn_score.explanation.clone(),
+                    justification: format!("Structural score {:.3}", structural),
                     evidence_used: vec![],
                     gaps_identified: vec![],
                 });
@@ -1722,7 +1566,7 @@ fn run_benchmark_graph(
     let hallucination_rate = if samples.is_empty() { 0.0 } else { hallucination_count as f64 / samples.len() as f64 };
 
     let result = benchmark::BenchmarkResults {
-        name: "graph_snn".to_string(),
+        name: "graph_structural".to_string(),
         samples: samples.len(),
         pearson_r,
         qwk,
@@ -1736,7 +1580,7 @@ fn run_benchmark_graph(
         config: benchmark::BenchmarkConfig {
             use_snn: true,
             use_llm_extraction: true,
-            label: "graph_snn".into(),
+            label: "graph_structural".into(),
             ..Default::default()
         },
     };
@@ -1755,7 +1599,7 @@ fn run_benchmark_graph(
 
     if let Some(output_dir) = output {
         std::fs::create_dir_all(&output_dir)?;
-        let results_path = output_dir.join("graph-snn-results.json");
+        let results_path = output_dir.join("graph-structural-results.json");
         std::fs::write(&results_path, serde_json::to_string_pretty(&[&result])?)?;
         println!("Results saved to: {}", results_path.display());
     }
@@ -1763,17 +1607,16 @@ fn run_benchmark_graph(
     Ok(())
 }
 
-/// Self-calibrate SNN weights for graph-SNN scoring via Nelder-Mead.
-/// Optimizes the 9 ScoreWeights parameters to maximize Pearson r against expert scores.
+/// Self-calibrate gate weights for graph-structural scoring via Nelder-Mead.
+/// Optimizes the GateWeights parameters to maximize Pearson r against expert scores.
 fn run_calibrate_graph(
     dataset_path: Option<PathBuf>,
     graph_scores_path: PathBuf,
     output: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    use brain_in_the_fish_core::argument_graph;
     use brain_in_the_fish_core::optimize;
 
-    println!("Self-calibrating SNN weights for graph-SNN scoring...\n");
+    println!("Self-calibrating gate weights for structural scoring...\n");
 
     let samples = if let Some(ref path) = dataset_path {
         benchmark::load_dataset(path)?
@@ -1818,15 +1661,14 @@ fn run_calibrate_graph(
 
     let actual: Vec<f64> = samples.iter().map(|s| s.expert_score).collect();
 
-    // Default weights as starting point
-    let default_weights = snn::ScoreWeights::default();
-    let initial = default_weights.to_params();
-    println!("Initial weights: {:?}", initial);
+    // Default gate weights as starting point (2 params: gate_a, gate_b)
+    let default_gw = gate::GateWeights::default();
+    let initial = vec![default_gw.gate_a, default_gw.gate_b];
+    println!("Initial gate weights: {:?}", initial);
 
     // Helper: score a subset of samples with given params
     let score_subset = |idx: &[usize], params: &[f64]| -> Vec<f64> {
-        let w = snn::ScoreWeights::from_params(params);
-        let cfg = snn::SNNConfig { weights: w, ..Default::default() };
+        let _gw = gate::GateWeights { gate_a: params[0], gate_b: params[1] };
         idx.iter().map(|&i| {
             let sample = &samples[i];
             let intent = if sample.domain.is_empty() {
@@ -1836,16 +1678,14 @@ fn run_calibrate_graph(
             };
             let framework = criteria::framework_for_intent(&intent);
             let panel = agent::spawn_panel(&intent, &framework);
-            let nets: Vec<snn::AgentNetwork> = panel.iter().map(|a| {
-                let mut n = snn::AgentNetwork::new(a, &framework.criteria);
-                n.feed_argument_graph(&graphs[i], &cfg);
-                n
-            }).collect();
+            let metrics = argument_graph::compute_metrics(&graphs[i]);
+            let structural = argument_graph::structural_score(&metrics);
             let mut scores: Vec<Score> = Vec::new();
-            for net in &nets {
-                for (cid, ss) in net.compute_scores(&framework.criteria, &cfg) {
-                    let ms = framework.criteria.iter().find(|c| c.id == cid).map(|c| c.max_score).unwrap_or(10.0);
-                    scores.push(Score { agent_id: net.agent_id.clone(), criterion_id: cid, score: ss.snn_score, max_score: ms, round: 1, justification: String::new(), evidence_used: vec![], gaps_identified: vec![] });
+            for agent_item in &panel {
+                for criterion in &framework.criteria {
+                    let ms = criterion.max_score;
+                    let sv = (structural * ms).min(ms).max(0.0);
+                    scores.push(Score { agent_id: agent_item.id.clone(), criterion_id: criterion.id.clone(), score: sv, max_score: ms, round: 1, justification: String::new(), evidence_used: vec![], gaps_identified: vec![] });
                 }
             }
             let moderated = moderation::calculate_moderated_scores(&scores, &panel);
@@ -1869,17 +1709,10 @@ fn run_calibrate_graph(
     println!("Running Nelder-Mead on TRAIN set ({} samples, 500 iterations)...", train_indices.len());
     let (best_params, best_loss) = optimize::nelder_mead(&objective, &initial, 500, 1e-8);
 
-    let best_weights = snn::ScoreWeights::from_params(&best_params);
-    println!("\nCalibrated weights:");
-    println!("  w_saturation:  {:.4}", best_weights.w_saturation);
-    println!("  w_quality:     {:.4}", best_weights.w_quality);
-    println!("  w_firing:      {:.4}", best_weights.w_firing);
-    println!("  saturation_base: {:.2}", best_weights.saturation_base);
-    println!("  lr_quantified: {:.3}", best_weights.lr_quantified);
-    println!("  lr_evidence:   {:.3}", best_weights.lr_evidence);
-    println!("  lr_citation:   {:.3}", best_weights.lr_citation);
-    println!("  lr_alignment:  {:.3}", best_weights.lr_alignment);
-    println!("  lr_claim:      {:.3}", best_weights.lr_claim);
+    let best_gw = gate::GateWeights { gate_a: best_params[0], gate_b: best_params[1] };
+    println!("\nCalibrated gate weights:");
+    println!("  gate_a: {:.6}", best_gw.gate_a);
+    println!("  gate_b: {:.6}", best_gw.gate_b);
     println!("\nTrain loss: {:.4}", best_loss);
 
     // Evaluate on HELD-OUT TEST set
@@ -1918,9 +1751,9 @@ fn run_calibrate_graph(
 
     if let Some(output_dir) = output {
         std::fs::create_dir_all(&output_dir)?;
-        let weights_path = output_dir.join("calibrated-weights.json");
-        std::fs::write(&weights_path, serde_json::to_string_pretty(&best_params)?)?;
-        println!("\nCalibrated weights saved to: {}", weights_path.display());
+        let weights_path = output_dir.join("calibrated-gate-weights.json");
+        std::fs::write(&weights_path, serde_json::to_string_pretty(&best_gw)?)?;
+        println!("\nCalibrated gate weights saved to: {}", weights_path.display());
     }
 
     Ok(())
