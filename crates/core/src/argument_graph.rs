@@ -49,6 +49,12 @@ pub struct ArgumentNode {
     pub llm_score: Option<f64>,
     /// Filled by the subagent.
     pub llm_justification: Option<String>,
+    /// Exact quote from the source document.
+    #[serde(default)]
+    pub source_text: Option<String>,
+    /// Character offsets (start, end) into the source document.
+    #[serde(default)]
+    pub source_span: Option<(usize, usize)>,
 }
 
 /// A directed edge in the argument graph.
@@ -82,6 +88,12 @@ pub struct NodeScoreEntry {
     pub node_iri: String,
     pub score: f64,
     pub justification: String,
+    /// Exact quote from the source document (for verification).
+    #[serde(default)]
+    pub source_text: Option<String>,
+    /// Character offsets (start, end) into the source document.
+    #[serde(default)]
+    pub source_span: Option<(usize, usize)>,
 }
 
 /// Build an argument graph from subagent-produced OWL Turtle + node scores.
@@ -156,6 +168,8 @@ pub fn build_from_turtle(
                 text,
                 llm_score: ns.map(|n| n.score.clamp(0.0, 1.0)),
                 llm_justification: ns.map(|n| n.justification.clone()),
+                source_text: ns.and_then(|n| n.source_text.clone()),
+                source_span: ns.and_then(|n| n.source_span),
             });
         }
     }
@@ -225,6 +239,8 @@ pub fn build_from_document(doc: &EvalDocument) -> ArgumentGraph {
             text: section.title.clone(),
             llm_score: None,
             llm_justification: None,
+            source_text: None,
+            source_span: None,
         });
 
         // Extract items from this section
@@ -256,6 +272,8 @@ pub fn build_from_document(doc: &EvalDocument) -> ArgumentGraph {
                 text: item.text.clone(),
                 llm_score: None,
                 llm_justification: None,
+                source_text: Some(item.text.clone()),
+                source_span: item.source_span,
             });
 
             // Section contains this node
@@ -336,6 +354,8 @@ fn add_section_items(
             text: claim.text.clone(),
             llm_score: None,
             llm_justification: None,
+            source_text: None,
+            source_span: None,
         });
         edges.push(ArgumentEdge {
             from: section_iri.clone(),
@@ -370,6 +390,8 @@ fn add_section_items(
             text: ev.text.clone(),
             llm_score: None,
             llm_justification: None,
+            source_text: None,
+            source_span: None,
         });
         edges.push(ArgumentEdge {
             from: section_iri.clone(),
@@ -468,9 +490,11 @@ pub fn build_from_node_scores(doc_id: &str, node_scores: &[NodeScoreEntry]) -> A
         nodes.push(ArgumentNode {
             iri: iri.clone(),
             node_type,
-            text: ns.justification.clone(), // use justification as text since we don't have the raw text
+            text: ns.source_text.clone().unwrap_or_else(|| ns.justification.clone()),
             llm_score: Some(ns.score.clamp(0.0, 1.0)),
             llm_justification: Some(ns.justification.clone()),
+            source_text: ns.source_text.clone(),
+            source_span: ns.source_span,
         });
 
         // Edges: evidence/sub-claims support the thesis
@@ -789,6 +813,204 @@ fn compute_max_depth(graph: &ArgumentGraph) -> usize {
     max_depth
 }
 
+// ============================================================
+// Audit verification: source spans, consensus, completeness
+// ============================================================
+
+/// Result of verifying source spans against a document.
+#[derive(Debug, Clone, Serialize)]
+pub struct SpanVerification {
+    pub total_nodes: usize,
+    pub nodes_with_source: usize,
+    pub verified_count: usize,
+    pub failed_iris: Vec<String>,
+    pub coverage_chars: f64,
+}
+
+/// Verify that every node's source_text is a verbatim substring of the document.
+pub fn verify_source_spans(graph: &ArgumentGraph, document_text: &str) -> SpanVerification {
+    let mut nodes_with_source = 0usize;
+    let mut verified = 0usize;
+    let mut failed = Vec::new();
+    let doc_len = document_text.len();
+    let mut covered = vec![false; doc_len];
+
+    for node in &graph.nodes {
+        if let Some(ref src) = node.source_text {
+            nodes_with_source += 1;
+            // Check span offsets first
+            if let Some((start, end)) = node.source_span
+                && end <= doc_len
+                && document_text.get(start..end) == Some(src.as_str())
+            {
+                verified += 1;
+                for c in &mut covered[start..end] { *c = true; }
+                continue;
+            }
+            // Fallback: check if text exists anywhere
+            if let Some(pos) = document_text.find(src.as_str()) {
+                verified += 1;
+                for c in &mut covered[pos..pos + src.len()] { *c = true; }
+            } else {
+                failed.push(node.iri.clone());
+            }
+        }
+    }
+
+    let covered_count = covered.iter().filter(|&&c| c).count();
+    SpanVerification {
+        total_nodes: graph.nodes.len(),
+        nodes_with_source,
+        verified_count: verified,
+        failed_iris: failed,
+        coverage_chars: if doc_len > 0 { covered_count as f64 / doc_len as f64 } else { 0.0 },
+    }
+}
+
+/// Consensus score from multiple independent agents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsensusScore {
+    pub node_iri: String,
+    pub scores: Vec<f64>,
+    pub mean: f64,
+    pub std_dev: f64,
+    pub uncertain: bool,
+    pub justifications: Vec<String>,
+}
+
+/// Result of consensus scoring.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConsensusResult {
+    pub node_scores: Vec<ConsensusScore>,
+    pub uncertain_count: usize,
+    pub mean_divergence: f64,
+}
+
+/// Compute consensus from multiple independent agent score sets.
+pub fn compute_consensus(
+    agent_scores: &[&[NodeScoreEntry]],
+    divergence_threshold: f64,
+) -> ConsensusResult {
+    // Collect all unique node IRIs
+    let mut iri_set: Vec<String> = Vec::new();
+    for scores in agent_scores {
+        for ns in *scores {
+            if !iri_set.contains(&ns.node_iri) {
+                iri_set.push(ns.node_iri.clone());
+            }
+        }
+    }
+
+    let mut node_scores = Vec::new();
+    let mut uncertain_count = 0usize;
+    let mut total_std = 0.0f64;
+
+    for iri in &iri_set {
+        let mut scores_for_node = Vec::new();
+        let mut justifications = Vec::new();
+        for agent in agent_scores {
+            if let Some(ns) = agent.iter().find(|n| n.node_iri == *iri) {
+                scores_for_node.push(ns.score);
+                justifications.push(ns.justification.clone());
+            }
+        }
+
+        let mean = if scores_for_node.is_empty() {
+            0.0
+        } else {
+            scores_for_node.iter().sum::<f64>() / scores_for_node.len() as f64
+        };
+
+        let std_dev = if scores_for_node.len() < 2 {
+            0.0
+        } else {
+            let variance = scores_for_node.iter()
+                .map(|s| (s - mean).powi(2))
+                .sum::<f64>() / scores_for_node.len() as f64;
+            variance.sqrt()
+        };
+
+        let uncertain = std_dev > divergence_threshold;
+        if uncertain { uncertain_count += 1; }
+        total_std += std_dev;
+
+        node_scores.push(ConsensusScore {
+            node_iri: iri.clone(),
+            scores: scores_for_node,
+            mean,
+            std_dev,
+            uncertain,
+            justifications,
+        });
+    }
+
+    let mean_divergence = if node_scores.is_empty() {
+        0.0
+    } else {
+        total_std / node_scores.len() as f64
+    };
+
+    ConsensusResult {
+        node_scores,
+        uncertain_count,
+        mean_divergence,
+    }
+}
+
+/// Result of completeness check.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompletenessCheck {
+    pub total_sentences: usize,
+    pub covered_sentences: usize,
+    pub coverage_percentage: f64,
+    pub uncovered_sentences: Vec<String>,
+}
+
+/// Check what fraction of the document's sentences are covered by node source texts.
+pub fn check_completeness(
+    graph: &ArgumentGraph,
+    document_text: &str,
+    similarity_threshold: f64,
+) -> CompletenessCheck {
+    let sentences = crate::extract::split_sentences(document_text);
+    let node_texts: Vec<&str> = graph.nodes.iter()
+        .filter_map(|n| n.source_text.as_deref())
+        .collect();
+
+    let mut covered = 0usize;
+    let mut uncovered = Vec::new();
+
+    for sentence in &sentences {
+        // Check exact substring match first
+        let is_covered = node_texts.iter().any(|nt| {
+            sentence.contains(nt) || nt.contains(sentence.as_str())
+        }) || {
+            // Fallback: Jaccard word similarity
+            let s_words: std::collections::HashSet<&str> = sentence.split_whitespace().collect();
+            node_texts.iter().any(|nt| {
+                let n_words: std::collections::HashSet<&str> = nt.split_whitespace().collect();
+                let intersection = s_words.intersection(&n_words).count();
+                let union = s_words.union(&n_words).count();
+                if union == 0 { return false; }
+                intersection as f64 / union as f64 >= similarity_threshold
+            })
+        };
+
+        if is_covered {
+            covered += 1;
+        } else {
+            uncovered.push(sentence.clone());
+        }
+    }
+
+    CompletenessCheck {
+        total_sentences: sentences.len(),
+        covered_sentences: covered,
+        coverage_percentage: if sentences.is_empty() { 100.0 } else { covered as f64 / sentences.len() as f64 * 100.0 },
+        uncovered_sentences: uncovered,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -812,9 +1034,9 @@ mod tests {
         let graph = ArgumentGraph {
             doc_id: "test".into(),
             nodes: vec![
-                ArgumentNode { iri: "a".into(), node_type: NodeType::Thesis, text: "thesis".into(), llm_score: None, llm_justification: None },
-                ArgumentNode { iri: "b".into(), node_type: NodeType::SubClaim, text: "claim".into(), llm_score: None, llm_justification: None },
-                ArgumentNode { iri: "c".into(), node_type: NodeType::Evidence, text: "evidence".into(), llm_score: None, llm_justification: None },
+                ArgumentNode { iri: "a".into(), node_type: NodeType::Thesis, text: "thesis".into(), llm_score: None, llm_justification: None, source_text: None, source_span: None },
+                ArgumentNode { iri: "b".into(), node_type: NodeType::SubClaim, text: "claim".into(), llm_score: None, llm_justification: None, source_text: None, source_span: None },
+                ArgumentNode { iri: "c".into(), node_type: NodeType::Evidence, text: "evidence".into(), llm_score: None, llm_justification: None, source_text: None, source_span: None },
             ],
             edges: vec![
                 ArgumentEdge { from: "b".into(), edge_type: EdgeType::Supports, to: "a".into() },
@@ -852,9 +1074,9 @@ arg:evidence_3 a arg:Evidence ;
     arg:supports arg:claim_2 .
 "#;
         let scores = vec![
-            NodeScoreEntry { node_iri: "arg:thesis_1".into(), score: 0.8, justification: "good".into() },
-            NodeScoreEntry { node_iri: "arg:claim_2".into(), score: 0.6, justification: "ok".into() },
-            NodeScoreEntry { node_iri: "arg:evidence_3".into(), score: 0.7, justification: "solid".into() },
+            NodeScoreEntry { node_iri: "arg:thesis_1".into(), score: 0.8, justification: "good".into(), source_text: None, source_span: None },
+            NodeScoreEntry { node_iri: "arg:claim_2".into(), score: 0.6, justification: "ok".into(), source_text: None, source_span: None },
+            NodeScoreEntry { node_iri: "arg:evidence_3".into(), score: 0.7, justification: "solid".into(), source_text: None, source_span: None },
         ];
         // Debug: check what's in the store
         let store = GraphStore::new();
@@ -886,9 +1108,9 @@ arg:evidence_3 a arg:Evidence ;
         let graph = ArgumentGraph {
             doc_id: "test".into(),
             nodes: vec![
-                ArgumentNode { iri: "t".into(), node_type: NodeType::Thesis, text: "thesis".into(), llm_score: None, llm_justification: None },
-                ArgumentNode { iri: "c1".into(), node_type: NodeType::SubClaim, text: "claim1".into(), llm_score: None, llm_justification: None },
-                ArgumentNode { iri: "e1".into(), node_type: NodeType::Evidence, text: "evidence1".into(), llm_score: None, llm_justification: None },
+                ArgumentNode { iri: "t".into(), node_type: NodeType::Thesis, text: "thesis".into(), llm_score: None, llm_justification: None, source_text: None, source_span: None },
+                ArgumentNode { iri: "c1".into(), node_type: NodeType::SubClaim, text: "claim1".into(), llm_score: None, llm_justification: None, source_text: None, source_span: None },
+                ArgumentNode { iri: "e1".into(), node_type: NodeType::Evidence, text: "evidence1".into(), llm_score: None, llm_justification: None, source_text: None, source_span: None },
             ],
             edges: vec![
                 ArgumentEdge { from: "c1".into(), edge_type: EdgeType::Supports, to: "t".into() },

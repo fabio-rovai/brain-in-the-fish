@@ -375,7 +375,7 @@ fn has_year_pattern(text: &str) -> bool {
     })
 }
 
-fn split_sentences(text: &str) -> Vec<String> {
+pub fn split_sentences(text: &str) -> Vec<String> {
     text.split('.')
         .map(|s| s.trim().to_string())
         .filter(|s| s.len() > 15)
