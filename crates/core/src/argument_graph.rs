@@ -789,41 +789,61 @@ pub fn compute_metrics(graph: &ArgumentGraph) -> GraphMetrics {
 /// - Evidence coverage: fraction of claims with supporting evidence
 /// - Depth: how deep the argument chains go (saturates at 4)
 /// - Counter/rebuttal bonus: addressing opposition shows sophistication
-pub fn structural_score(metrics: &GraphMetrics) -> f64 {
-    // Node density: log curve saturating at ~12 nodes
-    let density = (metrics.node_count as f64 + 1.0).ln() / 12.0_f64.ln();
-    let density = density.min(1.0);
+/// Weights for structural scoring — calibratable via Nelder-Mead.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuralWeights {
+    pub w_density: f64,
+    pub w_ev_ratio: f64,
+    pub w_connectivity: f64,
+    pub w_coverage: f64,
+    pub w_depth: f64,
+    pub w_counter: f64,
+}
 
-    // Evidence ratio: evidence / total nodes
+impl Default for StructuralWeights {
+    fn default() -> Self {
+        Self {
+            w_density: 0.25,
+            w_ev_ratio: 0.20,
+            w_connectivity: 0.20,
+            w_coverage: 0.15,
+            w_depth: 0.10,
+            w_counter: 0.10,
+        }
+    }
+}
+
+/// Structural score with default weights.
+pub fn structural_score(metrics: &GraphMetrics) -> f64 {
+    structural_score_weighted(metrics, &StructuralWeights::default())
+}
+
+/// Structural score with custom weights (for calibration).
+pub fn structural_score_weighted(metrics: &GraphMetrics, w: &StructuralWeights) -> f64 {
+    let density = ((metrics.node_count as f64 + 1.0).ln() / 12.0_f64.ln()).min(1.0);
+
     let ev_ratio = if metrics.node_count > 0 {
         metrics.evidence_count as f64 / metrics.node_count as f64
     } else {
         0.0
     };
 
-    // Connectivity: already 0.0-1.0
     let connectivity = metrics.connectivity;
-
-    // Evidence coverage: already 0.0-1.0
     let coverage = metrics.evidence_coverage;
-
-    // Depth: saturates at 4 levels
     let depth = (metrics.max_depth as f64 / 4.0).min(1.0);
 
-    // Counter/rebuttal bonus: 0.0, 0.5, or 1.0
     let counter_bonus = match (metrics.has_counter, metrics.has_rebuttal) {
         (true, true) => 1.0,
         (true, false) | (false, true) => 0.5,
         (false, false) => 0.0,
     };
 
-    // Weighted combination — weights can be calibrated later
-    let raw = 0.25 * density
-        + 0.20 * ev_ratio
-        + 0.20 * connectivity
-        + 0.15 * coverage
-        + 0.10 * depth
-        + 0.10 * counter_bonus;
+    let raw = w.w_density * density
+        + w.w_ev_ratio * ev_ratio
+        + w.w_connectivity * connectivity
+        + w.w_coverage * coverage
+        + w.w_depth * depth
+        + w.w_counter * counter_bonus;
 
     raw.clamp(0.0, 1.0)
 }
