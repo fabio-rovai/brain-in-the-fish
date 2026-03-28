@@ -1,0 +1,2422 @@
+@prefix : <http://brain-in-the-fish.dev/eval/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# =============================================================================
+# ONTOLOGY DECLARATION
+# =============================================================================
+
+<http://brain-in-the-fish.dev/eval/> a owl:Ontology ;
+    rdfs:label "Essay Evaluation Ontology"@en ;
+    rdfs:comment "A comprehensive OWL ontology for modelling all dimensions of essay quality. Designed as the reference alignment target for Brain in the Fish essay assessment."@en ;
+    owl:versionInfo "1.0.0" .
+
+# =============================================================================
+# TOP-LEVEL CLASSES (Level 1)
+# =============================================================================
+
+:EssayQualityDimension a owl:Class ;
+    rdfs:comment "The root class for all measurable or assessable dimensions of essay quality."@en .
+
+:ArgumentStructure a owl:Class ;
+    rdfs:subClassOf :EssayQualityDimension ;
+    rdfs:comment "The logical architecture of an essay's argumentation: how claims, evidence, and warrants are organised to support a thesis."@en .
+
+:RhetoricalQuality a owl:Class ;
+    rdfs:subClassOf :EssayQualityDimension ;
+    rdfs:comment "The persuasive and communicative effectiveness of the writing, encompassing ethos, pathos, logos, tone, and voice."@en .
+
+:StructuralElement a owl:Class ;
+    rdfs:subClassOf :EssayQualityDimension ;
+    rdfs:comment "A discrete organisational unit of the essay's macro-structure: introduction, body, conclusion, and their sub-parts."@en .
+
+:EvidenceQuality a owl:Class ;
+    rdfs:subClassOf :EssayQualityDimension ;
+    rdfs:comment "The assessed quality of evidence along axes of specificity, verifiability, relevance, recency, and authority."@en .
+
+:LanguageQuality a owl:Class ;
+    rdfs:subClassOf :EssayQualityDimension ;
+    rdfs:comment "The quality of language use: vocabulary, sentence structure, grammar, mechanics, and cohesion."@en .
+
+:NarrativeElement a owl:Class ;
+    rdfs:subClassOf :EssayQualityDimension ;
+    rdfs:comment "Elements specific to narrative essays: setting, character, plot, sensory detail, dialogue, and reflection."@en .
+
+:SourceDependentElement a owl:Class ;
+    rdfs:subClassOf :EssayQualityDimension ;
+    rdfs:comment "Elements relating to the use, integration, and citation of external sources in source-based essays."@en .
+
+# Make top-level dimensions pairwise disjoint
+[] a owl:AllDisjointClasses ;
+    owl:members ( :ArgumentStructure :RhetoricalQuality :StructuralElement
+                  :EvidenceQuality :LanguageQuality :NarrativeElement
+                  :SourceDependentElement ) .
+
+# =============================================================================
+# ARGUMENT STRUCTURE (Levels 2-8)
+# =============================================================================
+
+# --- Level 2: Argument Components ---
+
+:ArgumentComponent a owl:Class ;
+    rdfs:subClassOf :ArgumentStructure ;
+    rdfs:comment "Any identifiable component within the argument structure of an essay."@en .
+
+:LogicalFallacy a owl:Class ;
+    rdfs:subClassOf :ArgumentStructure ;
+    rdfs:comment "An error in reasoning that undermines the logical validity of an argument."@en .
+
+:ArgumentPattern a owl:Class ;
+    rdfs:subClassOf :ArgumentStructure ;
+    rdfs:comment "A recognised pattern of argumentation such as Toulmin, Rogerian, or classical."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :ArgumentComponent :LogicalFallacy :ArgumentPattern ) .
+
+# --- Level 3: Core Argument Components ---
+
+:Thesis a owl:Class ;
+    rdfs:subClassOf :ArgumentComponent ;
+    rdfs:comment "The central claim or proposition that the entire essay seeks to defend, develop, or explore."@en .
+
+:Claim a owl:Class ;
+    rdfs:subClassOf :ArgumentComponent ;
+    rdfs:comment "An assertive statement that requires support; a building block of the argument."@en .
+
+:Evidence a owl:Class ;
+    rdfs:subClassOf :ArgumentComponent ;
+    rdfs:comment "Material presented to support or substantiate a claim: data, examples, testimony, or citations."@en .
+
+:Warrant a owl:Class ;
+    rdfs:subClassOf :ArgumentComponent ;
+    rdfs:comment "The logical bridge connecting evidence to a claim, explaining why the evidence supports the claim."@en .
+
+:CounterArgument a owl:Class ;
+    rdfs:subClassOf :ArgumentComponent ;
+    rdfs:comment "An argument or claim that opposes or challenges the essay's thesis or a supporting claim."@en .
+
+:Rebuttal a owl:Class ;
+    rdfs:subClassOf :ArgumentComponent ;
+    rdfs:comment "A response that addresses and undermines a counter-argument, defending the original claim."@en .
+
+:Backing a owl:Class ;
+    rdfs:subClassOf :ArgumentComponent ;
+    rdfs:comment "Additional support for a warrant; the underlying assumptions or principles that make the warrant credible (Toulmin model)."@en .
+
+:Qualifier a owl:Class ;
+    rdfs:subClassOf :ArgumentComponent ;
+    rdfs:comment "A word or phrase that limits the scope or certainty of a claim, such as 'most', 'generally', or 'in many cases'."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :Thesis :Claim :Evidence :Warrant :CounterArgument :Rebuttal :Backing :Qualifier ) .
+
+# --- Level 4: Thesis Types ---
+
+:ExplicitThesis a owl:Class ;
+    rdfs:subClassOf :Thesis ;
+    rdfs:comment "A thesis stated directly and clearly in the essay, typically at the end of the introduction."@en .
+
+:ImpliedThesis a owl:Class ;
+    rdfs:subClassOf :Thesis ;
+    rdfs:comment "A thesis that is not stated directly but emerges from the cumulative weight of the essay's arguments."@en .
+
+:ArgumentativeThesis a owl:Class ;
+    rdfs:subClassOf :Thesis ;
+    rdfs:comment "A thesis that takes a clear position on a debatable issue and seeks to persuade the reader."@en .
+
+:AnalyticalThesis a owl:Class ;
+    rdfs:subClassOf :Thesis ;
+    rdfs:comment "A thesis that breaks down a topic into components for examination rather than advocating a position."@en .
+
+:ExpositoryThesis a owl:Class ;
+    rdfs:subClassOf :Thesis ;
+    rdfs:comment "A thesis that explains or informs the reader about a topic without arguing a position."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :ExplicitThesis :ImpliedThesis ) .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :ArgumentativeThesis :AnalyticalThesis :ExpositoryThesis ) .
+
+# --- Level 5: Thesis Strength ---
+
+:StrongThesis a owl:Class ;
+    rdfs:subClassOf :ArgumentativeThesis ;
+    rdfs:comment "An argumentative thesis that is specific, debatable, and clearly scoped, providing a roadmap for the essay."@en .
+
+:WeakThesis a owl:Class ;
+    rdfs:subClassOf :ArgumentativeThesis ;
+    rdfs:comment "An argumentative thesis that is vague, overly broad, or states an obvious fact rather than a debatable position."@en .
+
+:NuancedThesis a owl:Class ;
+    rdfs:subClassOf :StrongThesis ;
+    rdfs:comment "A strong thesis that acknowledges complexity, concedes limitations, or qualifies its scope while maintaining a clear position."@en .
+
+:BinaryThesis a owl:Class ;
+    rdfs:subClassOf :WeakThesis ;
+    rdfs:comment "A weak thesis that presents a simplistic either/or position without acknowledging nuance."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :StrongThesis :WeakThesis ) .
+
+# --- Level 6: Nuanced Thesis Subtypes ---
+
+:ConcessiveThesis a owl:Class ;
+    rdfs:subClassOf :NuancedThesis ;
+    rdfs:comment "A nuanced thesis that explicitly acknowledges the strength of opposing views before asserting its own position."@en .
+
+:ConditionalThesis a owl:Class ;
+    rdfs:subClassOf :NuancedThesis ;
+    rdfs:comment "A nuanced thesis that limits its claim to certain conditions or contexts."@en .
+
+:MultiPartThesis a owl:Class ;
+    rdfs:subClassOf :NuancedThesis ;
+    rdfs:comment "A nuanced thesis that makes a compound claim with multiple interconnected parts."@en .
+
+# --- Level 4: Claim Types ---
+
+:SubClaim a owl:Class ;
+    rdfs:subClassOf :Claim ;
+    rdfs:comment "A claim that supports the thesis indirectly by supporting another claim."@en .
+
+:TopicSentenceClaim a owl:Class ;
+    rdfs:subClassOf :Claim ;
+    rdfs:comment "A claim that serves as the topic sentence of a paragraph, stating that paragraph's main point."@en .
+
+:SupportingClaim a owl:Class ;
+    rdfs:subClassOf :Claim ;
+    rdfs:comment "A claim that directly supports the thesis by addressing one facet of the argument."@en .
+
+:ConcludingClaim a owl:Class ;
+    rdfs:subClassOf :Claim ;
+    rdfs:comment "A claim made in the conclusion that synthesises or extends the argument."@en .
+
+:FactualClaim a owl:Class ;
+    rdfs:subClassOf :Claim ;
+    rdfs:comment "A claim that asserts something as a matter of fact, verifiable through evidence."@en .
+
+:ValueClaim a owl:Class ;
+    rdfs:subClassOf :Claim ;
+    rdfs:comment "A claim that asserts a judgement of worth, morality, or desirability."@en .
+
+:PolicyClaim a owl:Class ;
+    rdfs:subClassOf :Claim ;
+    rdfs:comment "A claim that advocates for a specific course of action or policy change."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :FactualClaim :ValueClaim :PolicyClaim ) .
+
+# --- Level 5: Supporting Claim Strength ---
+
+:StrongSupportingClaim a owl:Class ;
+    rdfs:subClassOf :SupportingClaim ;
+    rdfs:comment "A supporting claim that is well-evidenced, logically connected to the thesis, and sufficiently developed."@en .
+
+:WeakSupportingClaim a owl:Class ;
+    rdfs:subClassOf :SupportingClaim ;
+    rdfs:comment "A supporting claim that lacks evidence, has a tenuous connection to the thesis, or is underdeveloped."@en .
+
+:RedundantClaim a owl:Class ;
+    rdfs:subClassOf :WeakSupportingClaim ;
+    rdfs:comment "A weak supporting claim that merely restates the thesis or another claim without adding new substance."@en .
+
+:UnsupportedClaim a owl:Class ;
+    rdfs:subClassOf :WeakSupportingClaim ;
+    rdfs:comment "A weak supporting claim that is asserted without any accompanying evidence or reasoning."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :StrongSupportingClaim :WeakSupportingClaim ) .
+
+# --- Level 4: Evidence Types ---
+
+:AnecdotalEvidence a owl:Class ;
+    rdfs:subClassOf :Evidence ;
+    rdfs:comment "Evidence based on personal stories or individual cases, illustrative but not statistically generalisable."@en .
+
+:StatisticalEvidence a owl:Class ;
+    rdfs:subClassOf :Evidence ;
+    rdfs:comment "Evidence expressed as numerical data, percentages, or statistical findings."@en .
+
+:ExpertTestimony a owl:Class ;
+    rdfs:subClassOf :Evidence ;
+    rdfs:comment "Evidence derived from the opinion or statement of a recognised authority in the relevant field."@en .
+
+:PrimaryDataEvidence a owl:Class ;
+    rdfs:subClassOf :Evidence ;
+    rdfs:comment "Evidence gathered first-hand through experiments, surveys, interviews, or direct observation."@en .
+
+:CaseStudyEvidence a owl:Class ;
+    rdfs:subClassOf :Evidence ;
+    rdfs:comment "Evidence drawn from a detailed examination of a specific instance, event, or organisation."@en .
+
+:CitationEvidence a owl:Class ;
+    rdfs:subClassOf :Evidence ;
+    rdfs:comment "Evidence provided by citing a published source such as a journal article, book, or report."@en .
+
+:HistoricalEvidence a owl:Class ;
+    rdfs:subClassOf :Evidence ;
+    rdfs:comment "Evidence drawn from historical events, documents, or precedents."@en .
+
+:HypotheticalEvidence a owl:Class ;
+    rdfs:subClassOf :Evidence ;
+    rdfs:comment "Evidence based on a thought experiment or hypothetical scenario used to illustrate a point."@en .
+
+:AnalogicalEvidence a owl:Class ;
+    rdfs:subClassOf :Evidence ;
+    rdfs:comment "Evidence drawn from a comparison or analogy between two situations or domains."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :AnecdotalEvidence :StatisticalEvidence :ExpertTestimony
+                  :PrimaryDataEvidence :CaseStudyEvidence :CitationEvidence
+                  :HistoricalEvidence :HypotheticalEvidence :AnalogicalEvidence ) .
+
+# --- Level 5: Statistical Evidence Subtypes ---
+
+:DescriptiveStatistic a owl:Class ;
+    rdfs:subClassOf :StatisticalEvidence ;
+    rdfs:comment "A statistic that describes or summarises a dataset, such as a mean, median, or percentage."@en .
+
+:InferentialStatistic a owl:Class ;
+    rdfs:subClassOf :StatisticalEvidence ;
+    rdfs:comment "A statistic derived from inferential analysis, such as a p-value, confidence interval, or regression coefficient."@en .
+
+:ComparativeStatistic a owl:Class ;
+    rdfs:subClassOf :StatisticalEvidence ;
+    rdfs:comment "A statistic that compares two or more groups or time periods."@en .
+
+# --- Level 5: Citation Evidence Subtypes ---
+
+:PeerReviewedCitation a owl:Class ;
+    rdfs:subClassOf :CitationEvidence ;
+    rdfs:comment "A citation from a peer-reviewed academic journal, the gold standard of scholarly evidence."@en .
+
+:GovernmentReportCitation a owl:Class ;
+    rdfs:subClassOf :CitationEvidence ;
+    rdfs:comment "A citation from an official government report or statistical release."@en .
+
+:BookCitation a owl:Class ;
+    rdfs:subClassOf :CitationEvidence ;
+    rdfs:comment "A citation from a published book or monograph."@en .
+
+:MediaCitation a owl:Class ;
+    rdfs:subClassOf :CitationEvidence ;
+    rdfs:comment "A citation from a newspaper, magazine, or other media outlet."@en .
+
+:WebCitation a owl:Class ;
+    rdfs:subClassOf :CitationEvidence ;
+    rdfs:comment "A citation from a website or online resource that may not be peer-reviewed."@en .
+
+# --- Level 6: Peer-Reviewed Citation Subtypes ---
+
+:SystematicReviewCitation a owl:Class ;
+    rdfs:subClassOf :PeerReviewedCitation ;
+    rdfs:comment "A citation from a systematic review or meta-analysis, representing the highest level of evidence synthesis."@en .
+
+:OriginalResearchCitation a owl:Class ;
+    rdfs:subClassOf :PeerReviewedCitation ;
+    rdfs:comment "A citation from an original empirical research article."@en .
+
+:TheoreticalArticleCitation a owl:Class ;
+    rdfs:subClassOf :PeerReviewedCitation ;
+    rdfs:comment "A citation from a theoretical or conceptual article that proposes frameworks or models."@en .
+
+# --- Level 4: Warrant Types ---
+
+:CausalWarrant a owl:Class ;
+    rdfs:subClassOf :Warrant ;
+    rdfs:comment "A warrant that claims a cause-and-effect relationship between the evidence and the claim."@en .
+
+:AnalogicalWarrant a owl:Class ;
+    rdfs:subClassOf :Warrant ;
+    rdfs:comment "A warrant that draws a parallel between two situations to justify the claim."@en .
+
+:DefinitionalWarrant a owl:Class ;
+    rdfs:subClassOf :Warrant ;
+    rdfs:comment "A warrant that relies on the definition or classification of a concept to connect evidence to claim."@en .
+
+:AuthoritativeWarrant a owl:Class ;
+    rdfs:subClassOf :Warrant ;
+    rdfs:comment "A warrant that relies on the authority or expertise of the source to justify accepting the evidence."@en .
+
+:PrincipleBasedWarrant a owl:Class ;
+    rdfs:subClassOf :Warrant ;
+    rdfs:comment "A warrant grounded in an ethical, legal, or scientific principle."@en .
+
+:GeneralisationWarrant a owl:Class ;
+    rdfs:subClassOf :Warrant ;
+    rdfs:comment "A warrant that infers a general conclusion from specific instances."@en .
+
+:SignWarrant a owl:Class ;
+    rdfs:subClassOf :Warrant ;
+    rdfs:comment "A warrant that treats the evidence as a sign or symptom of the claimed phenomenon."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :CausalWarrant :AnalogicalWarrant :DefinitionalWarrant
+                  :AuthoritativeWarrant :PrincipleBasedWarrant :GeneralisationWarrant :SignWarrant ) .
+
+# --- Level 5: Causal Warrant Subtypes ---
+
+:NecessaryCauseWarrant a owl:Class ;
+    rdfs:subClassOf :CausalWarrant ;
+    rdfs:comment "A causal warrant asserting the evidence is a necessary condition for the claimed effect."@en .
+
+:SufficientCauseWarrant a owl:Class ;
+    rdfs:subClassOf :CausalWarrant ;
+    rdfs:comment "A causal warrant asserting the evidence is sufficient on its own to produce the claimed effect."@en .
+
+:ContributoryCauseWarrant a owl:Class ;
+    rdfs:subClassOf :CausalWarrant ;
+    rdfs:comment "A causal warrant asserting the evidence is one contributing factor among several."@en .
+
+# --- Level 4: Counter-Argument Types ---
+
+:StrawManCounter a owl:Class ;
+    rdfs:subClassOf :CounterArgument ;
+    rdfs:comment "A counter-argument that weakens or distorts the original position before attacking it."@en .
+
+:SteelManCounter a owl:Class ;
+    rdfs:subClassOf :CounterArgument ;
+    rdfs:comment "A counter-argument that presents the strongest possible version of the opposing view before responding."@en .
+
+:EmpiricalCounter a owl:Class ;
+    rdfs:subClassOf :CounterArgument ;
+    rdfs:comment "A counter-argument supported by empirical evidence that contradicts the essay's claim."@en .
+
+:ConceptualCounter a owl:Class ;
+    rdfs:subClassOf :CounterArgument ;
+    rdfs:comment "A counter-argument that challenges the conceptual framework or definitions underlying the essay's claim."@en .
+
+# --- Level 4: Rebuttal Types ---
+
+:DirectRebuttal a owl:Class ;
+    rdfs:subClassOf :Rebuttal ;
+    rdfs:comment "A rebuttal that directly challenges the evidence or logic of the counter-argument."@en .
+
+:ConcessionRebuttal a owl:Class ;
+    rdfs:subClassOf :Rebuttal ;
+    rdfs:comment "A rebuttal that concedes part of the counter-argument while arguing the original claim still holds."@en .
+
+:ReframingRebuttal a owl:Class ;
+    rdfs:subClassOf :Rebuttal ;
+    rdfs:comment "A rebuttal that reframes the issue to show the counter-argument is irrelevant or misses the point."@en .
+
+# --- Level 3: Logical Fallacies ---
+
+:FormalFallacy a owl:Class ;
+    rdfs:subClassOf :LogicalFallacy ;
+    rdfs:comment "A fallacy in the logical form of an argument, where the conclusion does not follow from the premises regardless of content."@en .
+
+:InformalFallacy a owl:Class ;
+    rdfs:subClassOf :LogicalFallacy ;
+    rdfs:comment "A fallacy in the content or context of an argument rather than its logical form."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :FormalFallacy :InformalFallacy ) .
+
+# --- Level 4: Formal Fallacies ---
+
+:AffirmingTheConsequent a owl:Class ;
+    rdfs:subClassOf :FormalFallacy ;
+    rdfs:comment "The fallacy of inferring the antecedent from the consequent: 'If P then Q; Q; therefore P.'"@en .
+
+:DenyingTheAntecedent a owl:Class ;
+    rdfs:subClassOf :FormalFallacy ;
+    rdfs:comment "The fallacy of inferring the negation of the consequent from the negation of the antecedent."@en .
+
+:UndistributedMiddle a owl:Class ;
+    rdfs:subClassOf :FormalFallacy ;
+    rdfs:comment "A syllogistic fallacy where the middle term is not distributed in at least one premise."@en .
+
+# --- Level 4: Informal Fallacy Categories ---
+
+:FallacyOfRelevance a owl:Class ;
+    rdfs:subClassOf :InformalFallacy ;
+    rdfs:comment "An informal fallacy where the premises are logically irrelevant to the conclusion."@en .
+
+:FallacyOfAmbiguity a owl:Class ;
+    rdfs:subClassOf :InformalFallacy ;
+    rdfs:comment "An informal fallacy arising from ambiguous language, shifting definitions, or unclear terms."@en .
+
+:FallacyOfPresumption a owl:Class ;
+    rdfs:subClassOf :InformalFallacy ;
+    rdfs:comment "An informal fallacy that relies on an unwarranted assumption or unjustified premise."@en .
+
+:CausalFallacy a owl:Class ;
+    rdfs:subClassOf :InformalFallacy ;
+    rdfs:comment "An informal fallacy involving a flawed causal reasoning chain."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :FallacyOfRelevance :FallacyOfAmbiguity :FallacyOfPresumption :CausalFallacy ) .
+
+# --- Level 5: Fallacies of Relevance ---
+
+:AdHominem a owl:Class ;
+    rdfs:subClassOf :FallacyOfRelevance ;
+    rdfs:comment "Attacking the person making the argument rather than the argument itself."@en .
+
+:StrawMan a owl:Class ;
+    rdfs:subClassOf :FallacyOfRelevance ;
+    rdfs:comment "Misrepresenting an opponent's argument to make it easier to attack."@en .
+
+:AppealToAuthority a owl:Class ;
+    rdfs:subClassOf :FallacyOfRelevance ;
+    rdfs:comment "Claiming something is true because an authority figure says so, without relevant expertise or evidence."@en .
+
+:AppealToEmotion a owl:Class ;
+    rdfs:subClassOf :FallacyOfRelevance ;
+    rdfs:comment "Using emotional manipulation rather than logical reasoning to support a conclusion."@en .
+
+:AppealToPopularity a owl:Class ;
+    rdfs:subClassOf :FallacyOfRelevance ;
+    rdfs:comment "Arguing that something is true or good because many people believe it or do it (argumentum ad populum)."@en .
+
+:RedHerring a owl:Class ;
+    rdfs:subClassOf :FallacyOfRelevance ;
+    rdfs:comment "Introducing an irrelevant topic to divert attention from the original issue."@en .
+
+:TuQuoque a owl:Class ;
+    rdfs:subClassOf :FallacyOfRelevance ;
+    rdfs:comment "Deflecting criticism by pointing to the accuser's own behaviour rather than addressing the argument."@en .
+
+:GeneticFallacy a owl:Class ;
+    rdfs:subClassOf :FallacyOfRelevance ;
+    rdfs:comment "Judging an argument's validity based on its origin rather than its content."@en .
+
+# --- Level 6: Ad Hominem Subtypes ---
+
+:AbusiveAdHominem a owl:Class ;
+    rdfs:subClassOf :AdHominem ;
+    rdfs:comment "Directly insulting or attacking the character of the person making the argument."@en .
+
+:CircumstantialAdHominem a owl:Class ;
+    rdfs:subClassOf :AdHominem ;
+    rdfs:comment "Arguing that the person's circumstances (e.g., financial interest) invalidate their argument."@en .
+
+:PoisoningTheWell a owl:Class ;
+    rdfs:subClassOf :AdHominem ;
+    rdfs:comment "Pre-emptively discrediting a person before they even make their argument."@en .
+
+# --- Level 5: Fallacies of Presumption ---
+
+:FalseDichotomy a owl:Class ;
+    rdfs:subClassOf :FallacyOfPresumption ;
+    rdfs:comment "Presenting only two options when more exist, forcing a false either/or choice."@en .
+
+:BeggingTheQuestion a owl:Class ;
+    rdfs:subClassOf :FallacyOfPresumption ;
+    rdfs:comment "Assuming the conclusion within the premises, making the argument circular."@en .
+
+:HastyGeneralisation a owl:Class ;
+    rdfs:subClassOf :FallacyOfPresumption ;
+    rdfs:comment "Drawing a broad conclusion from insufficient or unrepresentative evidence."@en .
+
+:SlipperySlope a owl:Class ;
+    rdfs:subClassOf :FallacyOfPresumption ;
+    rdfs:comment "Arguing that one event will inevitably lead to a chain of increasingly extreme consequences without justification."@en .
+
+:NoTrueScotsman a owl:Class ;
+    rdfs:subClassOf :FallacyOfPresumption ;
+    rdfs:comment "Redefining a category to exclude counter-examples rather than accepting them."@en .
+
+:FalseEquivalence a owl:Class ;
+    rdfs:subClassOf :FallacyOfPresumption ;
+    rdfs:comment "Treating two things as equal when they differ in important ways."@en .
+
+:LoadedQuestion a owl:Class ;
+    rdfs:subClassOf :FallacyOfPresumption ;
+    rdfs:comment "Asking a question that presupposes something that has not been established."@en .
+
+# --- Level 5: Fallacies of Ambiguity ---
+
+:Equivocation a owl:Class ;
+    rdfs:subClassOf :FallacyOfAmbiguity ;
+    rdfs:comment "Using a word in two different senses within the same argument."@en .
+
+:Amphiboly a owl:Class ;
+    rdfs:subClassOf :FallacyOfAmbiguity ;
+    rdfs:comment "An argument whose conclusion depends on a grammatically ambiguous statement."@en .
+
+# --- Level 5: Causal Fallacies ---
+
+:PostHocFallacy a owl:Class ;
+    rdfs:subClassOf :CausalFallacy ;
+    rdfs:comment "Assuming that because B followed A, A caused B (post hoc ergo propter hoc)."@en .
+
+:CorrelationCausation a owl:Class ;
+    rdfs:subClassOf :CausalFallacy ;
+    rdfs:comment "Assuming that a correlation between two variables implies that one causes the other."@en .
+
+:SingleCauseFallacy a owl:Class ;
+    rdfs:subClassOf :CausalFallacy ;
+    rdfs:comment "Attributing a complex outcome to a single cause when multiple factors are involved."@en .
+
+# --- Level 3: Argument Patterns ---
+
+:ToulminArgument a owl:Class ;
+    rdfs:subClassOf :ArgumentPattern ;
+    rdfs:comment "An argument structured using the Toulmin model: claim, data, warrant, backing, qualifier, and rebuttal."@en .
+
+:RogerianArgument a owl:Class ;
+    rdfs:subClassOf :ArgumentPattern ;
+    rdfs:comment "An argument that seeks common ground by genuinely understanding and acknowledging opposing viewpoints before presenting its own."@en .
+
+:ClassicalArgument a owl:Class ;
+    rdfs:subClassOf :ArgumentPattern ;
+    rdfs:comment "An argument following the classical rhetorical structure: exordium, narratio, confirmatio, refutatio, peroratio."@en .
+
+:DialecticalArgument a owl:Class ;
+    rdfs:subClassOf :ArgumentPattern ;
+    rdfs:comment "An argument structured as thesis, antithesis, and synthesis."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :ToulminArgument :RogerianArgument :ClassicalArgument :DialecticalArgument ) .
+
+# =============================================================================
+# RHETORICAL QUALITY (Levels 2-7)
+# =============================================================================
+
+# --- Level 2 ---
+
+:PersuasiveTechnique a owl:Class ;
+    rdfs:subClassOf :RhetoricalQuality ;
+    rdfs:comment "A method of persuasion employed in the essay to convince the reader."@en .
+
+:Tone a owl:Class ;
+    rdfs:subClassOf :RhetoricalQuality ;
+    rdfs:comment "The writer's attitude toward the subject and audience as conveyed through word choice and style."@en .
+
+:Voice a owl:Class ;
+    rdfs:subClassOf :RhetoricalQuality ;
+    rdfs:comment "The grammatical and perspectival mode in which the essay is written."@en .
+
+:AudienceAwareness a owl:Class ;
+    rdfs:subClassOf :RhetoricalQuality ;
+    rdfs:comment "The degree to which the writer demonstrates consciousness of the reader's knowledge, expectations, and potential objections."@en .
+
+:RhetoricalDevice a owl:Class ;
+    rdfs:subClassOf :RhetoricalQuality ;
+    rdfs:comment "A specific figure of speech or technique used for rhetorical effect."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :PersuasiveTechnique :Tone :Voice :AudienceAwareness :RhetoricalDevice ) .
+
+# --- Level 3: Persuasive Techniques ---
+
+:Ethos a owl:Class ;
+    rdfs:subClassOf :PersuasiveTechnique ;
+    rdfs:comment "Persuasion through the writer's credibility, character, and authority."@en .
+
+:Pathos a owl:Class ;
+    rdfs:subClassOf :PersuasiveTechnique ;
+    rdfs:comment "Persuasion through emotional appeal, evoking feelings in the reader."@en .
+
+:Logos a owl:Class ;
+    rdfs:subClassOf :PersuasiveTechnique ;
+    rdfs:comment "Persuasion through logical reasoning, evidence, and rational argument."@en .
+
+:Kairos a owl:Class ;
+    rdfs:subClassOf :PersuasiveTechnique ;
+    rdfs:comment "Persuasion through timeliness, emphasising the urgency or appropriateness of the moment."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :Ethos :Pathos :Logos :Kairos ) .
+
+# --- Level 4: Ethos Subtypes ---
+
+:IntrinsicEthos a owl:Class ;
+    rdfs:subClassOf :Ethos ;
+    rdfs:comment "Credibility established within the text itself through knowledge, fairness, and careful reasoning."@en .
+
+:ExtrinsicEthos a owl:Class ;
+    rdfs:subClassOf :Ethos ;
+    rdfs:comment "Credibility derived from the writer's external reputation, qualifications, or credentials."@en .
+
+# --- Level 4: Pathos Subtypes ---
+
+:AppealToFear a owl:Class ;
+    rdfs:subClassOf :Pathos ;
+    rdfs:comment "An emotional appeal that evokes fear or anxiety to motivate the reader."@en .
+
+:AppealToSympathy a owl:Class ;
+    rdfs:subClassOf :Pathos ;
+    rdfs:comment "An emotional appeal that evokes compassion or pity for a person or group."@en .
+
+:AppealToPride a owl:Class ;
+    rdfs:subClassOf :Pathos ;
+    rdfs:comment "An emotional appeal that invokes the reader's sense of pride, identity, or belonging."@en .
+
+:AppealToHope a owl:Class ;
+    rdfs:subClassOf :Pathos ;
+    rdfs:comment "An emotional appeal that evokes optimism or aspiration for a better future."@en .
+
+:AppealToAnger a owl:Class ;
+    rdfs:subClassOf :Pathos ;
+    rdfs:comment "An emotional appeal that evokes outrage or indignation to motivate action."@en .
+
+# --- Level 4: Logos Subtypes ---
+
+:DeductiveLogos a owl:Class ;
+    rdfs:subClassOf :Logos ;
+    rdfs:comment "Logical persuasion through deductive reasoning from general principles to specific conclusions."@en .
+
+:InductiveLogos a owl:Class ;
+    rdfs:subClassOf :Logos ;
+    rdfs:comment "Logical persuasion through inductive reasoning from specific observations to general conclusions."@en .
+
+:AbductiveLogos a owl:Class ;
+    rdfs:subClassOf :Logos ;
+    rdfs:comment "Logical persuasion through abductive reasoning, inferring the best explanation for observed phenomena."@en .
+
+# --- Level 5: Deductive Logos Subtypes ---
+
+:SyllogisticReasoning a owl:Class ;
+    rdfs:subClassOf :DeductiveLogos ;
+    rdfs:comment "Deductive reasoning structured as a formal syllogism with major premise, minor premise, and conclusion."@en .
+
+:ModusPonens a owl:Class ;
+    rdfs:subClassOf :DeductiveLogos ;
+    rdfs:comment "Deductive reasoning of the form: if P then Q; P; therefore Q."@en .
+
+:ModusTollens a owl:Class ;
+    rdfs:subClassOf :DeductiveLogos ;
+    rdfs:comment "Deductive reasoning of the form: if P then Q; not Q; therefore not P."@en .
+
+# --- Level 3: Tone Types ---
+
+:FormalTone a owl:Class ;
+    rdfs:subClassOf :Tone ;
+    rdfs:comment "A tone characterised by standard English, impersonal constructions, and adherence to academic conventions."@en .
+
+:InformalTone a owl:Class ;
+    rdfs:subClassOf :Tone ;
+    rdfs:comment "A tone characterised by colloquial language, contractions, and a conversational register."@en .
+
+:AcademicTone a owl:Class ;
+    rdfs:subClassOf :Tone ;
+    rdfs:comment "A tone that adopts the conventions of scholarly writing: precise, cautious, and evidence-oriented."@en .
+
+:ConversationalTone a owl:Class ;
+    rdfs:subClassOf :Tone ;
+    rdfs:comment "A tone that mimics spoken dialogue, using direct address and casual phrasing."@en .
+
+:PassionateTone a owl:Class ;
+    rdfs:subClassOf :Tone ;
+    rdfs:comment "A tone characterised by strong feeling, urgency, and emotional intensity."@en .
+
+:ObjectiveTone a owl:Class ;
+    rdfs:subClassOf :Tone ;
+    rdfs:comment "A tone that presents information impartially without overt personal bias."@en .
+
+:SarcasticTone a owl:Class ;
+    rdfs:subClassOf :Tone ;
+    rdfs:comment "A tone that uses irony or mockery to make a point, often undermining an opposing position."@en .
+
+:AuthoritativeTone a owl:Class ;
+    rdfs:subClassOf :Tone ;
+    rdfs:comment "A tone that conveys confidence, expertise, and command of the subject matter."@en .
+
+# --- Level 4: Academic Tone Subtypes ---
+
+:CautiousAcademicTone a owl:Class ;
+    rdfs:subClassOf :AcademicTone ;
+    rdfs:comment "An academic tone heavy with hedging language: 'suggests', 'may indicate', 'it appears that'."@en .
+
+:AssertiveAcademicTone a owl:Class ;
+    rdfs:subClassOf :AcademicTone ;
+    rdfs:comment "An academic tone that makes confident, definitive claims supported by strong evidence."@en .
+
+# --- Level 3: Voice Types ---
+
+:ActiveVoice a owl:Class ;
+    rdfs:subClassOf :Voice ;
+    rdfs:comment "A voice where the subject performs the action, producing direct and vigorous prose."@en .
+
+:PassiveVoice a owl:Class ;
+    rdfs:subClassOf :Voice ;
+    rdfs:comment "A voice where the subject receives the action, often used in scientific writing to emphasise objectivity."@en .
+
+:FirstPersonVoice a owl:Class ;
+    rdfs:subClassOf :Voice ;
+    rdfs:comment "A voice using first-person pronouns (I, we), establishing personal presence and authority."@en .
+
+:ThirdPersonVoice a owl:Class ;
+    rdfs:subClassOf :Voice ;
+    rdfs:comment "A voice using third-person pronouns (he, she, they, one), maintaining distance and objectivity."@en .
+
+:SecondPersonVoice a owl:Class ;
+    rdfs:subClassOf :Voice ;
+    rdfs:comment "A voice using second-person pronouns (you), directly addressing and engaging the reader."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :ActiveVoice :PassiveVoice ) .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :FirstPersonVoice :ThirdPersonVoice :SecondPersonVoice ) .
+
+# --- Level 3: Audience Awareness Types ---
+
+:ReaderAddressing a owl:Class ;
+    rdfs:subClassOf :AudienceAwareness ;
+    rdfs:comment "Directly speaking to or acknowledging the reader within the text."@en .
+
+:ObjectionAnticipation a owl:Class ;
+    rdfs:subClassOf :AudienceAwareness ;
+    rdfs:comment "Proactively addressing potential questions, doubts, or disagreements the reader might have."@en .
+
+:KnowledgeCalibration a owl:Class ;
+    rdfs:subClassOf :AudienceAwareness ;
+    rdfs:comment "Adjusting the level of explanation, jargon, and background information to the intended audience."@en .
+
+:ContextSetting a owl:Class ;
+    rdfs:subClassOf :AudienceAwareness ;
+    rdfs:comment "Providing necessary background information that the audience needs to follow the argument."@en .
+
+# --- Level 3: Rhetorical Devices ---
+
+:Metaphor a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "A figure of speech that describes one thing in terms of another, creating an implicit comparison."@en .
+
+:Simile a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "A figure of speech that explicitly compares two unlike things using 'like' or 'as'."@en .
+
+:Analogy a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "An extended comparison between two domains to explain or clarify a complex idea."@en .
+
+:RhetoricalQuestion a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "A question posed for effect rather than to elicit an answer, prompting the reader to think."@en .
+
+:Repetition a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "The deliberate reuse of words or phrases for emphasis and rhetorical impact."@en .
+
+:Parallelism a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "The use of similar grammatical structures in successive clauses or sentences for rhythm and emphasis."@en .
+
+:Antithesis a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "The juxtaposition of contrasting ideas in balanced phrases or clauses."@en .
+
+:Hyperbole a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "Deliberate exaggeration for emphasis or effect."@en .
+
+:Understatement a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "Deliberately representing something as less important than it is, often for ironic effect."@en .
+
+:Allusion a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "An indirect reference to a well-known person, event, text, or cultural artefact."@en .
+
+:Irony a owl:Class ;
+    rdfs:subClassOf :RhetoricalDevice ;
+    rdfs:comment "The use of words to convey a meaning opposite to their literal meaning."@en .
+
+:Anaphora a owl:Class ;
+    rdfs:subClassOf :Repetition ;
+    rdfs:comment "Repetition of a word or phrase at the beginning of successive clauses or sentences."@en .
+
+:Epistrophe a owl:Class ;
+    rdfs:subClassOf :Repetition ;
+    rdfs:comment "Repetition of a word or phrase at the end of successive clauses or sentences."@en .
+
+# =============================================================================
+# STRUCTURAL ELEMENTS (Levels 2-7)
+# =============================================================================
+
+# --- Level 2 ---
+
+:Introduction a owl:Class ;
+    rdfs:subClassOf :StructuralElement ;
+    rdfs:comment "The opening section of the essay that establishes context, engages the reader, and presents the thesis."@en .
+
+:BodySection a owl:Class ;
+    rdfs:subClassOf :StructuralElement ;
+    rdfs:comment "The main body of the essay containing the developed argument across multiple paragraphs."@en .
+
+:Conclusion a owl:Class ;
+    rdfs:subClassOf :StructuralElement ;
+    rdfs:comment "The closing section that synthesises the argument and leaves a final impression."@en .
+
+:Transition a owl:Class ;
+    rdfs:subClassOf :StructuralElement ;
+    rdfs:comment "A word, phrase, sentence, or paragraph that links ideas and guides the reader through the argument."@en .
+
+:CoherencePattern a owl:Class ;
+    rdfs:subClassOf :StructuralElement ;
+    rdfs:comment "The overarching organisational logic that determines the sequence and relationship of ideas."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :Introduction :BodySection :Conclusion :Transition :CoherencePattern ) .
+
+# --- Level 3: Introduction Components ---
+
+:Hook a owl:Class ;
+    rdfs:subClassOf :Introduction ;
+    rdfs:comment "The opening sentence or sentences designed to capture the reader's attention and interest."@en .
+
+:ContextualBackground a owl:Class ;
+    rdfs:subClassOf :Introduction ;
+    rdfs:comment "Background information that situates the topic and provides the reader with necessary context."@en .
+
+:ThesisStatement a owl:Class ;
+    rdfs:subClassOf :Introduction ;
+    rdfs:comment "The specific sentence or sentences in the introduction that articulate the essay's central claim."@en .
+
+:Roadmap a owl:Class ;
+    rdfs:subClassOf :Introduction ;
+    rdfs:comment "A preview of the essay's structure, indicating how the argument will be developed."@en .
+
+# --- Level 4: Hook Types ---
+
+:AnecdotalHook a owl:Class ;
+    rdfs:subClassOf :Hook ;
+    rdfs:comment "A hook that opens with a brief, engaging story or personal experience."@en .
+
+:StatisticalHook a owl:Class ;
+    rdfs:subClassOf :Hook ;
+    rdfs:comment "A hook that opens with a surprising or compelling statistic."@en .
+
+:QuotationHook a owl:Class ;
+    rdfs:subClassOf :Hook ;
+    rdfs:comment "A hook that opens with a relevant quotation from an authority or literary source."@en .
+
+:QuestionHook a owl:Class ;
+    rdfs:subClassOf :Hook ;
+    rdfs:comment "A hook that opens with a provocative or thought-provoking question."@en .
+
+:BoldStatementHook a owl:Class ;
+    rdfs:subClassOf :Hook ;
+    rdfs:comment "A hook that opens with a controversial or counterintuitive claim."@en .
+
+:ScenarioHook a owl:Class ;
+    rdfs:subClassOf :Hook ;
+    rdfs:comment "A hook that opens by painting a vivid hypothetical or real scenario."@en .
+
+# --- Level 5: Scenario Hook Subtypes ---
+
+:HypotheticalScenarioHook a owl:Class ;
+    rdfs:subClassOf :ScenarioHook ;
+    rdfs:comment "A scenario hook that asks the reader to imagine a hypothetical situation."@en .
+
+:RealWorldScenarioHook a owl:Class ;
+    rdfs:subClassOf :ScenarioHook ;
+    rdfs:comment "A scenario hook that opens with a vivid description of a real event or situation."@en .
+
+# --- Level 3: Body Section Components ---
+
+:BodyParagraph a owl:Class ;
+    rdfs:subClassOf :BodySection ;
+    rdfs:comment "A single paragraph within the body that develops one aspect of the argument."@en .
+
+:ParagraphCluster a owl:Class ;
+    rdfs:subClassOf :BodySection ;
+    rdfs:comment "A group of related paragraphs that together develop a major section of the argument."@en .
+
+# --- Level 4: Body Paragraph Components ---
+
+:TopicSentence a owl:Class ;
+    rdfs:subClassOf :BodyParagraph ;
+    rdfs:comment "The opening sentence of a body paragraph that states the paragraph's main idea."@en .
+
+:ParagraphDevelopment a owl:Class ;
+    rdfs:subClassOf :BodyParagraph ;
+    rdfs:comment "The sentences that develop, explain, and support the topic sentence with evidence and analysis."@en .
+
+:ParagraphTransition a owl:Class ;
+    rdfs:subClassOf :BodyParagraph ;
+    rdfs:comment "A sentence or phrase that links the current paragraph to the preceding or following one."@en .
+
+:ClosingSentence a owl:Class ;
+    rdfs:subClassOf :BodyParagraph ;
+    rdfs:comment "The final sentence of a body paragraph that wraps up the point or leads into the next paragraph."@en .
+
+# --- Level 5: Paragraph Development Types ---
+
+:ExemplificationDevelopment a owl:Class ;
+    rdfs:subClassOf :ParagraphDevelopment ;
+    rdfs:comment "Paragraph development through examples and illustrations."@en .
+
+:AnalysisDevelopment a owl:Class ;
+    rdfs:subClassOf :ParagraphDevelopment ;
+    rdfs:comment "Paragraph development through critical analysis and interpretation of evidence."@en .
+
+:ComparisonDevelopment a owl:Class ;
+    rdfs:subClassOf :ParagraphDevelopment ;
+    rdfs:comment "Paragraph development through comparison and contrast of ideas or evidence."@en .
+
+:DefinitionDevelopment a owl:Class ;
+    rdfs:subClassOf :ParagraphDevelopment ;
+    rdfs:comment "Paragraph development through defining and explaining key terms or concepts."@en .
+
+:NarrationDevelopment a owl:Class ;
+    rdfs:subClassOf :ParagraphDevelopment ;
+    rdfs:comment "Paragraph development through narrative or chronological recounting."@en .
+
+# --- Level 6: Analysis Development Subtypes ---
+
+:CriticalAnalysis a owl:Class ;
+    rdfs:subClassOf :AnalysisDevelopment ;
+    rdfs:comment "Analysis that evaluates the strengths and weaknesses of evidence, arguments, or sources."@en .
+
+:InterpretiveAnalysis a owl:Class ;
+    rdfs:subClassOf :AnalysisDevelopment ;
+    rdfs:comment "Analysis that explains the meaning or significance of evidence in relation to the claim."@en .
+
+:ComparativeAnalysis a owl:Class ;
+    rdfs:subClassOf :AnalysisDevelopment ;
+    rdfs:comment "Analysis that systematically compares two or more items to draw conclusions."@en .
+
+# --- Level 7: Critical Analysis Subtypes ---
+
+:MethodologicalCritique a owl:Class ;
+    rdfs:subClassOf :CriticalAnalysis ;
+    rdfs:comment "A critical analysis that evaluates the methodology used to generate evidence."@en .
+
+:LimitationAnalysis a owl:Class ;
+    rdfs:subClassOf :CriticalAnalysis ;
+    rdfs:comment "A critical analysis that identifies and discusses the limitations of evidence or reasoning."@en .
+
+:BiasAnalysis a owl:Class ;
+    rdfs:subClassOf :CriticalAnalysis ;
+    rdfs:comment "A critical analysis that identifies and evaluates potential biases in sources or reasoning."@en .
+
+# --- Level 8: Bias Analysis Subtypes ---
+
+:ConfirmationBiasAnalysis a owl:Class ;
+    rdfs:subClassOf :BiasAnalysis ;
+    rdfs:comment "Analysis that identifies the tendency to favour evidence confirming pre-existing beliefs."@en .
+
+:SelectionBiasAnalysis a owl:Class ;
+    rdfs:subClassOf :BiasAnalysis ;
+    rdfs:comment "Analysis that identifies bias arising from non-representative sampling or cherry-picked evidence."@en .
+
+# --- Level 3: Conclusion Components ---
+
+:Restatement a owl:Class ;
+    rdfs:subClassOf :Conclusion ;
+    rdfs:comment "A rephrasing of the thesis that reminds the reader of the essay's central argument."@en .
+
+:Synthesis a owl:Class ;
+    rdfs:subClassOf :Conclusion ;
+    rdfs:comment "A weaving together of the essay's key arguments into a unified, higher-level understanding."@en .
+
+:CallToAction a owl:Class ;
+    rdfs:subClassOf :Conclusion ;
+    rdfs:comment "A direct appeal to the reader to take a specific action or change their behaviour."@en .
+
+:FutureImplication a owl:Class ;
+    rdfs:subClassOf :Conclusion ;
+    rdfs:comment "A discussion of the broader implications or future directions arising from the essay's argument."@en .
+
+:FinalReflection a owl:Class ;
+    rdfs:subClassOf :Conclusion ;
+    rdfs:comment "A closing thought that adds a personal or philosophical dimension to the conclusion."@en .
+
+:CircularClosing a owl:Class ;
+    rdfs:subClassOf :Conclusion ;
+    rdfs:comment "A conclusion that returns to the opening image, anecdote, or question, creating a sense of closure."@en .
+
+# --- Level 3: Transition Types ---
+
+:InterParagraphTransition a owl:Class ;
+    rdfs:subClassOf :Transition ;
+    rdfs:comment "A transition that bridges two consecutive paragraphs."@en .
+
+:InterIdeaTransition a owl:Class ;
+    rdfs:subClassOf :Transition ;
+    rdfs:comment "A transition that connects two ideas within a single paragraph."@en .
+
+:InterSectionTransition a owl:Class ;
+    rdfs:subClassOf :Transition ;
+    rdfs:comment "A transition that bridges two major sections of the essay."@en .
+
+# --- Level 4: Transition Function Types ---
+
+:AdditiveTransition a owl:Class ;
+    rdfs:subClassOf :InterParagraphTransition ;
+    rdfs:comment "A transition that adds information: 'furthermore', 'moreover', 'in addition'."@en .
+
+:ContrastiveTransition a owl:Class ;
+    rdfs:subClassOf :InterParagraphTransition ;
+    rdfs:comment "A transition that introduces contrast: 'however', 'on the other hand', 'nevertheless'."@en .
+
+:CausalTransition a owl:Class ;
+    rdfs:subClassOf :InterParagraphTransition ;
+    rdfs:comment "A transition that shows cause and effect: 'therefore', 'consequently', 'as a result'."@en .
+
+:TemporalTransition a owl:Class ;
+    rdfs:subClassOf :InterParagraphTransition ;
+    rdfs:comment "A transition that indicates time sequence: 'subsequently', 'meanwhile', 'finally'."@en .
+
+:ConclusiveTransition a owl:Class ;
+    rdfs:subClassOf :InterParagraphTransition ;
+    rdfs:comment "A transition that signals a concluding point: 'in conclusion', 'ultimately', 'in summary'."@en .
+
+# --- Level 3: Coherence Patterns ---
+
+:ChronologicalPattern a owl:Class ;
+    rdfs:subClassOf :CoherencePattern ;
+    rdfs:comment "Organisation of ideas in time order from earliest to latest or vice versa."@en .
+
+:CompareContrastPattern a owl:Class ;
+    rdfs:subClassOf :CoherencePattern ;
+    rdfs:comment "Organisation that systematically examines similarities and differences between two or more subjects."@en .
+
+:CauseEffectPattern a owl:Class ;
+    rdfs:subClassOf :CoherencePattern ;
+    rdfs:comment "Organisation that traces causal relationships between events, conditions, or phenomena."@en .
+
+:ProblemSolutionPattern a owl:Class ;
+    rdfs:subClassOf :CoherencePattern ;
+    rdfs:comment "Organisation that presents a problem and then proposes and evaluates solutions."@en .
+
+:OrderOfImportancePattern a owl:Class ;
+    rdfs:subClassOf :CoherencePattern ;
+    rdfs:comment "Organisation that arranges ideas from least to most important (climactic) or vice versa."@en .
+
+:SpatialPattern a owl:Class ;
+    rdfs:subClassOf :CoherencePattern ;
+    rdfs:comment "Organisation based on physical or spatial arrangement."@en .
+
+:ClassificationPattern a owl:Class ;
+    rdfs:subClassOf :CoherencePattern ;
+    rdfs:comment "Organisation that divides a topic into categories and examines each."@en .
+
+# --- Level 4: Compare-Contrast Subtypes ---
+
+:BlockCompareContrast a owl:Class ;
+    rdfs:subClassOf :CompareContrastPattern ;
+    rdfs:comment "A compare-contrast pattern that discusses all aspects of subject A, then all aspects of subject B."@en .
+
+:PointByPointCompareContrast a owl:Class ;
+    rdfs:subClassOf :CompareContrastPattern ;
+    rdfs:comment "A compare-contrast pattern that alternates between subjects for each point of comparison."@en .
+
+# =============================================================================
+# EVIDENCE QUALITY (Levels 2-6)
+# =============================================================================
+
+# --- Level 2 ---
+
+:Specificity a owl:Class ;
+    rdfs:subClassOf :EvidenceQuality ;
+    rdfs:comment "The degree of precision and detail in the evidence presented."@en .
+
+:Verifiability a owl:Class ;
+    rdfs:subClassOf :EvidenceQuality ;
+    rdfs:comment "The extent to which the evidence can be independently checked or confirmed."@en .
+
+:Relevance a owl:Class ;
+    rdfs:subClassOf :EvidenceQuality ;
+    rdfs:comment "The degree to which the evidence directly supports the claim it is intended to justify."@en .
+
+:SourceAuthority a owl:Class ;
+    rdfs:subClassOf :EvidenceQuality ;
+    rdfs:comment "The credibility and expertise of the source from which the evidence is drawn."@en .
+
+:SourceRecency a owl:Class ;
+    rdfs:subClassOf :EvidenceQuality ;
+    rdfs:comment "The timeliness of the evidence relative to the topic under discussion."@en .
+
+:EvidenceSufficiency a owl:Class ;
+    rdfs:subClassOf :EvidenceQuality ;
+    rdfs:comment "Whether enough evidence has been provided to adequately support the claim."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :Specificity :Verifiability :Relevance :SourceAuthority :SourceRecency :EvidenceSufficiency ) .
+
+# --- Level 3: Specificity Levels ---
+
+:VagueAssertion a owl:Class ;
+    rdfs:subClassOf :Specificity ;
+    rdfs:comment "Evidence presented as a vague, unsubstantiated statement with no supporting detail."@en .
+
+:GeneralClaim a owl:Class ;
+    rdfs:subClassOf :Specificity ;
+    rdfs:comment "Evidence presented as a broad claim without precise numbers, dates, or sources."@en .
+
+:SpecificWithNumbers a owl:Class ;
+    rdfs:subClassOf :Specificity ;
+    rdfs:comment "Evidence that includes specific quantitative data such as percentages, counts, or measurements."@en .
+
+:PreciseWithSource a owl:Class ;
+    rdfs:subClassOf :Specificity ;
+    rdfs:comment "Evidence that is both quantitatively precise and attributed to a named, citable source."@en .
+
+# --- Level 4: Precise With Source Subtypes ---
+
+:PreciseWithPrimarySource a owl:Class ;
+    rdfs:subClassOf :PreciseWithSource ;
+    rdfs:comment "Precise evidence attributed to a primary source such as original research data or official records."@en .
+
+:PreciseWithSecondarySource a owl:Class ;
+    rdfs:subClassOf :PreciseWithSource ;
+    rdfs:comment "Precise evidence attributed to a secondary source such as a review article or textbook."@en .
+
+# --- Level 3: Verifiability Levels ---
+
+:OpinionLevel a owl:Class ;
+    rdfs:subClassOf :Verifiability ;
+    rdfs:comment "A statement of personal opinion that cannot be independently verified."@en .
+
+:CommonKnowledgeLevel a owl:Class ;
+    rdfs:subClassOf :Verifiability ;
+    rdfs:comment "A widely accepted fact that does not require a specific citation."@en .
+
+:CitableFactLevel a owl:Class ;
+    rdfs:subClassOf :Verifiability ;
+    rdfs:comment "A factual claim that can be verified by consulting a specific published source."@en .
+
+:PrimarySourceLevel a owl:Class ;
+    rdfs:subClassOf :Verifiability ;
+    rdfs:comment "A claim verifiable through direct access to primary source material."@en .
+
+# --- Level 3: Relevance Levels ---
+
+:TangentialRelevance a owl:Class ;
+    rdfs:subClassOf :Relevance ;
+    rdfs:comment "Evidence that is loosely related to the claim but does not directly support it."@en .
+
+:RelatedRelevance a owl:Class ;
+    rdfs:subClassOf :Relevance ;
+    rdfs:comment "Evidence that is related to the claim and provides some indirect support."@en .
+
+:DirectlySupportingRelevance a owl:Class ;
+    rdfs:subClassOf :Relevance ;
+    rdfs:comment "Evidence that directly and clearly supports the specific claim being made."@en .
+
+:EssentialRelevance a owl:Class ;
+    rdfs:subClassOf :Relevance ;
+    rdfs:comment "Evidence that is indispensable to the claim; without it, the claim cannot stand."@en .
+
+# --- Level 3: Source Authority Levels ---
+
+:UnknownAuthority a owl:Class ;
+    rdfs:subClassOf :SourceAuthority ;
+    rdfs:comment "A source whose authority or credentials cannot be determined."@en .
+
+:LayAuthority a owl:Class ;
+    rdfs:subClassOf :SourceAuthority ;
+    rdfs:comment "A source without recognised expertise in the relevant domain."@en .
+
+:PractitionerAuthority a owl:Class ;
+    rdfs:subClassOf :SourceAuthority ;
+    rdfs:comment "A source with practical, professional experience in the relevant domain."@en .
+
+:ScholarlyAuthority a owl:Class ;
+    rdfs:subClassOf :SourceAuthority ;
+    rdfs:comment "A source with recognised academic or research expertise in the relevant domain."@en .
+
+:PreeminentAuthority a owl:Class ;
+    rdfs:subClassOf :SourceAuthority ;
+    rdfs:comment "A source widely regarded as a leading authority in the field."@en .
+
+# --- Level 3: Source Recency Levels ---
+
+:Outdated a owl:Class ;
+    rdfs:subClassOf :SourceRecency ;
+    rdfs:comment "Evidence from a source that is too old to be reliable for the topic, given the pace of change in the field."@en .
+
+:Dated a owl:Class ;
+    rdfs:subClassOf :SourceRecency ;
+    rdfs:comment "Evidence from a source that is somewhat old but may still be relevant for foundational or slowly evolving topics."@en .
+
+:Current a owl:Class ;
+    rdfs:subClassOf :SourceRecency ;
+    rdfs:comment "Evidence from a source published within a timeframe considered current for the field."@en .
+
+:CuttingEdge a owl:Class ;
+    rdfs:subClassOf :SourceRecency ;
+    rdfs:comment "Evidence from the very latest research, data, or publications in the field."@en .
+
+# --- Level 3: Evidence Sufficiency Levels ---
+
+:InsufficientEvidence a owl:Class ;
+    rdfs:subClassOf :EvidenceSufficiency ;
+    rdfs:comment "The claim is supported by too little evidence to be convincing."@en .
+
+:MinimalEvidence a owl:Class ;
+    rdfs:subClassOf :EvidenceSufficiency ;
+    rdfs:comment "The claim is supported by the bare minimum of evidence."@en .
+
+:AdequateEvidence a owl:Class ;
+    rdfs:subClassOf :EvidenceSufficiency ;
+    rdfs:comment "The claim is supported by sufficient evidence to be convincing."@en .
+
+:ComprehensiveEvidence a owl:Class ;
+    rdfs:subClassOf :EvidenceSufficiency ;
+    rdfs:comment "The claim is supported by abundant, diverse evidence from multiple sources."@en .
+
+# =============================================================================
+# LANGUAGE QUALITY (Levels 2-7)
+# =============================================================================
+
+# --- Level 2 ---
+
+:VocabularySophistication a owl:Class ;
+    rdfs:subClassOf :LanguageQuality ;
+    rdfs:comment "The range and sophistication of the writer's word choices."@en .
+
+:SentenceVariety a owl:Class ;
+    rdfs:subClassOf :LanguageQuality ;
+    rdfs:comment "The diversity of sentence structures and lengths used in the essay."@en .
+
+:GrammarCorrectness a owl:Class ;
+    rdfs:subClassOf :LanguageQuality ;
+    rdfs:comment "The degree to which the essay conforms to standard grammatical rules."@en .
+
+:SpellingAndMechanics a owl:Class ;
+    rdfs:subClassOf :LanguageQuality ;
+    rdfs:comment "The correctness of spelling, punctuation, and typographical conventions."@en .
+
+:CohesionDevice a owl:Class ;
+    rdfs:subClassOf :LanguageQuality ;
+    rdfs:comment "A linguistic mechanism that creates textual cohesion by linking sentences and ideas."@en .
+
+:Clarity a owl:Class ;
+    rdfs:subClassOf :LanguageQuality ;
+    rdfs:comment "The ease with which the reader can understand the writer's intended meaning."@en .
+
+:Conciseness a owl:Class ;
+    rdfs:subClassOf :LanguageQuality ;
+    rdfs:comment "The degree to which the writing avoids unnecessary words and expresses ideas efficiently."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :VocabularySophistication :SentenceVariety :GrammarCorrectness
+                  :SpellingAndMechanics :CohesionDevice :Clarity :Conciseness ) .
+
+# --- Level 3: Vocabulary Levels ---
+
+:BasicVocabulary a owl:Class ;
+    rdfs:subClassOf :VocabularySophistication ;
+    rdfs:comment "Vocabulary limited to common, everyday words without technical or academic register."@en .
+
+:IntermediateVocabulary a owl:Class ;
+    rdfs:subClassOf :VocabularySophistication ;
+    rdfs:comment "Vocabulary that includes some academic and precise terms alongside common language."@en .
+
+:AdvancedVocabulary a owl:Class ;
+    rdfs:subClassOf :VocabularySophistication ;
+    rdfs:comment "Vocabulary characterised by precise, varied, and sophisticated word choices."@en .
+
+:DomainSpecificVocabulary a owl:Class ;
+    rdfs:subClassOf :VocabularySophistication ;
+    rdfs:comment "Vocabulary that employs technical or specialist terminology appropriate to the essay's subject."@en .
+
+# --- Level 4: Advanced Vocabulary Subtypes ---
+
+:NuancedWordChoice a owl:Class ;
+    rdfs:subClassOf :AdvancedVocabulary ;
+    rdfs:comment "Word choices that convey fine shades of meaning, demonstrating command of connotation and register."@en .
+
+:ElegantVariation a owl:Class ;
+    rdfs:subClassOf :AdvancedVocabulary ;
+    rdfs:comment "The use of synonyms and varied phrasing to avoid repetition while maintaining precision."@en .
+
+# --- Level 4: Domain-Specific Vocabulary Subtypes ---
+
+:ScientificTerminology a owl:Class ;
+    rdfs:subClassOf :DomainSpecificVocabulary ;
+    rdfs:comment "Technical vocabulary drawn from the natural or social sciences."@en .
+
+:LegalTerminology a owl:Class ;
+    rdfs:subClassOf :DomainSpecificVocabulary ;
+    rdfs:comment "Technical vocabulary drawn from legal discourse."@en .
+
+:LiteraryTerminology a owl:Class ;
+    rdfs:subClassOf :DomainSpecificVocabulary ;
+    rdfs:comment "Technical vocabulary drawn from literary criticism and analysis."@en .
+
+:PhilosophicalTerminology a owl:Class ;
+    rdfs:subClassOf :DomainSpecificVocabulary ;
+    rdfs:comment "Technical vocabulary drawn from philosophical discourse."@en .
+
+# --- Level 3: Sentence Types ---
+
+:SimpleSentence a owl:Class ;
+    rdfs:subClassOf :SentenceVariety ;
+    rdfs:comment "A sentence containing one independent clause with no subordinate clauses."@en .
+
+:CompoundSentence a owl:Class ;
+    rdfs:subClassOf :SentenceVariety ;
+    rdfs:comment "A sentence containing two or more independent clauses joined by a coordinating conjunction or semicolon."@en .
+
+:ComplexSentence a owl:Class ;
+    rdfs:subClassOf :SentenceVariety ;
+    rdfs:comment "A sentence containing one independent clause and one or more subordinate clauses."@en .
+
+:CompoundComplexSentence a owl:Class ;
+    rdfs:subClassOf :SentenceVariety ;
+    rdfs:comment "A sentence containing two or more independent clauses and at least one subordinate clause."@en .
+
+:FragmentSentence a owl:Class ;
+    rdfs:subClassOf :SentenceVariety ;
+    rdfs:comment "An incomplete sentence lacking a subject, verb, or complete thought, used deliberately for effect or erroneously."@en .
+
+:RunOnSentence a owl:Class ;
+    rdfs:subClassOf :SentenceVariety ;
+    rdfs:comment "A sentence error where two or more independent clauses are joined without proper punctuation or conjunction."@en .
+
+# --- Level 4: Complex Sentence Subtypes ---
+
+:PeriodicSentence a owl:Class ;
+    rdfs:subClassOf :ComplexSentence ;
+    rdfs:comment "A complex sentence that delays the main clause until the end, building suspense or emphasis."@en .
+
+:LooseSentence a owl:Class ;
+    rdfs:subClassOf :ComplexSentence ;
+    rdfs:comment "A complex sentence that presents the main clause first, followed by subordinate elements."@en .
+
+:BalancedSentence a owl:Class ;
+    rdfs:subClassOf :ComplexSentence ;
+    rdfs:comment "A sentence with two parallel parts of roughly equal length and importance."@en .
+
+# --- Level 3: Grammar Error Types ---
+
+:SubjectVerbAgreement a owl:Class ;
+    rdfs:subClassOf :GrammarCorrectness ;
+    rdfs:comment "Correctness of agreement between subjects and their verbs in number and person."@en .
+
+:TenseConsistency a owl:Class ;
+    rdfs:subClassOf :GrammarCorrectness ;
+    rdfs:comment "Consistency and correctness of verb tense usage throughout the essay."@en .
+
+:PronounReference a owl:Class ;
+    rdfs:subClassOf :GrammarCorrectness ;
+    rdfs:comment "Clarity and correctness of pronoun-antecedent agreement and reference."@en .
+
+:ModifierPlacement a owl:Class ;
+    rdfs:subClassOf :GrammarCorrectness ;
+    rdfs:comment "Correct placement of modifiers to avoid dangling or misplaced modifiers."@en .
+
+:ParallelStructure a owl:Class ;
+    rdfs:subClassOf :GrammarCorrectness ;
+    rdfs:comment "Consistent grammatical form in elements joined by coordinating conjunctions or in lists."@en .
+
+:SentenceBoundary a owl:Class ;
+    rdfs:subClassOf :GrammarCorrectness ;
+    rdfs:comment "Correct identification and punctuation of sentence boundaries, avoiding fragments and run-ons."@en .
+
+# --- Level 4: Pronoun Reference Subtypes ---
+
+:AmbiguousPronounReference a owl:Class ;
+    rdfs:subClassOf :PronounReference ;
+    rdfs:comment "A pronoun whose antecedent is unclear because multiple nouns could be the referent."@en .
+
+:VaguePronounReference a owl:Class ;
+    rdfs:subClassOf :PronounReference ;
+    rdfs:comment "A pronoun (often 'this', 'it', 'which') that refers to a broad idea rather than a specific noun."@en .
+
+# --- Level 3: Spelling and Mechanics ---
+
+:SpellingAccuracy a owl:Class ;
+    rdfs:subClassOf :SpellingAndMechanics ;
+    rdfs:comment "The correctness of word spelling throughout the essay."@en .
+
+:PunctuationAccuracy a owl:Class ;
+    rdfs:subClassOf :SpellingAndMechanics ;
+    rdfs:comment "The correctness of punctuation marks including commas, semicolons, colons, apostrophes, and quotation marks."@en .
+
+:CapitalisationAccuracy a owl:Class ;
+    rdfs:subClassOf :SpellingAndMechanics ;
+    rdfs:comment "The correct use of capitalisation for proper nouns, sentence beginnings, and titles."@en .
+
+:FormattingAccuracy a owl:Class ;
+    rdfs:subClassOf :SpellingAndMechanics ;
+    rdfs:comment "The correct use of formatting conventions such as italics, bold, indentation, and spacing."@en .
+
+# --- Level 4: Punctuation Subtypes ---
+
+:CommaUsage a owl:Class ;
+    rdfs:subClassOf :PunctuationAccuracy ;
+    rdfs:comment "The correct use of commas including serial commas, introductory commas, and comma splices."@en .
+
+:SemicolonUsage a owl:Class ;
+    rdfs:subClassOf :PunctuationAccuracy ;
+    rdfs:comment "The correct use of semicolons to join independent clauses or separate complex list items."@en .
+
+:ApostropheUsage a owl:Class ;
+    rdfs:subClassOf :PunctuationAccuracy ;
+    rdfs:comment "The correct use of apostrophes for possession and contraction."@en .
+
+:QuotationMarkUsage a owl:Class ;
+    rdfs:subClassOf :PunctuationAccuracy ;
+    rdfs:comment "The correct use of quotation marks for direct speech, titles, and scare quotes."@en .
+
+# --- Level 3: Cohesion Devices ---
+
+:PronominalCohesion a owl:Class ;
+    rdfs:subClassOf :CohesionDevice ;
+    rdfs:comment "Cohesion achieved through the use of pronouns that refer back to previously mentioned nouns."@en .
+
+:ConjunctiveCohesion a owl:Class ;
+    rdfs:subClassOf :CohesionDevice ;
+    rdfs:comment "Cohesion achieved through conjunctions and connective adverbs that signal logical relationships."@en .
+
+:LexicalCohesion a owl:Class ;
+    rdfs:subClassOf :CohesionDevice ;
+    rdfs:comment "Cohesion achieved through word choice patterns: repetition, synonyms, hypernyms, and collocations."@en .
+
+:EllipticalCohesion a owl:Class ;
+    rdfs:subClassOf :CohesionDevice ;
+    rdfs:comment "Cohesion achieved by omitting words that can be inferred from context."@en .
+
+:SubstitutionCohesion a owl:Class ;
+    rdfs:subClassOf :CohesionDevice ;
+    rdfs:comment "Cohesion achieved by replacing a word or phrase with a substitute (e.g., 'one', 'do so')."@en .
+
+# --- Level 4: Lexical Cohesion Subtypes ---
+
+:LexicalRepetition a owl:Class ;
+    rdfs:subClassOf :LexicalCohesion ;
+    rdfs:comment "Cohesion through exact repetition of key words across sentences."@en .
+
+:SynonymChain a owl:Class ;
+    rdfs:subClassOf :LexicalCohesion ;
+    rdfs:comment "Cohesion through the use of synonyms or near-synonyms to refer to the same concept."@en .
+
+:HypernymChain a owl:Class ;
+    rdfs:subClassOf :LexicalCohesion ;
+    rdfs:comment "Cohesion through the use of superordinate terms to refer to previously mentioned specifics."@en .
+
+:CollocationChain a owl:Class ;
+    rdfs:subClassOf :LexicalCohesion ;
+    rdfs:comment "Cohesion through words that frequently co-occur or belong to the same semantic field."@en .
+
+# --- Level 5: Synonym Chain Subtypes ---
+
+:NearSynonymChain a owl:Class ;
+    rdfs:subClassOf :SynonymChain ;
+    rdfs:comment "Cohesion through words with similar but not identical meanings, adding nuance."@en .
+
+:ParaphraseChain a owl:Class ;
+    rdfs:subClassOf :SynonymChain ;
+    rdfs:comment "Cohesion through rephrasing the same idea in different words across sentences."@en .
+
+# --- Level 3: Clarity Subtypes ---
+
+:SyntacticClarity a owl:Class ;
+    rdfs:subClassOf :Clarity ;
+    rdfs:comment "Clarity achieved through straightforward, easily parseable sentence structures."@en .
+
+:SemanticClarity a owl:Class ;
+    rdfs:subClassOf :Clarity ;
+    rdfs:comment "Clarity achieved through precise word choice that leaves no ambiguity about meaning."@en .
+
+:ReferentialClarity a owl:Class ;
+    rdfs:subClassOf :Clarity ;
+    rdfs:comment "Clarity achieved through unambiguous pronoun references and clear antecedents."@en .
+
+# --- Level 3: Conciseness Subtypes ---
+
+:WordLevelConciseness a owl:Class ;
+    rdfs:subClassOf :Conciseness ;
+    rdfs:comment "Conciseness at the word level: avoiding redundant modifiers, cliches, and filler words."@en .
+
+:SentenceLevelConciseness a owl:Class ;
+    rdfs:subClassOf :Conciseness ;
+    rdfs:comment "Conciseness at the sentence level: avoiding unnecessarily complex or wordy constructions."@en .
+
+:ParagraphLevelConciseness a owl:Class ;
+    rdfs:subClassOf :Conciseness ;
+    rdfs:comment "Conciseness at the paragraph level: avoiding redundant or unnecessary paragraphs."@en .
+
+# =============================================================================
+# NARRATIVE ELEMENTS (Levels 2-7)
+# =============================================================================
+
+# --- Level 2 ---
+
+:Setting a owl:Class ;
+    rdfs:subClassOf :NarrativeElement ;
+    rdfs:comment "The time, place, and atmosphere in which a narrative essay's events occur."@en .
+
+:Character a owl:Class ;
+    rdfs:subClassOf :NarrativeElement ;
+    rdfs:comment "A person, figure, or persona depicted in a narrative essay."@en .
+
+:PlotStructure a owl:Class ;
+    rdfs:subClassOf :NarrativeElement ;
+    rdfs:comment "The sequence and arrangement of events in a narrative essay."@en .
+
+:SensoryDetail a owl:Class ;
+    rdfs:subClassOf :NarrativeElement ;
+    rdfs:comment "Descriptive language that appeals to one or more of the five senses."@en .
+
+:Dialogue a owl:Class ;
+    rdfs:subClassOf :NarrativeElement ;
+    rdfs:comment "Direct or reported speech between characters in a narrative essay."@en .
+
+:NarrativeReflection a owl:Class ;
+    rdfs:subClassOf :NarrativeElement ;
+    rdfs:comment "The writer's interpretive commentary on the narrative events, drawing meaning or insight."@en .
+
+:PointOfView a owl:Class ;
+    rdfs:subClassOf :NarrativeElement ;
+    rdfs:comment "The perspective from which the narrative is told."@en .
+
+:NarrativePacing a owl:Class ;
+    rdfs:subClassOf :NarrativeElement ;
+    rdfs:comment "The speed and rhythm at which the narrative unfolds."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :Setting :Character :PlotStructure :SensoryDetail
+                  :Dialogue :NarrativeReflection :PointOfView :NarrativePacing ) .
+
+# --- Level 3: Setting Components ---
+
+:TemporalSetting a owl:Class ;
+    rdfs:subClassOf :Setting ;
+    rdfs:comment "The time period, season, time of day, or historical moment in which events occur."@en .
+
+:SpatialSetting a owl:Class ;
+    rdfs:subClassOf :Setting ;
+    rdfs:comment "The physical location, geography, or place where events occur."@en .
+
+:AtmosphericSetting a owl:Class ;
+    rdfs:subClassOf :Setting ;
+    rdfs:comment "The mood or emotional atmosphere evoked by the setting's description."@en .
+
+:SocialSetting a owl:Class ;
+    rdfs:subClassOf :Setting ;
+    rdfs:comment "The social, cultural, or political context in which events occur."@en .
+
+# --- Level 4: Atmospheric Setting Subtypes ---
+
+:TenseAtmosphere a owl:Class ;
+    rdfs:subClassOf :AtmosphericSetting ;
+    rdfs:comment "An atmosphere characterised by suspense, anxiety, or foreboding."@en .
+
+:SerenAtmosphere a owl:Class ;
+    rdfs:subClassOf :AtmosphericSetting ;
+    rdfs:comment "An atmosphere characterised by peace, calm, and tranquility."@en .
+
+:OppressiveAtmosphere a owl:Class ;
+    rdfs:subClassOf :AtmosphericSetting ;
+    rdfs:comment "An atmosphere characterised by heaviness, confinement, or suffocation."@en .
+
+# --- Level 3: Character Types ---
+
+:Protagonist a owl:Class ;
+    rdfs:subClassOf :Character ;
+    rdfs:comment "The central character whose experience or perspective drives the narrative."@en .
+
+:Antagonist a owl:Class ;
+    rdfs:subClassOf :Character ;
+    rdfs:comment "A character, force, or circumstance that opposes or creates conflict for the protagonist."@en .
+
+:SupportingCharacter a owl:Class ;
+    rdfs:subClassOf :Character ;
+    rdfs:comment "A secondary character who contributes to the narrative without being its central focus."@en .
+
+:NarratorCharacter a owl:Class ;
+    rdfs:subClassOf :Character ;
+    rdfs:comment "The character who tells the story, which may or may not be the protagonist."@en .
+
+# --- Level 4: Character Development ---
+
+:StaticCharacter a owl:Class ;
+    rdfs:subClassOf :Character ;
+    rdfs:comment "A character who does not undergo significant change during the narrative."@en .
+
+:DynamicCharacter a owl:Class ;
+    rdfs:subClassOf :Character ;
+    rdfs:comment "A character who undergoes significant internal change as a result of the narrative's events."@en .
+
+:RoundCharacter a owl:Class ;
+    rdfs:subClassOf :Character ;
+    rdfs:comment "A character depicted with complexity, depth, and multiple dimensions."@en .
+
+:FlatCharacter a owl:Class ;
+    rdfs:subClassOf :Character ;
+    rdfs:comment "A character depicted with a single dominant trait, serving a specific function in the narrative."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :StaticCharacter :DynamicCharacter ) .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :RoundCharacter :FlatCharacter ) .
+
+# --- Level 3: Plot Structure Components ---
+
+:Exposition a owl:Class ;
+    rdfs:subClassOf :PlotStructure ;
+    rdfs:comment "The opening phase of a narrative that establishes the setting, characters, and initial situation."@en .
+
+:RisingAction a owl:Class ;
+    rdfs:subClassOf :PlotStructure ;
+    rdfs:comment "The phase of a narrative in which tension and conflict build toward the climax."@en .
+
+:Climax a owl:Class ;
+    rdfs:subClassOf :PlotStructure ;
+    rdfs:comment "The turning point of the narrative where tension reaches its peak."@en .
+
+:FallingAction a owl:Class ;
+    rdfs:subClassOf :PlotStructure ;
+    rdfs:comment "The phase following the climax in which tension decreases and events move toward resolution."@en .
+
+:Resolution a owl:Class ;
+    rdfs:subClassOf :PlotStructure ;
+    rdfs:comment "The final phase of the narrative where conflicts are resolved and loose ends are tied up."@en .
+
+:IncitingIncident a owl:Class ;
+    rdfs:subClassOf :PlotStructure ;
+    rdfs:comment "The event that sets the main conflict in motion and propels the narrative forward."@en .
+
+# --- Level 4: Rising Action Subtypes ---
+
+:ComplicatingEvent a owl:Class ;
+    rdfs:subClassOf :RisingAction ;
+    rdfs:comment "An event during the rising action that adds complexity or obstacles to the protagonist's path."@en .
+
+:EscalatingConflict a owl:Class ;
+    rdfs:subClassOf :RisingAction ;
+    rdfs:comment "A stage in the rising action where the central conflict intensifies."@en .
+
+# --- Level 4: Resolution Subtypes ---
+
+:ClosedResolution a owl:Class ;
+    rdfs:subClassOf :Resolution ;
+    rdfs:comment "A resolution that definitively concludes all narrative threads, leaving no ambiguity."@en .
+
+:OpenResolution a owl:Class ;
+    rdfs:subClassOf :Resolution ;
+    rdfs:comment "A resolution that leaves some questions unanswered, inviting the reader to reflect."@en .
+
+:EpiphanicResolution a owl:Class ;
+    rdfs:subClassOf :Resolution ;
+    rdfs:comment "A resolution centred on the protagonist's sudden realisation or moment of insight."@en .
+
+# --- Level 5: Epiphanic Resolution Subtypes ---
+
+:GradualEpiphany a owl:Class ;
+    rdfs:subClassOf :EpiphanicResolution ;
+    rdfs:comment "An epiphany that unfolds slowly through accumulating realisations."@en .
+
+:SuddenEpiphany a owl:Class ;
+    rdfs:subClassOf :EpiphanicResolution ;
+    rdfs:comment "An epiphany that strikes suddenly in a single moment of clarity."@en .
+
+# --- Level 3: Sensory Detail Types ---
+
+:VisualDetail a owl:Class ;
+    rdfs:subClassOf :SensoryDetail ;
+    rdfs:comment "Descriptive language that appeals to the sense of sight: colour, shape, light, movement."@en .
+
+:AuditoryDetail a owl:Class ;
+    rdfs:subClassOf :SensoryDetail ;
+    rdfs:comment "Descriptive language that appeals to the sense of hearing: sounds, music, silence."@en .
+
+:TactileDetail a owl:Class ;
+    rdfs:subClassOf :SensoryDetail ;
+    rdfs:comment "Descriptive language that appeals to the sense of touch: texture, temperature, pressure."@en .
+
+:OlfactoryDetail a owl:Class ;
+    rdfs:subClassOf :SensoryDetail ;
+    rdfs:comment "Descriptive language that appeals to the sense of smell."@en .
+
+:GustatoryDetail a owl:Class ;
+    rdfs:subClassOf :SensoryDetail ;
+    rdfs:comment "Descriptive language that appeals to the sense of taste."@en .
+
+:KinaestheticDetail a owl:Class ;
+    rdfs:subClassOf :SensoryDetail ;
+    rdfs:comment "Descriptive language that conveys movement, body position, or physical sensation."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :VisualDetail :AuditoryDetail :TactileDetail
+                  :OlfactoryDetail :GustatoryDetail :KinaestheticDetail ) .
+
+# --- Level 4: Visual Detail Subtypes ---
+
+:ColourDetail a owl:Class ;
+    rdfs:subClassOf :VisualDetail ;
+    rdfs:comment "Visual detail focused on colour and chromatic description."@en .
+
+:LightDetail a owl:Class ;
+    rdfs:subClassOf :VisualDetail ;
+    rdfs:comment "Visual detail focused on lighting, shadow, brightness, and luminosity."@en .
+
+:ShapeDetail a owl:Class ;
+    rdfs:subClassOf :VisualDetail ;
+    rdfs:comment "Visual detail focused on form, shape, and spatial arrangement."@en .
+
+:MovementDetail a owl:Class ;
+    rdfs:subClassOf :VisualDetail ;
+    rdfs:comment "Visual detail focused on motion, gesture, and kinetic imagery."@en .
+
+# --- Level 3: Dialogue Types ---
+
+:DirectDialogue a owl:Class ;
+    rdfs:subClassOf :Dialogue ;
+    rdfs:comment "Speech presented in the exact words of the speaker, enclosed in quotation marks."@en .
+
+:IndirectDialogue a owl:Class ;
+    rdfs:subClassOf :Dialogue ;
+    rdfs:comment "Speech reported or summarised by the narrator rather than quoted directly."@en .
+
+:InternalDialogue a owl:Class ;
+    rdfs:subClassOf :Dialogue ;
+    rdfs:comment "A character's internal thoughts presented as dialogue with themselves."@en .
+
+# --- Level 3: Narrative Reflection Types ---
+
+:RetrospectiveReflection a owl:Class ;
+    rdfs:subClassOf :NarrativeReflection ;
+    rdfs:comment "Reflection in which the narrator looks back on events from a later vantage point."@en .
+
+:InMomentReflection a owl:Class ;
+    rdfs:subClassOf :NarrativeReflection ;
+    rdfs:comment "Reflection that occurs in real time as events unfold in the narrative."@en .
+
+:UniversalInsight a owl:Class ;
+    rdfs:subClassOf :NarrativeReflection ;
+    rdfs:comment "Reflection that draws a broader, universal lesson or truth from the specific narrative events."@en .
+
+# --- Level 3: Point of View Types ---
+
+:FirstPersonPOV a owl:Class ;
+    rdfs:subClassOf :PointOfView ;
+    rdfs:comment "A narrative told from the perspective of 'I' or 'we'."@en .
+
+:ThirdPersonLimitedPOV a owl:Class ;
+    rdfs:subClassOf :PointOfView ;
+    rdfs:comment "A narrative told from the perspective of one character using third-person pronouns."@en .
+
+:ThirdPersonOmniscientPOV a owl:Class ;
+    rdfs:subClassOf :PointOfView ;
+    rdfs:comment "A narrative told by an all-knowing narrator with access to all characters' thoughts."@en .
+
+:SecondPersonPOV a owl:Class ;
+    rdfs:subClassOf :PointOfView ;
+    rdfs:comment "A narrative told using 'you', placing the reader in the role of the character."@en .
+
+# --- Level 3: Narrative Pacing Types ---
+
+:ScenePacing a owl:Class ;
+    rdfs:subClassOf :NarrativePacing ;
+    rdfs:comment "Pacing that slows down to depict events in real time with full detail."@en .
+
+:SummaryPacing a owl:Class ;
+    rdfs:subClassOf :NarrativePacing ;
+    rdfs:comment "Pacing that speeds up by condensing events into brief summaries."@en .
+
+:EllipsisPacing a owl:Class ;
+    rdfs:subClassOf :NarrativePacing ;
+    rdfs:comment "Pacing that skips over periods of time entirely."@en .
+
+:PausePacing a owl:Class ;
+    rdfs:subClassOf :NarrativePacing ;
+    rdfs:comment "Pacing that halts the action for description, reflection, or commentary."@en .
+
+# =============================================================================
+# SOURCE-DEPENDENT ELEMENTS (Levels 2-6)
+# =============================================================================
+
+# --- Level 2 ---
+
+:TextReference a owl:Class ;
+    rdfs:subClassOf :SourceDependentElement ;
+    rdfs:comment "A reference to an external text incorporated into the essay."@en .
+
+:CitationAccuracy a owl:Class ;
+    rdfs:subClassOf :SourceDependentElement ;
+    rdfs:comment "The correctness and completeness of bibliographic citations."@en .
+
+:SourceIntegration a owl:Class ;
+    rdfs:subClassOf :SourceDependentElement ;
+    rdfs:comment "The skill with which external sources are woven into the essay's own argument."@en .
+
+:AnalysisVsSummary a owl:Class ;
+    rdfs:subClassOf :SourceDependentElement ;
+    rdfs:comment "The balance between analytical engagement with sources and mere summarisation."@en .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :TextReference :CitationAccuracy :SourceIntegration :AnalysisVsSummary ) .
+
+# --- Level 3: Text Reference Types ---
+
+:DirectQuote a owl:Class ;
+    rdfs:subClassOf :TextReference ;
+    rdfs:comment "An exact reproduction of the source's words, enclosed in quotation marks."@en .
+
+:Paraphrase a owl:Class ;
+    rdfs:subClassOf :TextReference ;
+    rdfs:comment "A restatement of the source's ideas in the writer's own words, maintaining the original meaning."@en .
+
+:Summary a owl:Class ;
+    rdfs:subClassOf :TextReference ;
+    rdfs:comment "A condensed overview of the source's main points or argument."@en .
+
+:Synthesis a owl:Class ;
+    rdfs:subClassOf :TextReference ;
+    owl:disjointWith :Summary ;
+    rdfs:comment "The integration of ideas from multiple sources to create a new, unified understanding."@en .
+
+# --- Level 4: Direct Quote Subtypes ---
+
+:ShortQuote a owl:Class ;
+    rdfs:subClassOf :DirectQuote ;
+    rdfs:comment "A direct quotation of a few words or a single sentence integrated into the writer's own sentence."@en .
+
+:BlockQuote a owl:Class ;
+    rdfs:subClassOf :DirectQuote ;
+    rdfs:comment "An extended quotation (typically 40+ words) set off from the main text in an indented block."@en .
+
+:EllipticalQuote a owl:Class ;
+    rdfs:subClassOf :DirectQuote ;
+    rdfs:comment "A direct quotation with portions omitted (indicated by ellipses) to focus on the most relevant part."@en .
+
+# --- Level 4: Paraphrase Quality ---
+
+:CloseParaphrase a owl:Class ;
+    rdfs:subClassOf :Paraphrase ;
+    rdfs:comment "A paraphrase that closely follows the structure of the original, risking patchwriting."@en .
+
+:TransformativeParaphrase a owl:Class ;
+    rdfs:subClassOf :Paraphrase ;
+    rdfs:comment "A paraphrase that substantially restructures and rewords the original while preserving meaning."@en .
+
+# --- Level 5: Transformative Paraphrase Subtypes ---
+
+:AbstractiveParaphrase a owl:Class ;
+    rdfs:subClassOf :TransformativeParaphrase ;
+    rdfs:comment "A transformative paraphrase that elevates the original to a higher level of abstraction."@en .
+
+:ContextualisingParaphrase a owl:Class ;
+    rdfs:subClassOf :TransformativeParaphrase ;
+    rdfs:comment "A transformative paraphrase that reframes the original within the essay's specific context."@en .
+
+# --- Level 3: Citation Accuracy Types ---
+
+:InTextCitationAccuracy a owl:Class ;
+    rdfs:subClassOf :CitationAccuracy ;
+    rdfs:comment "The correctness of citations within the essay's body text (parenthetical, footnote, or endnote)."@en .
+
+:ReferencesListAccuracy a owl:Class ;
+    rdfs:subClassOf :CitationAccuracy ;
+    rdfs:comment "The correctness and completeness of the bibliography or references list."@en .
+
+:CitationStyleConsistency a owl:Class ;
+    rdfs:subClassOf :CitationAccuracy ;
+    rdfs:comment "The consistent application of a single citation style (APA, MLA, Chicago, Harvard) throughout."@en .
+
+# --- Level 4: Citation Style Types ---
+
+:APACitationStyle a owl:Class ;
+    rdfs:subClassOf :CitationStyleConsistency ;
+    rdfs:comment "Citation following APA (American Psychological Association) format."@en .
+
+:MLACitationStyle a owl:Class ;
+    rdfs:subClassOf :CitationStyleConsistency ;
+    rdfs:comment "Citation following MLA (Modern Language Association) format."@en .
+
+:ChicagoCitationStyle a owl:Class ;
+    rdfs:subClassOf :CitationStyleConsistency ;
+    rdfs:comment "Citation following Chicago Manual of Style format."@en .
+
+:HarvardCitationStyle a owl:Class ;
+    rdfs:subClassOf :CitationStyleConsistency ;
+    rdfs:comment "Citation following Harvard referencing format."@en .
+
+# --- Level 3: Source Integration Levels ---
+
+:DroppedQuote a owl:Class ;
+    rdfs:subClassOf :SourceIntegration ;
+    rdfs:comment "A quotation inserted without introduction or integration into the writer's own sentence."@en .
+
+:IntroducedSource a owl:Class ;
+    rdfs:subClassOf :SourceIntegration ;
+    rdfs:comment "A source reference preceded by a signal phrase that names the author or establishes context."@en .
+
+:IntegratedSource a owl:Class ;
+    rdfs:subClassOf :SourceIntegration ;
+    rdfs:comment "A source reference seamlessly woven into the writer's syntax and argument."@en .
+
+:AnalysedSource a owl:Class ;
+    rdfs:subClassOf :SourceIntegration ;
+    rdfs:comment "A source reference followed by the writer's own analysis, interpretation, or critique."@en .
+
+# --- Level 4: Analysed Source Subtypes ---
+
+:AgreeAndExtendAnalysis a owl:Class ;
+    rdfs:subClassOf :AnalysedSource ;
+    rdfs:comment "Analysis that agrees with the source and extends its argument further."@en .
+
+:CritiqueAnalysis a owl:Class ;
+    rdfs:subClassOf :AnalysedSource ;
+    rdfs:comment "Analysis that challenges or qualifies the source's claims."@en .
+
+:SynthesisAnalysis a owl:Class ;
+    rdfs:subClassOf :AnalysedSource ;
+    rdfs:comment "Analysis that connects the source to other sources or to the essay's broader argument."@en .
+
+# --- Level 3: Analysis vs Summary Levels ---
+
+:PureSummary a owl:Class ;
+    rdfs:subClassOf :AnalysisVsSummary ;
+    rdfs:comment "Source engagement that only restates what the source says without any analytical commentary."@en .
+
+:SummaryWithComment a owl:Class ;
+    rdfs:subClassOf :AnalysisVsSummary ;
+    rdfs:comment "Source engagement that summarises and adds brief evaluative comments."@en .
+
+:BalancedAnalysis a owl:Class ;
+    rdfs:subClassOf :AnalysisVsSummary ;
+    rdfs:comment "Source engagement that balances summary with substantive analytical discussion."@en .
+
+:DeepAnalysis a owl:Class ;
+    rdfs:subClassOf :AnalysisVsSummary ;
+    rdfs:comment "Source engagement dominated by the writer's original analytical thinking, using sources as launching points."@en .
+
+# --- Level 4: Deep Analysis Subtypes ---
+
+:DeconstructiveAnalysis a owl:Class ;
+    rdfs:subClassOf :DeepAnalysis ;
+    rdfs:comment "Deep analysis that unpacks and challenges the assumptions underlying a source."@en .
+
+:GenerativeAnalysis a owl:Class ;
+    rdfs:subClassOf :DeepAnalysis ;
+    rdfs:comment "Deep analysis that uses sources as springboards to generate original ideas or frameworks."@en .
+
+# =============================================================================
+# OBJECT PROPERTIES
+# =============================================================================
+
+# --- Core Argument Relations ---
+
+:supportsThesis a owl:ObjectProperty ;
+    rdfs:domain :Claim ;
+    rdfs:range :Thesis ;
+    rdfs:comment "Relates a claim to the thesis it directly or indirectly supports."@en .
+
+:supportsClaim a owl:ObjectProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range :Claim ;
+    rdfs:comment "Relates evidence to the claim it is intended to support."@en .
+
+:warrantsConnection a owl:ObjectProperty ;
+    rdfs:domain :Warrant ;
+    rdfs:range :Claim ;
+    rdfs:comment "Relates a warrant to the claim whose connection to evidence it justifies."@en .
+
+:backsWarrant a owl:ObjectProperty ;
+    rdfs:domain :Backing ;
+    rdfs:range :Warrant ;
+    rdfs:comment "Relates backing to the warrant it provides foundational support for."@en .
+
+:qualifiesClaim a owl:ObjectProperty ;
+    rdfs:domain :Qualifier ;
+    rdfs:range :Claim ;
+    rdfs:comment "Relates a qualifier to the claim whose scope or certainty it limits."@en .
+
+:challenges a owl:ObjectProperty ;
+    rdfs:domain :CounterArgument ;
+    rdfs:range :Claim ;
+    rdfs:comment "Relates a counter-argument to the claim or thesis it challenges."@en .
+
+:rebuts a owl:ObjectProperty ;
+    rdfs:domain :Rebuttal ;
+    rdfs:range :CounterArgument ;
+    rdfs:comment "Relates a rebuttal to the counter-argument it addresses."@en .
+
+:containsFallacy a owl:ObjectProperty ;
+    rdfs:domain :ArgumentComponent ;
+    rdfs:range :LogicalFallacy ;
+    rdfs:comment "Relates an argument component to a logical fallacy it contains."@en .
+
+:followsPattern a owl:ObjectProperty ;
+    rdfs:domain :ArgumentStructure ;
+    rdfs:range :ArgumentPattern ;
+    rdfs:comment "Relates an argument structure to the argumentation pattern it follows."@en .
+
+:hasSubClaim a owl:ObjectProperty ;
+    rdfs:domain :Claim ;
+    rdfs:range :SubClaim ;
+    rdfs:comment "Relates a claim to a sub-claim that supports it."@en .
+
+# --- Structural Relations ---
+
+:hasStructuralElement a owl:ObjectProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range :StructuralElement ;
+    rdfs:comment "Relates an essay quality dimension to a structural element it manifests in."@en .
+
+:containsHook a owl:ObjectProperty ;
+    rdfs:domain :Introduction ;
+    rdfs:range :Hook ;
+    rdfs:comment "Relates an introduction to the hook it contains."@en .
+
+:containsThesisStatement a owl:ObjectProperty ;
+    rdfs:domain :Introduction ;
+    rdfs:range :ThesisStatement ;
+    rdfs:comment "Relates an introduction to its thesis statement."@en .
+
+:containsTopicSentence a owl:ObjectProperty ;
+    rdfs:domain :BodyParagraph ;
+    rdfs:range :TopicSentence ;
+    rdfs:comment "Relates a body paragraph to its topic sentence."@en .
+
+:transitionsTo a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :StructuralElement ;
+    rdfs:comment "Relates a structural element to the element it transitions to."@en .
+
+:followsCoherencePattern a owl:ObjectProperty ;
+    rdfs:domain :BodySection ;
+    rdfs:range :CoherencePattern ;
+    rdfs:comment "Relates the body section to the coherence pattern it follows."@en .
+
+:containsParagraph a owl:ObjectProperty ;
+    rdfs:domain :BodySection ;
+    rdfs:range :BodyParagraph ;
+    rdfs:comment "Relates a body section to a paragraph it contains."@en .
+
+:precedesParagraph a owl:ObjectProperty ;
+    rdfs:domain :BodyParagraph ;
+    rdfs:range :BodyParagraph ;
+    rdfs:comment "Relates a body paragraph to the paragraph that follows it."@en .
+
+# --- Rhetorical Relations ---
+
+:employsPersuasion a owl:ObjectProperty ;
+    rdfs:domain :ArgumentComponent ;
+    rdfs:range :PersuasiveTechnique ;
+    rdfs:comment "Relates an argument component to the persuasive technique it employs."@en .
+
+:hasTone a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :Tone ;
+    rdfs:comment "Relates a structural element to the tone it exhibits."@en .
+
+:hasVoice a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :Voice ;
+    rdfs:comment "Relates a structural element to the grammatical voice it uses."@en .
+
+:demonstratesAwareness a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :AudienceAwareness ;
+    rdfs:comment "Relates a structural element to the type of audience awareness it demonstrates."@en .
+
+:usesRhetoricalDevice a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :RhetoricalDevice ;
+    rdfs:comment "Relates a structural element to a rhetorical device it employs."@en .
+
+# --- Evidence Quality Relations ---
+
+:hasSpecificity a owl:ObjectProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range :Specificity ;
+    rdfs:comment "Relates evidence to its level of specificity."@en .
+
+:hasVerifiability a owl:ObjectProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range :Verifiability ;
+    rdfs:comment "Relates evidence to its level of verifiability."@en .
+
+:hasRelevance a owl:ObjectProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range :Relevance ;
+    rdfs:comment "Relates evidence to its degree of relevance to the claim."@en .
+
+:hasSourceAuthority a owl:ObjectProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range :SourceAuthority ;
+    rdfs:comment "Relates evidence to the authority level of its source."@en .
+
+:hasSourceRecency a owl:ObjectProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range :SourceRecency ;
+    rdfs:comment "Relates evidence to the recency of its source."@en .
+
+:hasSufficiency a owl:ObjectProperty ;
+    rdfs:domain :Claim ;
+    rdfs:range :EvidenceSufficiency ;
+    rdfs:comment "Relates a claim to the sufficiency level of the evidence supporting it."@en .
+
+# --- Language Quality Relations ---
+
+:exhibitsVocabulary a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :VocabularySophistication ;
+    rdfs:comment "Relates a structural element to the vocabulary sophistication it exhibits."@en .
+
+:exhibitsSentenceVariety a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :SentenceVariety ;
+    rdfs:comment "Relates a structural element to the sentence variety it demonstrates."@en .
+
+:hasGrammarIssue a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :GrammarCorrectness ;
+    rdfs:comment "Relates a structural element to a grammar issue it contains."@en .
+
+:hasMechanicsIssue a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :SpellingAndMechanics ;
+    rdfs:comment "Relates a structural element to a spelling or mechanics issue it contains."@en .
+
+:usesCohesionDevice a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :CohesionDevice ;
+    rdfs:comment "Relates a structural element to a cohesion device it uses."@en .
+
+:exhibitsClarity a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :Clarity ;
+    rdfs:comment "Relates a structural element to the type of clarity it exhibits."@en .
+
+# --- Narrative Relations ---
+
+:hasSetting a owl:ObjectProperty ;
+    rdfs:domain :NarrativeElement ;
+    rdfs:range :Setting ;
+    rdfs:comment "Relates a narrative element to the setting it occurs within."@en .
+
+:hasCharacter a owl:ObjectProperty ;
+    rdfs:domain :PlotStructure ;
+    rdfs:range :Character ;
+    rdfs:comment "Relates a plot structure element to a character involved in it."@en .
+
+:containsSensoryDetail a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :SensoryDetail ;
+    rdfs:comment "Relates a structural element to a sensory detail it contains."@en .
+
+:containsDialogue a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :Dialogue ;
+    rdfs:comment "Relates a structural element to dialogue it contains."@en .
+
+:hasReflection a owl:ObjectProperty ;
+    rdfs:domain :PlotStructure ;
+    rdfs:range :NarrativeReflection ;
+    rdfs:comment "Relates a plot structure element to the narrative reflection it prompts."@en .
+
+:hasPointOfView a owl:ObjectProperty ;
+    rdfs:domain :NarrativeElement ;
+    rdfs:range :PointOfView ;
+    rdfs:comment "Relates a narrative to its point of view."@en .
+
+:hasPacing a owl:ObjectProperty ;
+    rdfs:domain :PlotStructure ;
+    rdfs:range :NarrativePacing ;
+    rdfs:comment "Relates a plot structure element to the pacing it employs."@en .
+
+# --- Source-Dependent Relations ---
+
+:containsTextReference a owl:ObjectProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range :TextReference ;
+    rdfs:comment "Relates a structural element to a text reference it contains."@en .
+
+:hasCitationAccuracy a owl:ObjectProperty ;
+    rdfs:domain :TextReference ;
+    rdfs:range :CitationAccuracy ;
+    rdfs:comment "Relates a text reference to the accuracy of its citation."@en .
+
+:hasIntegrationLevel a owl:ObjectProperty ;
+    rdfs:domain :TextReference ;
+    rdfs:range :SourceIntegration ;
+    rdfs:comment "Relates a text reference to the level of integration achieved."@en .
+
+:hasAnalysisLevel a owl:ObjectProperty ;
+    rdfs:domain :TextReference ;
+    rdfs:range :AnalysisVsSummary ;
+    rdfs:comment "Relates a text reference to the depth of analysis provided."@en .
+
+:citesSameSource a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain :TextReference ;
+    rdfs:range :TextReference ;
+    rdfs:comment "Relates two text references that cite the same source."@en .
+
+# --- Cross-Cutting Relations ---
+
+:isPartOf a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range :EssayQualityDimension ;
+    rdfs:comment "A transitive part-whole relation between essay quality dimensions or components."@en .
+
+:influencesQualityOf a owl:ObjectProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range :EssayQualityDimension ;
+    rdfs:comment "Relates one quality dimension to another that it affects."@en .
+
+:coOccursWith a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range :EssayQualityDimension ;
+    rdfs:comment "Symmetric relation indicating two quality dimensions frequently appear together."@en .
+
+:isWeakenedBy a owl:ObjectProperty ;
+    rdfs:domain :ArgumentComponent ;
+    rdfs:range :LogicalFallacy ;
+    rdfs:comment "Relates an argument component to a fallacy that weakens it."@en .
+
+:isStrengthenedBy a owl:ObjectProperty ;
+    rdfs:domain :Claim ;
+    rdfs:range :Evidence ;
+    rdfs:comment "Relates a claim to evidence that strengthens it."@en .
+
+# =============================================================================
+# DATATYPE PROPERTIES
+# =============================================================================
+
+:hasScore a owl:DatatypeProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range xsd:decimal ;
+    rdfs:comment "A numerical score assigned to a quality dimension, typically on a 0-1 or 0-100 scale."@en .
+
+:hasWeight a owl:DatatypeProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range xsd:decimal ;
+    rdfs:comment "The relative weight of this quality dimension in overall scoring."@en .
+
+:hasWordCount a owl:DatatypeProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "The number of words in a structural element."@en .
+
+:hasSentenceCount a owl:DatatypeProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "The number of sentences in a structural element."@en .
+
+:hasParagraphCount a owl:DatatypeProperty ;
+    rdfs:domain :BodySection ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "The number of paragraphs in a body section."@en .
+
+:hasTextContent a owl:DatatypeProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The actual text content of a structural element."@en .
+
+:hasPosition a owl:DatatypeProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "The ordinal position of a structural element within the essay (0-indexed)."@en .
+
+:hasLabel a owl:DatatypeProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range xsd:string ;
+    rdfs:comment "A human-readable label for a quality dimension instance."@en .
+
+:hasDescription a owl:DatatypeProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range xsd:string ;
+    rdfs:comment "A detailed description of the assessed quality dimension instance."@en .
+
+:hasConfidence a owl:DatatypeProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range xsd:decimal ;
+    rdfs:comment "The confidence level of the assessment, typically between 0 and 1."@en .
+
+:hasSourceURL a owl:DatatypeProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range xsd:anyURI ;
+    rdfs:comment "The URL of the source from which evidence is drawn."@en .
+
+:hasSourceTitle a owl:DatatypeProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The title of the source from which evidence is drawn."@en .
+
+:hasSourceAuthor a owl:DatatypeProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The author(s) of the source from which evidence is drawn."@en .
+
+:hasSourceYear a owl:DatatypeProperty ;
+    rdfs:domain :Evidence ;
+    rdfs:range xsd:gYear ;
+    rdfs:comment "The publication year of the source from which evidence is drawn."@en .
+
+:hasQuotedText a owl:DatatypeProperty ;
+    rdfs:domain :DirectQuote ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The exact quoted text from the source."@en .
+
+:hasOriginalText a owl:DatatypeProperty ;
+    rdfs:domain :Paraphrase ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The original text that was paraphrased."@en .
+
+:hasPageNumber a owl:DatatypeProperty ;
+    rdfs:domain :TextReference ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The page number(s) referenced in a text reference."@en .
+
+:hasCitationString a owl:DatatypeProperty ;
+    rdfs:domain :TextReference ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The formatted citation string as it appears in the essay."@en .
+
+:hasHierarchyDepth a owl:DatatypeProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "The depth of this class in the ontology hierarchy, used for alignment scoring."@en .
+
+:hasMaximumScore a owl:DatatypeProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range xsd:decimal ;
+    rdfs:comment "The maximum possible score for this quality dimension."@en .
+
+:hasMinimumScore a owl:DatatypeProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range xsd:decimal ;
+    rdfs:comment "The minimum possible score for this quality dimension."@en .
+
+:hasFeedbackText a owl:DatatypeProperty ;
+    rdfs:domain :EssayQualityDimension ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Textual feedback associated with the assessment of this quality dimension."@en .
+
+:hasStartOffset a owl:DatatypeProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "The character offset where this structural element begins in the essay text."@en .
+
+:hasEndOffset a owl:DatatypeProperty ;
+    rdfs:domain :StructuralElement ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "The character offset where this structural element ends in the essay text."@en .
+
+:isIntentional a owl:DatatypeProperty ;
+    rdfs:domain :LogicalFallacy ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether the logical fallacy appears to have been used intentionally as a rhetorical strategy."@en .
+
+:hasSeverity a owl:DatatypeProperty ;
+    rdfs:domain :LogicalFallacy ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The severity of the fallacy's impact on argument quality: minor, moderate, or major."@en .
+
+# =============================================================================
+# ANNOTATION PROPERTIES
+# =============================================================================
+
+:scoringGuidance a owl:AnnotationProperty ;
+    rdfs:comment "Guidance text for assessors on how to score this dimension."@en .
+
+:exampleText a owl:AnnotationProperty ;
+    rdfs:comment "An example of text that would be classified under this class."@en .
+
+:assessmentCriteria a owl:AnnotationProperty ;
+    rdfs:comment "The criteria used to assess this quality dimension."@en .
+
+:rubricLevel a owl:AnnotationProperty ;
+    rdfs:comment "The rubric level (e.g., 1-5) that this class corresponds to."@en .
+
+# =============================================================================
+# END OF ONTOLOGY
+# =============================================================================

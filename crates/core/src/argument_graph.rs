@@ -901,4 +901,23 @@ arg:evidence_3 a arg:Evidence ;
         assert!(m.connectivity > 0.9);
         assert!(m.evidence_coverage > 0.0);
     }
+
+    #[test]
+    fn test_align_to_reference() {
+        let essay_ttl = match std::fs::read_to_string("/tmp/test-essay-turtle.ttl") {
+            Ok(t) => t,
+            Err(_) => { eprintln!("Skipping: /tmp/test-essay-turtle.ttl not found"); return; }
+        };
+        let ref_ttl = match std::fs::read_to_string("/tmp/essay-eval-ontology.ttl") {
+            Ok(t) => t,
+            Err(_) => { eprintln!("Skipping: /tmp/essay-eval-ontology.ttl not found"); return; }
+        };
+        let candidates = align_to_reference(&essay_ttl, &ref_ttl, 0.3).expect("alignment should work");
+        eprintln!("Found {} alignment candidates", candidates.len());
+        for c in candidates.iter().take(10) {
+            eprintln!("  {} -> {} (conf={:.3}, label={:.3}, prop={:.3})",
+                c.source_iri, c.target_iri, c.confidence, c.label_similarity, c.property_overlap);
+        }
+        assert!(!candidates.is_empty(), "Should find some alignment candidates");
+    }
 }

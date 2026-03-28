@@ -85,6 +85,10 @@ enum Commands {
         #[arg(long)]
         graph_scores: Option<PathBuf>,
 
+        /// Path to reference evaluation ontology (Turtle) for onto_align
+        #[arg(long)]
+        reference_ontology: Option<PathBuf>,
+
         /// Output directory for results
         #[arg(long)]
         output: Option<PathBuf>,
@@ -150,9 +154,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Graph { path } => {
             run_graph(path)
         }
-        Commands::Benchmark { dataset, ablation, multi_dataset, extractions, graph_scores, output } => {
+        Commands::Benchmark { dataset, ablation, multi_dataset, extractions, graph_scores, reference_ontology, output } => {
             if let Some(gs_path) = graph_scores {
-                run_benchmark_graph(dataset, gs_path, output)
+                run_benchmark_graph(dataset, gs_path, reference_ontology, output)
             } else if let Some(ext_path) = extractions {
                 run_benchmark_with_extractions(dataset, ext_path, output)
             } else {
@@ -1551,11 +1555,22 @@ fn run_benchmark_with_extractions(
 fn run_benchmark_graph(
     dataset_path: Option<PathBuf>,
     graph_scores_path: PathBuf,
+    reference_ontology_path: Option<PathBuf>,
     output: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     use brain_in_the_fish_core::argument_graph;
 
     println!("Running Option B benchmark: argument graph → node scores → SNN aggregation");
+
+    // Load reference ontology if provided
+    let reference_turtle = if let Some(ref path) = reference_ontology_path {
+        println!("Loading reference ontology: {}", path.display());
+        let ttl = std::fs::read_to_string(path)?;
+        println!("Reference ontology: {} chars", ttl.len());
+        Some(ttl)
+    } else {
+        None
+    };
 
     let samples = if let Some(ref path) = dataset_path {
         println!("Loading dataset: {}", path.display());
@@ -1616,11 +1631,22 @@ fn run_benchmark_graph(
             argument_graph::build_from_text(&sample.text, &sample.id)
         };
 
-        // Feed graph through SNN
+        // Compute alignment against reference ontology if Turtle is available
+        let alignment_candidates = if let (Some(ref_ttl), Some(gs_entry)) = (&reference_turtle, gs_map.get(&sample.id)) {
+            if let Some(ref essay_ttl) = gs_entry.turtle {
+                argument_graph::align_to_reference(essay_ttl, ref_ttl, 0.3).unwrap_or_default()
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        // Feed graph through SNN (with alignment signals when available)
         let mut snn_networks: Vec<snn::AgentNetwork> = Vec::new();
         for agent_item in &agents {
             let mut network = snn::AgentNetwork::new(agent_item, &framework.criteria);
-            network.feed_argument_graph(&graph, &snn_config);
+            network.feed_argument_graph_with_alignment(&graph, &snn_config, &alignment_candidates);
             snn_networks.push(network);
         }
 

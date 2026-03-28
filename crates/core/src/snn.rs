@@ -641,10 +641,21 @@ impl AgentNetwork {
 
     /// Feed scored argument graph nodes into the SNN, weighting by graph topology.
     /// This is the Option B architecture: LLM scores nodes, SNN aggregates the graph.
+    /// Optional alignment_candidates from onto_align boost nodes that match the reference ontology.
     pub fn feed_argument_graph(
         &mut self,
         graph: &crate::argument_graph::ArgumentGraph,
         config: &SNNConfig,
+    ) {
+        self.feed_argument_graph_with_alignment(graph, config, &[]);
+    }
+
+    /// Feed argument graph with alignment signals from onto_align against a reference ontology.
+    pub fn feed_argument_graph_with_alignment(
+        &mut self,
+        graph: &crate::argument_graph::ArgumentGraph,
+        config: &SNNConfig,
+        alignment_candidates: &[crate::argument_graph::AlignmentCandidate],
     ) {
         use crate::argument_graph::{self, NodeType};
 
@@ -778,6 +789,54 @@ impl AgentNetwork {
                             config,
                         );
                     }
+
+                    // Alignment signals from onto_align (once per neuron)
+                    if !alignment_candidates.is_empty() {
+                        // Average alignment confidence across all candidates
+                        let avg_conf: f64 = alignment_candidates.iter()
+                            .map(|c| c.confidence)
+                            .sum::<f64>() / alignment_candidates.len() as f64;
+
+                        // Count high-confidence matches (strong structural alignment to reference)
+                        let strong_matches = alignment_candidates.iter()
+                            .filter(|c| c.confidence > 0.7)
+                            .count();
+
+                        if avg_conf > 0.3 {
+                            neuron.receive_spike(
+                                Spike {
+                                    source_id: "align:reference".into(),
+                                    strength: avg_conf.clamp(0.0, 1.0),
+                                    spike_type: SpikeType::Alignment,
+                                    timestep: 0,
+                                    source_text: None,
+                                    justification: Some(format!(
+                                        "Reference alignment: {:.0}% avg confidence, {} strong matches",
+                                        avg_conf * 100.0, strong_matches
+                                    )),
+                                },
+                                config,
+                            );
+                        }
+
+                        // High match count = well-structured essay
+                        if strong_matches >= 3 {
+                            neuron.receive_spike(
+                                Spike {
+                                    source_id: "align:depth".into(),
+                                    strength: (strong_matches as f64 / 10.0).clamp(0.3, 1.0),
+                                    spike_type: SpikeType::Support,
+                                    timestep: 0,
+                                    source_text: None,
+                                    justification: Some(format!(
+                                        "{} strong alignments to reference ontology",
+                                        strong_matches
+                                    )),
+                                },
+                                config,
+                            );
+                        }
+                    }
                 }
 
                 // Decay
@@ -804,7 +863,7 @@ impl AgentNetwork {
             neuron.apply_inhibition(amount);
         }
     }
-}
+} // end impl AgentNetwork
 
 /// Get a spike weight multiplier based on agent role and evidence type.
 /// Different agent roles prioritize different types of evidence, producing
