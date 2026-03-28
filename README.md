@@ -219,7 +219,7 @@ The gate reduces hallucinations from 24.5% to 16.8% on confirmed essays — a 31
 | Approach | Result | Lesson |
 | -------- | ------ | ------ |
 | Using the ontology to replace the LLM score | Pearson 0.56 max | Structure captures ~25% of essay quality; writing quality lives in the text |
-| Regex evidence extraction | Missed 65% | Can't parse natural language with rules |
+| Regex evidence extraction | Found ~20% of what LLM finds | Can't parse natural language with rules |
 | Hardcoded gate thresholds | Brittle | Replaced with learned curve (2 params, Nelder-Mead) |
 | Adding more structural features | Made things worse | 14 features is the ceiling; more = overfitting on N=100 |
 | Stacking models | Collapsed | N=100 is too small for ensemble methods |
@@ -264,7 +264,7 @@ brain-in-the-fish serve
 
 - **[open-ontologies](https://github.com/fabio-rovai/open-ontologies)** — OWL knowledge graph engine (GraphStore, Reasoner, SPARQL, AlignmentEngine)
 - **Rust** — deterministic scoring, structural analysis, gate logic
-- **[ARIA Safeguarded AI](https://www.aria.org.uk/programme-safeguarded-ai/)** — gatekeeper architecture: don't make the LLM deterministic, make the verification deterministic
+- **[ARIA Safeguarded AI](https://aria.org.uk/opportunity-spaces/mathematics-for-safe-ai/safeguarded-ai/)** — gatekeeper architecture: don't make the LLM deterministic, make the verification deterministic
 
 ## License
 
