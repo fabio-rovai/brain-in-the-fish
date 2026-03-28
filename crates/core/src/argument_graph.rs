@@ -779,16 +779,6 @@ pub fn compute_metrics(graph: &ArgumentGraph) -> GraphMetrics {
     }
 }
 
-/// Compute a structural score from graph metrics alone — no LLM scores involved.
-/// Returns a normalized 0.0-1.0 score based purely on graph topology.
-///
-/// Signals (all derived from the OWL graph, not from LLM opinions):
-/// - Node density: how many argument nodes exist (log-scaled, saturates at 12)
-/// - Evidence ratio: fraction of nodes that are evidence (not bare claims)
-/// - Connectivity: fraction of non-structural nodes with edges
-/// - Evidence coverage: fraction of claims with supporting evidence
-/// - Depth: how deep the argument chains go (saturates at 4)
-/// - Counter/rebuttal bonus: addressing opposition shows sophistication
 /// Weights for structural scoring — calibratable via Nelder-Mead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuralWeights {
