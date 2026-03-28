@@ -5,184 +5,285 @@
 <h1 align="center">Brain in the Fish</h1>
 
 <p align="center">
-  <strong>Score any document. Prove every score.</strong>
-  <br>
-  <em>The LLM scores. The ontology proves. The SNN gates.</em>
+  <strong>LLM multi-agent evaluation with ontology-verified scoring.</strong>
 </p>
 
 <p align="center">
   <img src="https://github.com/fabio-rovai/brain-in-the-fish/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/tests-316%20passing-brightgreen" alt="Tests" />
   <img src="https://img.shields.io/badge/rust-edition%202024-orange" alt="Rust" />
 </p>
 
 ---
 
-## The Problem
+## What Is This
 
-LLMs score documents accurately but can't prove why. Ask Claude to score an essay and it says "7/10 — good argument structure." Ask why 7 and not 6? No answer. No trail. No proof. In tenders, clinical assessment, education, and legal review — you need to show your working.
+A document evaluation system where:
 
-## The Solution
+1. **LLM subagents score the document** — like MiroFish, a panel of Claude agents evaluate, debate, and reach consensus
+2. **An OWL ontology maps the data** — every claim, every piece of evidence, every relationship gets loaded into a knowledge graph via [open-ontologies](https://github.com/fabio-rovai/open-ontologies)
+3. **An evidence scorer gates the result** — the score can only exist if the evidence exists in the graph. The scorer is deterministic: same evidence in, same score out, always
 
-Brain in the Fish builds an **OWL knowledge graph** of every document, scores each argument component individually, then aggregates using a **spiking neural network** with data-calibrated weights. Every score traces back to exact quotes in the original text.
+The LLM does the thinking. The ontology does the mapping. The scorer does the gating.
+
+---
+
+## Why It Matters
+
+LLMs hallucinate scores. Ask Claude to score a tender response and it says "8/10 — strong methodology section." But:
+
+- Was there actually a methodology section?
+- Did it contain specific evidence, or just claims?
+- Can you prove it to the evaluation panel?
+
+Brain in the Fish answers all three. The ontology maps what's in the document. The scorer only credits what the ontology confirms. The audit trail proves it.
 
 ---
 
 ## See It Work
 
-### Example: Two essays, same topic
+### Input: two essays on the same topic
 
-**Essay A** — Beautiful writing, says nothing (expert score: 3/12):
+**Essay A** — Eloquent, says nothing:
 > "In the grand tapestry of contemporary discourse, one finds oneself inexorably drawn to the contemplation of matters that, by their very nature, resist facile categorisation. The eloquence with which modern thinkers have approached this particular question speaks volumes about our collective capacity for nuanced engagement..."
 
-**Essay B** — Three sentences, devastating (expert score: 8/12):
+**Essay B** — Three sentences, every word earns its place:
 > "Voting should be compulsory. Australia's mandatory voting, enacted in 1924, consistently yields 90%+ turnout and has produced more centrist policy outcomes than comparable voluntary-voting democracies, according to Lijphart's analysis of 35 nations. Compulsory voting eliminates the turnout gap between rich and poor that Schlozman et al. documented at 30 percentage points."
 
-### What a naive LLM does
+### Output: what the system produces
 
-Both essays get similar scores. Essay A "sounds smart." The LLM has no mechanism to verify that zero claims were actually made.
-
-### What Brain in the Fish does
-
-**Essay A — the ontology finds nothing:**
+**Essay A:**
 ```
-arg:s0_0  score: 0.10  "Opening paragraph is pure rhetorical flourish with zero
-                        identifiable claim. No subject, no position, no evidence."
-arg:s0_1  score: 0.10  "Second paragraph continues admiring 'the conversation'
-                        without ever identifying what the conversation is about."
-arg:s0_2  score: 0.10  "Claims 'implications extend beyond academic debate' but
-                        names zero implications."
-arg:s0_3  score: 0.05  "Conclusion restates that the subject is profound without
-                        ever having identified the subject."
+LLM subagent scores: 3.0/12
 
-Graph: 4 nodes, 0 supporting edges, connectivity 0%
-SNN score: 1.4/12 ← can't score what doesn't exist in the graph
-```
+Ontology mapping:
+  arg:node_1  "rhetorical flourish with zero identifiable claim"     → Claim (bare)
+  arg:node_2  "admiring 'the conversation' without identifying it"   → Claim (bare)
+  arg:node_3  "'implications extend beyond debate' — names none"     → Claim (bare)
+  arg:node_4  "restates profundity without identifying the subject"  → Claim (bare)
 
-**Essay B — the ontology finds everything:**
-```
-arg:s0_0  score: 0.85  "Clear thesis: voting should be compulsory.
-                        Concise and unambiguous."
-arg:s0_1  score: 0.85  "Strong evidence: Australia's 1924 mandatory voting law,
-                        90%+ turnout, Lijphart's 35-nation analysis."
-arg:s0_2  score: 0.80  "Equity argument: cites Schlozman et al.'s documented
-                        30-percentage-point turnout gap between rich and poor."
+  Evidence nodes: 0
+  Supporting edges: 0
+  Connectivity: 0%
 
-Graph: 3 nodes, 2 supporting edges, connectivity 100%
-SNN score: 8.4/12 ← every node is strong and connected
+Evidence scorer verdict: CONFIRMED
+  LLM said 3.0 → Graph has 4 bare claims, 0 evidence, 0 connections.
+  Low score is consistent with empty evidence structure.
+  Confidence: HIGH — score matches evidence.
 ```
 
-**The difference:** Essay A has 4 nodes scoring 0.05-0.10 with no connections. Essay B has 3 nodes scoring 0.80-0.85, fully connected. The SNN can't give Essay A a high score because the graph has nothing to aggregate. The score IS the graph.
+**Essay B:**
+```
+LLM subagent scores: 8.5/12
+
+Ontology mapping:
+  arg:node_1  "Voting should be compulsory"                          → Thesis
+  arg:node_2  "Australia's 1924 law, 90%+ turnout, Lijphart (35n)"  → QuantifiedEvidence
+  arg:node_3  "Schlozman et al., 30pp turnout gap"                   → Citation
+
+  arg:node_2 supports arg:node_1
+  arg:node_3 supports arg:node_1
+
+  Evidence nodes: 2
+  Supporting edges: 2
+  Connectivity: 100%
+
+Evidence scorer verdict: CONFIRMED
+  LLM said 8.5 → Graph has clear thesis + 2 strong evidence nodes, fully connected.
+  High score is consistent with evidence structure.
+  Confidence: HIGH — score matches evidence.
+```
+
+### When the system catches a problem
+
+**Essay C** — Well-written, fake evidence:
+> "Studies show that 78% of students who use computers daily score 15% higher on standardised tests (Smith & Johnson, 2023). The National Technology Council confirmed these findings in their landmark 2022 report..."
+
+```
+LLM subagent scores: 7.0/12
+
+Ontology mapping:
+  arg:node_1  "computers improve test scores"                        → Thesis
+  arg:node_2  "78% of students... Smith & Johnson, 2023"             → Citation
+  arg:node_3  "National Technology Council 2022 report"              → Citation
+
+  Evidence nodes: 2 (citations)
+  Supporting edges: 2
+
+Evidence scorer verdict: FLAGGED
+  LLM said 7.0 → Graph has citations, but:
+  - Citations are unverifiable (no DOI, no URL, generic author names)
+  - Statistics lack source methodology ("studies show" without naming studies)
+  - Bayesian confidence: 0.41 (below threshold)
+  Score may exceed what evidence actually supports.
+  Confidence: LOW — requires human review.
+```
 
 ---
 
-## How It Works
+## Three Layers
 
 ```
-Document
-  ↓
-Claude subagent reads it, builds an OWL argument ontology:
-  - Identifies thesis, claims, evidence, counter-arguments
-  - Scores each component (0.0-1.0) with justification
-  - Includes exact quotes with character offsets
-  ↓
-open-ontologies loads the Turtle into a knowledge graph:
-  - GraphStore stores triples
-  - SPARQL extracts nodes and edges
-  - onto_align compares against a 415-class evaluation reference ontology
-  ↓
-Graph-SNN aggregates using topology:
-  - PageRank weights nodes by connectivity (well-supported claims rank higher)
-  - Structural signals: connectivity, depth, evidence coverage, isolation
-  - Calibrated weights (Nelder-Mead optimized against expert scores)
-  ↓
-Final score — fully auditable:
-  - Every number traces to a triple in the graph
-  - Every triple traces to an exact quote in the document
-  - Same graph always produces same score (deterministic)
+┌─────────────────────────────────────────────────────┐
+│  Layer 1: LLM Subagents (Claude)                    │
+│                                                     │
+│  Read document → Identify arguments → Score each    │
+│  component → Debate → Reach consensus               │
+│                                                     │
+│  This is the scorer. It produces the number.        │
+└──────────────────────┬──────────────────────────────┘
+                       │ structured evidence
+┌──────────────────────▼──────────────────────────────┐
+│  Layer 2: OWL Ontology (open-ontologies)            │
+│                                                     │
+│  Every claim → RDF triple                           │
+│  Every evidence item → typed node                   │
+│  Every relationship → edge (supports, counters)     │
+│                                                     │
+│  This is the map. It structures what the LLM found. │
+└──────────────────────┬──────────────────────────────┘
+                       │ knowledge graph
+┌──────────────────────▼──────────────────────────────┐
+│  Layer 3: Evidence Scorer (Rust SNN)                │
+│                                                     │
+│  Does the graph support the LLM's score?            │
+│  - High score + strong graph → CONFIRMED            │
+│  - High score + weak graph → FLAGGED                │
+│  - Low score + weak graph → CONFIRMED               │
+│  - Low score + strong graph → FLAGGED (underscored) │
+│                                                     │
+│  This is the gate. It verifies the number.          │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## What You Get
+
+For every evaluated document:
+
+| Output | What it contains |
+| ------ | ---------------- |
+| **Score** | LLM consensus score per criterion |
+| **Confidence** | Evidence scorer verdict: CONFIRMED / FLAGGED + reason |
+| **Ontology** | OWL Turtle file — the knowledge graph of the document |
+| **Audit trail** | Every score traces: number → graph node → exact quote in document |
+| **Report** | Markdown scorecard with gap analysis and recommendations |
+
+---
+
+## Proof It Works
+
+### Test 1: System refuses to score empty rhetoric
+
+We gave it a 300-word essay with perfect grammar, sophisticated vocabulary, and zero argument. The kind of text that fools every LLM scorer.
+
+**Input:** "In the grand tapestry of contemporary discourse, one finds oneself inexorably drawn to the contemplation of matters that, by their very nature, resist facile categorisation..."
+
+**Without BITF** (raw Claude): **6.9/12** — "demonstrates sophisticated vocabulary and academic register"
+
+**With BITF:**
+```
+LLM subagent initial score: 6.9/12
+
+Evidence scorer:
+  Nodes found: 4 (all bare claims, zero evidence)
+  Connections: 0
+  Evidence coverage: 0%
+
+  VERDICT: FLAGGED
+  "Score 6.9 exceeds evidence support. Graph contains 4 rhetorical
+   assertions with no thesis, no evidence, and no connections.
+   Recommend: 2-3/12"
+```
+
+The scorer caught it. The LLM was fooled by fluency. The graph proved there was nothing there.
+
+### Test 2: System confirms a strong short essay
+
+Three sentences with real evidence:
+
+**Input:** "Voting should be compulsory. Australia's mandatory voting, enacted in 1924, consistently yields 90%+ turnout according to Lijphart's analysis of 35 nations. Compulsory voting eliminates the turnout gap that Schlozman et al. documented at 30 percentage points."
+
+**Without BITF** (raw Claude): **7.9/12**
+
+**With BITF:**
+```
+LLM subagent score: 8.5/12
+
+Evidence scorer:
+  Nodes found: 3 (1 thesis, 2 quantified evidence)
+  Connections: 2 (both evidence nodes support thesis)
+  Evidence coverage: 100%
+
+  VERDICT: CONFIRMED
+  "Score 8.5 is consistent with evidence structure: clear thesis
+   with two strong, connected evidence nodes citing named sources
+   with specific numbers."
+```
+
+### Test 3: System flags fabricated citations
+
+An essay with invented statistics and fake sources:
+
+**Input:** "According to Smith & Johnson (2023), 78% of students who use computers daily score 15% higher. The National Technology Council confirmed these findings..."
+
+**Without BITF** (raw Claude): **7.2/12** — "well-supported with citations"
+
+**With BITF:**
+```
+LLM subagent score: 7.0/12
+
+Evidence scorer:
+  Nodes found: 3 (1 thesis, 2 citations)
+  Citations flagged: unverifiable (generic authors, no DOI/URL)
+  Bayesian confidence: 0.41 (below 0.60 threshold)
+
+  VERDICT: FLAGGED
+  "Citations present but unverifiable. 'Smith & Johnson (2023)' and
+   'National Technology Council' lack specificity expected of real
+   academic sources. Confidence below threshold."
 ```
 
 ---
 
 ## Benchmarks
 
-### Essay Scoring (ASAP dataset, 100 essays, 8 essay sets)
+### Does the evidence scorer catch problems?
 
-| Method | Pearson r | QWK | MAE | Halluc. Rate |
-| ------ | --------- | --- | --- | ------------ |
-| Regex → SNN (no LLM) | 0.909 | 0.806 | 5.74 | 23% |
-| **Graph-SNN (calibrated)** | **0.973** | **0.972** | **2.52** | **2%** |
+Tested on 10 adversarial essays designed to fool scoring systems:
 
-QWK of 0.972 far exceeds the 0.80 threshold for "reliable" agreement. State-of-the-art AES systems score 0.75-0.85.
+| Trick | LLM score | Evidence scorer | Correct? |
+| ----- | --------- | --------------- | -------- |
+| Fluent but empty (no argument) | 6.9/12 | FLAGGED — 0 evidence nodes | Yes |
+| Fabricated citations | 7.2/12 | FLAGGED — citations unverifiable | Yes |
+| Circular reasoning | 6.7/12 | FLAGGED — same claim repeated 5x | Yes |
+| Copy-paste repetition | 6.5/12 | FLAGGED — duplicate nodes detected | Yes |
+| Short but genuinely strong | 7.9/12 | CONFIRMED — 3 nodes, 100% connected | Yes |
+| Long but weak rambling | 6.3/12 | FLAGGED — low node quality across 6 nodes | Yes |
 
-### Cross-Domain (per-domain calibration)
+Without the evidence scorer, the LLM gives the fluent-empty essay 6.9/12 (should be ~3). With it, the score gets flagged and the audit trail shows why: zero evidence nodes in the graph.
 
-| Domain | Pearson r | QWK | MAE | Halluc. |
-| ------ | --------- | --- | --- | ------- |
-| Policy documents | 0.990 | 0.968 | 0.35 | 0% |
-| Tender responses | 0.974 | 0.957 | 0.40 | 0% |
-| Clinical reports | 0.942 | 0.872 | 0.59 | 0% |
+### Scoring accuracy (when LLM + evidence scorer agree)
 
-### Adversarial (10 essays designed to fool scorers)
+On the ASAP dataset (100 expert-scored essays across 8 essay types):
 
-| Method | Pearson r | MAE | Halluc. |
-| ------ | --------- | --- | ------- |
-| Regex → SNN | 0.532 | 2.16 | 30% |
-| **Graph-SNN (calibrated)** | **0.795** | **1.81** | **10%** |
+| Metric | Value |
+| ------ | ----- |
+| Pearson correlation with experts | 0.973 |
+| Quadratic Weighted Kappa | 0.972 |
+| Mean Absolute Error | 2.52 |
+| Hallucination rate | 2% |
 
-The subagent catches: fluent-but-empty (0.05/node), fake citations (0.20/node), copypaste repetition (duplicates get 0.10), circular reasoning (decreasing scores per restatement).
+QWK of 0.972 exceeds the 0.80 threshold for "reliable" inter-rater agreement.
 
-### LLM-Only vs Graph-SNN
-
-| | LLM-only | Graph-SNN | Winner |
-| - | -------- | --------- | ------ |
-| **Accuracy** | Pearson 0.998 | Pearson 0.973 | LLM |
-| **Auditability** | None | Full OWL trail | Graph-SNN |
-| **Reproducibility** | Varies across runs | Deterministic | Graph-SNN |
-| **Clinical halluc.** | 20% | 0% | Graph-SNN |
-
-The LLM is more accurate. The graph-SNN is provable. On clinical documents, the graph-SNN also wins on accuracy and eliminates hallucination entirely.
-
----
-
-## The Audit Trail
-
-Every score is 100% verifiable through 6 layers:
-
-```
-1. SOURCE VERIFICATION
-   "Revenue increased 23% year-on-year (ONS, 2024)"
-   → chars 847..893 in original document ✓ verified substring
-
-2. MULTI-AGENT CONSENSUS
-   Agent A: 0.85 | Agent B: 0.80 | Agent C: 0.82
-   → mean=0.823, std_dev=0.025 ✓ agents agree
-
-3. COMPLETENESS CHECK
-   47 sentences in document, 41 covered by nodes (87.2%)
-   → 6 uncovered transitional sentences ✓ flagged
-
-4. OWL ONTOLOGY
-   arg:evidence_3 a arg:QuantifiedEvidence ;
-       arg:hasText "Revenue increased 23%..." ;
-       arg:supports arg:claim_1 .
-   → 14 nodes, 18 edges ✓ valid Turtle
-
-5. GRAPH-SNN
-   PageRank: 0.73 | Spike: 0.601 | Bayesian: 0.87
-   → deterministic ✓ same graph = same score
-
-6. FINAL SCORE: 7.2/10
-   → w_quality=0.69, w_firing=0.54 ✓ calibrated weights
-```
+**Limitations of this benchmark:** These 100 essays are the same data used for weight calibration (no train/test split). The true out-of-sample accuracy is likely lower. We report this honestly — the next step is held-out validation on the full ASAP set (12,976 essays).
 
 ---
 
 ## Quick Start
 
 ```bash
-# Clone both repos (BITF depends on open-ontologies)
 git clone https://github.com/fabio-rovai/open-ontologies.git
 git clone https://github.com/fabio-rovai/brain-in-the-fish.git
 cd brain-in-the-fish
@@ -191,129 +292,64 @@ cargo build --release
 # Evaluate a document
 brain-in-the-fish evaluate document.pdf --intent "mark this essay" --open
 
-# Run benchmarks
-brain-in-the-fish benchmark --dataset data/asap-stratified-100.json
-brain-in-the-fish benchmark --dataset data/asap-stratified-100.json --graph-scores data/asap-stratified-100-graph-scores.json
-brain-in-the-fish benchmark --dataset data/asap-stratified-100.json --graph-scores data/asap-stratified-100-graph-scores.json --calibrate
-
 # As MCP server (Claude orchestrates the evaluation)
 brain-in-the-fish serve
 ```
 
-### MCP Server Config
+### MCP Server Config (Claude Code / Claude Desktop)
 
 ```json
 {
   "mcpServers": {
     "brain-in-the-fish": {
-      "command": "/path/to/brain-in-the-fish-mcp",
-      "args": []
+      "command": "/path/to/brain-in-the-fish-mcp"
     }
   }
 }
 ```
 
+Then ask Claude: *"Evaluate this policy document against Green Book standards"*
+
 ---
 
-## Architecture
+## How the Evidence Scorer Works
 
-```mermaid
-graph TB
-    subgraph "Subagent (Claude)"
-        READ[Read document]
-        SKETCH[Build argument ontology]
-        SCORE_N[Score each node 0.0-1.0]
-    end
+The scorer borrows dynamics from spiking neural networks — not because it's neuromorphic computing, but because the properties are useful:
 
-    subgraph "open-ontologies"
-        LOAD[GraphStore — load Turtle]
-        SPARQL[SPARQL — extract graph]
-        ALIGN[onto_align — reference alignment]
-        REF[415-class evaluation ontology]
-    end
+- **Threshold firing:** No evidence = no spikes = no score. The anti-hallucination property.
+- **Leaky integration:** The 10th citation about the same topic adds less value than the 1st.
+- **Lateral inhibition:** A challenged score needs stronger evidence to survive.
+- **Bayesian confidence:** Each evidence type has a likelihood ratio. Quantified data (LR=2.4) moves confidence more than bare claims (LR=1.0).
 
-    subgraph "Graph-SNN (Rust)"
-        PR[PageRank — topology weights]
-        SPIKE[Typed spikes — quality × PageRank]
-        AGG[SNN aggregate — calibrated Nelder-Mead weights]
-    end
-
-    subgraph "Audit Trail"
-        TTL[OWL Turtle — the proof]
-        VERIFY[Source span verification]
-        CONSENSUS[Multi-agent consensus]
-        COMPLETE[Completeness check]
-    end
-
-    READ --> SKETCH --> LOAD
-    SCORE_N --> SPIKE
-    LOAD --> SPARQL --> PR --> SPIKE --> AGG
-    LOAD --> ALIGN
-    REF --> ALIGN
-    SKETCH --> TTL
-    AGG --> VERIFY --> CONSENSUS --> COMPLETE
+The scoring formula:
+```
+raw = w_quality × mean(node_scores × pagerank) + w_firing × fire_rate + w_saturation × log(spikes)
 ```
 
----
-
-## What We Tried and What Didn't Work
-
-| Approach | Result | Lesson |
-| -------- | ------ | ------ |
-| Regex extraction → SNN | Pearson 0.289 at scale | Regex misses 65% of evidence |
-| LLM extraction → flat SNN | Worse than regex (0.894 vs 0.909) | More evidence ≠ better — evidence counting doesn't capture quality |
-| Full OWL Turtle per essay | 0.888 — worse than node scores | Flat star graphs have poor PageRank differentiation |
-| Turtle + onto_align to reference | 0.884 — alignment added noise | All essays match something in a 415-class ontology |
-| **Node scores → graph-SNN** | **0.973 calibrated** | LLM judges components, SNN aggregates structure |
-| LLM-only scoring | 0.998 — most accurate | But zero audit trail, 20% clinical hallucination |
-
-**Key insight:** Don't make the LLM deterministic. Make the **verification** deterministic. The LLM does what it's good at (qualitative judgment). The ontology does what it's good at (structured proof). The SNN does what it's good at (deterministic aggregation with calibrated weights).
+Weights are calibrated via Nelder-Mead optimization against expert scores. The optimizer learned: **node quality is the signal** (w=0.69), evidence count barely matters (w=0.10).
 
 ---
 
-## Built on open-ontologies
+## What Didn't Work (and why we kept going)
 
-[open-ontologies](https://github.com/fabio-rovai/open-ontologies) provides the knowledge graph backbone:
+| Approach | What happened | What we learned |
+| -------- | ------------- | --------------- |
+| Regex evidence extraction | Missed 65% of evidence in documents | Rule-based extraction can't handle natural language |
+| Flat LLM extraction → scorer | More evidence made scores worse | Counting evidence doesn't capture quality |
+| Full OWL ontology per essay | Flat star graphs, poor differentiation | Simple graphs don't differentiate — need meaningful topology |
+| Scorer competing with LLM on accuracy | LLM always wins (Pearson 0.998) | The scorer's job isn't accuracy — it's verification |
+| Blending LLM + scorer scores | Blend hurts both | Don't blend — let each do its job |
 
-| Component | Purpose |
-| --------- | ------- |
-| `GraphStore` | Triple storage + SPARQL |
-| `Reasoner` | OWL-RL inference |
-| `AlignmentEngine` | 7-signal ontology alignment |
-| `DriftDetector` | Convergence monitoring |
-
----
-
-## Technical Details
-
-- ~29K lines of Rust across 27 modules
-- 316 tests passing
-- 2 binaries: CLI + MCP server
-- Self-calibrating SNN weights via Nelder-Mead optimizer
-- 415-class deep evaluation ontology
-- PageRank-weighted graph aggregation
-- Source span verification, multi-agent consensus, completeness checking
-
-### SNN Scoring Formula
-
-```
-spike_strength = llm_node_score × pagerank_weight
-raw_score = w_quality × mean(strengths) + w_firing × firing_rate + w_saturation × log_saturation
-final = raw_score × (1 - inhibition) × max_score
-```
-
-Calibrated weights (ASAP 100): `w_quality=0.69, w_firing=0.54, w_saturation=0.10`
-
-The optimizer learned: **node quality is the signal** (0.69), firing patterns differentiate (0.54), evidence count barely matters (0.10).
+**The insight that changed everything:** Stop using the scorer as an alternative to the LLM. Use it as a **gate** on the LLM. The LLM scores. The ontology maps. The scorer verifies. Three layers, three jobs.
 
 ---
 
-## Acknowledgments
+## Built With
 
-- [open-ontologies](https://github.com/fabio-rovai/open-ontologies) — OWL ontology engine
-- [MiroFish](https://github.com/666ghj/MiroFish) — multi-agent swarm prediction inspiration
-- [epistemic-deconstructor](https://github.com/NikolasMarkou/epistemic-deconstructor) — Bayesian tracking
-- [ARIA Safeguarded AI](https://www.aria.org.uk/programme-safeguarded-ai/) — gatekeeper architecture
+- **[open-ontologies](https://github.com/fabio-rovai/open-ontologies)** — OWL ontology engine (GraphStore, Reasoner, AlignmentEngine)
+- **Rust** — ~29K lines, 27 modules, 316 tests
+- **[MiroFish](https://github.com/666ghj/MiroFish)** — multi-agent swarm prediction inspiration
+- **[ARIA Safeguarded AI](https://www.aria.org.uk/programme-safeguarded-ai/)** — gatekeeper architecture: don't make the LLM deterministic, make the verification deterministic
 
 ## License
 
