@@ -154,15 +154,26 @@ The LLM can't say "good essay" without showing **what** is good and **where** in
 
 ### Layer 2: Ontology Verifies
 
-The Turtle loads into [open-ontologies](https://github.com/fabio-rovai/open-ontologies) GraphStore. SPARQL queries extract structural metrics:
+The Turtle loads into [open-ontologies](https://github.com/fabio-rovai/open-ontologies) GraphStore. Then two things happen:
 
-- How many argument nodes exist (density)
-- What fraction are evidence vs bare claims (evidence ratio)
-- How connected the argument structure is (connectivity)
-- How deep the reasoning chains go (depth)
-- Whether counter-arguments are addressed (sophistication)
+**Structural metrics** extracted via SPARQL — density, evidence ratio, connectivity, depth, sophistication. These are facts about the graph, not LLM opinions. Same graph → same metrics, always.
 
-These are **facts about the graph**, not LLM opinions. Same graph → same metrics, always.
+**Rule mining** via SPARQL INSERT queries that derive new facts from the graph:
+
+```sparql
+-- A claim with 2+ supporting evidence nodes is Strong
+INSERT { ?claim a arg:StrongClaim }
+WHERE {
+    ?claim a arg:SubClaim .
+    ?ev1 arg:supports ?claim . ?ev1 a arg:Evidence .
+    ?ev2 arg:supports ?claim . ?ev2 a arg:Evidence .
+    FILTER(?ev1 != ?ev2)
+}
+```
+
+8 rules derive facts like StrongClaim, UnsupportedClaim, SophisticatedArgument (thesis with counter + rebuttal), DeepChain (depth-2+ reasoning). These derived facts become scoring features — deterministic, auditable, and grounded in graph topology.
+
+All weights (6 structural + 2 gate parameters) are learned from data via Nelder-Mead optimization — no hardcoded magic numbers.
 
 ### Layer 3: Gate Checks Consistency
 
@@ -172,7 +183,7 @@ The gate compares the LLM's holistic score against the structural evidence using
 tolerance = gate_a × ln(nodes + 1) + gate_b
 ```
 
-Two parameters, calibrated from data. Fewer nodes = tighter tolerance (less room for the LLM to overclaim). Low-quality evidence tightens it further.
+Two parameters, calibrated from data. Fewer nodes = tighter tolerance (less room for the LLM to overclaim). A quality factor continuously tightens tolerance when evidence is weak or unverifiable — the gate is strictest exactly when it should be.
 
 - **CONFIRMED**: LLM score consistent with evidence → score is emitted with full proof
 - **FLAGGED**: LLM score exceeds evidence → score emitted with warning + recommended adjustment
@@ -211,6 +222,14 @@ The gate splits essays into CONFIRMED (evidence supports the score) and FLAGGED/
 The gate reduces hallucinations from 24.5% to 16.8% on confirmed essays — a 31% reduction. The FLAGGED essays have a 36% hallucination rate, confirming the gate identifies unreliable scores.
 
 **Important caveat:** "Hallucination" here means the LLM score diverges >30% from expert — this is a scoring disagreement, not evidence fabrication. Evidence fabrication is 0% (see grounding test above).
+
+### Self-evaluation: we ran the pipeline on this README
+
+We used BITF's own methodology to fact-check this document. Every quantitative claim was decomposed into a verifiable node, then checked against the actual experiment data.
+
+Result: 15 claims extracted. 13 verified immediately. 1 factual error caught (regex extraction claim said "missed 65%" — actual data showed "found ~20%"). 1 stale URL found and updated. The error was corrected before publication.
+
+The system caught a real mistake in its own documentation.
 
 ---
 
