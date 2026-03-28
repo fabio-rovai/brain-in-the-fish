@@ -12,6 +12,7 @@ pub mod llm;
 pub mod research;
 pub mod orchestrator;
 pub mod server;
+pub mod rules;
 pub mod snn;
 pub mod memory;
 pub mod batch;
