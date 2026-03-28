@@ -118,6 +118,21 @@ We ran the pipeline on this document. 15 claims extracted, all verified against 
 
 Three layers, three jobs:
 
+```mermaid
+graph LR
+    A[Document] --> B[LLM Decomposes]
+    B --> C[OWL Knowledge Graph]
+    C --> D[SPARQL Rules<br/>mine facts]
+    C --> E[Structural Metrics<br/>density, depth, connectivity]
+    D --> F[Gate]
+    E --> F
+    B -->|holistic score| F
+    F --> G{Verdict}
+    G -->|evidence matches| H[✅ CONFIRMED]
+    G -->|score exceeds evidence| I[⚠️ FLAGGED]
+    G -->|no evidence| J[❌ REJECTED]
+```
+
 **1. LLM decomposes** the document into an OWL knowledge graph. Every claim becomes a typed node with an exact source quote.
 
 ```turtle
