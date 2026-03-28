@@ -124,6 +124,10 @@ pub struct ScoreWeights {
     pub lr_alignment: f64,
     /// Bayesian LR for Claim spikes (default 1.3)
     pub lr_claim: f64,
+    /// Gate tolerance curve: tolerance = gate_a * ln(nodes+1) + gate_b
+    pub gate_a: f64,
+    /// Gate tolerance curve intercept
+    pub gate_b: f64,
 }
 
 impl Default for ScoreWeights {
@@ -138,6 +142,8 @@ impl Default for ScoreWeights {
             lr_citation: 1.8,
             lr_alignment: 1.5,
             lr_claim: 1.3,
+            gate_a: 0.06,
+            gate_b: 0.02,
         }
     }
 }
@@ -147,7 +153,9 @@ impl ScoreWeights {
     /// Order: [w_saturation, w_quality, w_firing, saturation_base,
     ///         lr_quantified, lr_evidence, lr_citation, lr_alignment, lr_claim]
     pub fn from_params(params: &[f64]) -> Self {
-        assert!(params.len() >= 9, "Need at least 9 parameters for ScoreWeights");
+        // Backwards compatible: accept 9 or 11 params
+        let n = params.len();
+        assert!(n >= 9, "Need at least 9 parameters for ScoreWeights");
         Self {
             w_saturation: params[0].clamp(0.01, 1.0),
             w_quality: params[1].clamp(0.01, 1.0),
@@ -158,6 +166,8 @@ impl ScoreWeights {
             lr_citation: params[6].clamp(1.0, 10.0),
             lr_alignment: params[7].clamp(1.0, 10.0),
             lr_claim: params[8].clamp(1.0, 5.0),
+            gate_a: if n > 9 { params[9].clamp(0.01, 0.20) } else { 0.06 },
+            gate_b: if n > 10 { params[10].clamp(-0.05, 0.15) } else { 0.02 },
         }
     }
 
@@ -173,6 +183,8 @@ impl ScoreWeights {
             self.lr_citation,
             self.lr_alignment,
             self.lr_claim,
+            self.gate_a,
+            self.gate_b,
         ]
     }
 }
@@ -517,6 +529,16 @@ pub fn gate_score(
     graph: &crate::argument_graph::ArgumentGraph,
     _snn_scores: &[(String, SNNScore)],
 ) -> Verdict {
+    gate_score_with_weights(llm_score, max_score, graph, &ScoreWeights::default())
+}
+
+/// Gate with custom weights (for calibration).
+pub fn gate_score_with_weights(
+    llm_score: f64,
+    max_score: f64,
+    graph: &crate::argument_graph::ArgumentGraph,
+    weights: &ScoreWeights,
+) -> Verdict {
     use crate::argument_graph;
 
     let metrics = argument_graph::compute_metrics(graph);
@@ -571,24 +593,18 @@ pub fn gate_score(
     };
     let evidence_scaled = evidence_score * max_score;
 
-    // Tolerance scales with evidence density
-    // Base tolerance from node count
-    let base_tolerance = if total_nodes <= 2 {
-        0.08
-    } else if total_nodes <= 5 {
-        0.15
-    } else if total_nodes <= 8 {
-        0.20
-    } else {
-        0.25
-    };
+    // Learned tolerance curve: tolerance = a * ln(nodes + 1) + b
+    // Two parameters, calibrated from data via Nelder-Mead.
+    let gate_a = weights.gate_a;
+    let gate_b = weights.gate_b;
+    let base_tolerance = (gate_a * (total_nodes as f64 + 1.0).ln() + gate_b).clamp(0.05, 0.30);
 
-    // Tighten tolerance when quality is low — low quality means the evidence
-    // is weak/unverifiable, so less room for the LLM to claim a high score
+    // Quality factor: continuous curve, not if/else
+    // factor = clamp(quality / 0.5, 0.5, 1.0)
+    // Below 0.5 quality → tolerance shrinks linearly. At 0.25 quality → 50% tolerance.
     let quality_factor = match quality_score {
-        Some(q) if q < 0.35 => 0.5,  // very low quality: halve tolerance
-        Some(q) if q < 0.50 => 0.75, // low quality: reduce tolerance
-        _ => 1.0,                      // normal or no quality data
+        Some(q) => (q / 0.5).clamp(0.5, 1.0),
+        None => 1.0,
     };
     let tolerance = base_tolerance * quality_factor;
 
