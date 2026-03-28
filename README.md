@@ -13,7 +13,7 @@
 <p align="center">
   <img src="https://github.com/fabio-rovai/brain-in-the-fish/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/tests-307%20passing-brightgreen" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-316%20passing-brightgreen" alt="Tests" />
   <img src="https://img.shields.io/badge/rust-edition%202024-orange" alt="Rust" />
 </p>
 
@@ -197,8 +197,6 @@ graph TB
     end
 
     subgraph "Optional Extensions"
-        PHI[--philosophy]
-        EPI[--epistemology]
         PRE[--predict]
         ORC[--orchestrate]
         DEP[--deep-validate]
@@ -274,7 +272,7 @@ graph TB
         LOAD[GraphStore::load_turtle]
         SPARQL[SPARQL — extract nodes + edges]
         ALIGN[onto_align — 7-signal reference alignment]
-        REF[Deep evaluation ontology — 270+ classes]
+        REF[Deep evaluation ontology — 415-classes]
     end
 
     subgraph "Graph-SNN (Rust)"
@@ -319,10 +317,10 @@ Systematic ablation studies — toggle each component on/off, measure accuracy �
 | **Hedging check** | Harmful — penalises correct academic hedging | Removed from core |
 | **Specificity check** | Noisy — flags normal academic vocabulary | Removed from core |
 | **Transition check** | High-school heuristic, no accuracy improvement | Removed from core |
-| **Maslow dynamics** | Zero measurable impact on scores | Opt-in (`--epistemology`) |
+| **Maslow dynamics** | Zero measurable impact on scores | Removed from CLI |
 | **Multi-round debate** | No impact in deterministic mode | Only active with LLM subagents |
-| **Philosophy module** | Interesting, not useful for accuracy (316 lines, ~0 ROI) | Opt-in (`--philosophy`) |
-| **Epistemology module** | Academic exercise, no accuracy improvement | Opt-in (`--epistemology`) |
+| **Philosophy module** | Interesting, not useful for accuracy (~0 ROI) | Removed from CLI |
+| **Epistemology module** | Academic exercise, no accuracy improvement | Removed from CLI |
 | **Rule-based predictions** | Actively harmful — 3/11 found, duplicates, misparses | Replaced with subagent + evidence scorer |
 | **Number checker (old)** | 111 false positives per document (years as "inconsistencies") | Fixed — filtered years/dates, down to 14 FPs |
 
@@ -361,8 +359,6 @@ The ontology spine is not about beating the LLM on accuracy. It's about being ab
 | Flag | What it adds |
 | ---- | ------------ |
 | `--predict` | Extract predictions/targets from document, assess credibility against evidence |
-| `--philosophy` | Kantian, utilitarian, virtue ethics analysis |
-| `--epistemology` | Justified beliefs with empirical/normative/testimonial bases |
 | `--deep-validate` | All 15 validation checks (adds hedging, transitions, specificity, fallacies, etc.) |
 | `--orchestrate` | Generate Claude subagent task files for LLM-enhanced scoring |
 
@@ -695,7 +691,7 @@ graph TB
     CORE --> OO
 ```
 
-**~24K lines of Rust across 27 modules, compiled to 2 binaries (CLI + MCP server).**
+**~29K lines of Rust across 27 modules, compiled to 2 binaries (CLI + MCP server).**
 
 ---
 
@@ -755,7 +751,7 @@ All run as in-process Rust function calls. Zero network overhead.
 ## Testing
 
 ```bash
-cargo test --workspace        # 307 tests across all crates
+cargo test --workspace        # 316 tests across all crates
 cargo clippy --workspace      # Zero warnings
 cargo run --bin brain-in-the-fish -- benchmark  # Run synthetic benchmark
 ```
