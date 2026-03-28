@@ -1589,14 +1589,30 @@ fn run_benchmark_graph(
         let agents = agent::spawn_panel(&intent, &framework);
         let snn_config = snn::SNNConfig::default();
 
-        // Build argument graph from subagent node scores (primary)
-        // or fall back to regex extraction if no scores available
+        // Build argument graph: prefer Turtle (full /sketch), then node scores, then regex
         let graph = if let Some(gs_entry) = gs_map.get(&sample.id) {
             matched += 1;
-            // Build graph directly from subagent's node scores
-            argument_graph::build_from_node_scores(&sample.id, &gs_entry.node_scores)
+            if let Some(ref turtle) = gs_entry.turtle {
+                // Full /sketch mode: load OWL Turtle into GraphStore
+                match argument_graph::build_from_turtle(&sample.id, turtle, &gs_entry.node_scores) {
+                    Ok(g) => {
+                        if i < 5 {
+                            eprintln!("  [DEBUG] {} Turtle: {} nodes, {} edges from GraphStore",
+                                sample.id, g.nodes.len(), g.edges.len());
+                        }
+                        g
+                    }
+                    Err(e) => {
+                        eprintln!("  Turtle parse failed for {}: {}, falling back to node scores", sample.id, e);
+                        argument_graph::build_from_node_scores(&sample.id, &gs_entry.node_scores)
+                    }
+                }
+            } else {
+                // Node scores only (no Turtle)
+                argument_graph::build_from_node_scores(&sample.id, &gs_entry.node_scores)
+            }
         } else {
-            // Fall back to regex extraction
+            // No subagent data — fall back to regex extraction
             argument_graph::build_from_text(&sample.text, &sample.id)
         };
 

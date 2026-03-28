@@ -70,8 +70,11 @@ pub struct ArgumentGraph {
 /// Subagent-produced node scores for the benchmark path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphScoreEntry {
-    pub id: String, // sample ID
+    pub id: String,
     pub node_scores: Vec<NodeScoreEntry>,
+    /// OWL Turtle produced by /sketch subagent (Option B full mode)
+    #[serde(default)]
+    pub turtle: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +82,130 @@ pub struct NodeScoreEntry {
     pub node_iri: String,
     pub score: f64,
     pub justification: String,
+}
+
+/// Build an argument graph from subagent-produced OWL Turtle + node scores.
+/// Loads Turtle into GraphStore, extracts nodes and edges via SPARQL.
+pub fn build_from_turtle(
+    doc_id: &str,
+    turtle: &str,
+    node_scores: &[NodeScoreEntry],
+) -> anyhow::Result<ArgumentGraph> {
+    let store = GraphStore::new();
+    store.load_turtle(turtle, Some("http://brain-in-the-fish.dev/arg/"))?;
+
+    // Extract nodes via SPARQL
+    let node_query = r#"
+        PREFIX arg: <http://brain-in-the-fish.dev/arg/>
+        SELECT ?node ?type ?text WHERE {
+            ?node a ?type .
+            OPTIONAL { ?node arg:hasText ?text }
+            FILTER(?type IN (
+                arg:Thesis, arg:SubClaim, arg:Evidence, arg:QuantifiedEvidence,
+                arg:Citation, arg:Counter, arg:Rebuttal, arg:Structural
+            ))
+        }
+    "#;
+
+    let node_results = store.sparql_select(node_query)?;
+    let node_json: serde_json::Value = serde_json::from_str(&node_results)?;
+
+    let mut nodes = Vec::new();
+    let score_map: HashMap<String, &NodeScoreEntry> = node_scores.iter()
+        .map(|ns| (ns.node_iri.clone(), ns))
+        .collect();
+
+    // GraphStore returns {"results": [{...}], "variables": [...]}
+    // Values are wrapped in angle brackets: "<http://...>"
+    let bindings = node_json["results"].as_array()
+        .or_else(|| node_json["results"]["bindings"].as_array());
+
+    if let Some(bindings) = bindings {
+        for binding in bindings {
+            let raw_iri = binding["node"].as_str().unwrap_or("");
+            let iri = raw_iri.trim_start_matches('<').trim_end_matches('>').to_string();
+            let raw_type = binding["type"].as_str().unwrap_or("");
+            let type_iri = raw_type.trim_start_matches('<').trim_end_matches('>');
+            let raw_text = binding["text"].as_str().unwrap_or("");
+            let text = raw_text.trim_start_matches('"').trim_end_matches('"').to_string();
+
+            // Skip non-argument-node types (owl:Class, owl:ObjectProperty, etc.)
+            if !type_iri.contains("brain-in-the-fish.dev/arg/") {
+                continue;
+            }
+            let node_type = match type_iri {
+                t if t.contains("Thesis") => NodeType::Thesis,
+                t if t.contains("QuantifiedEvidence") => NodeType::QuantifiedEvidence,
+                t if t.contains("Citation") => NodeType::Citation,
+                t if t.contains("Evidence") => NodeType::Evidence,
+                t if t.contains("Counter") => NodeType::Counter,
+                t if t.contains("Rebuttal") => NodeType::Rebuttal,
+                t if t.contains("Structural") => NodeType::Structural,
+                t if t.contains("SubClaim") => NodeType::SubClaim,
+                _ => continue, // Skip unknown types
+            };
+
+            // Match node scores by IRI (try both full IRI and short form)
+            let short_iri = iri.replace("http://brain-in-the-fish.dev/arg/", "arg:");
+            let ns = score_map.get(&iri)
+                .or_else(|| score_map.get(&short_iri));
+
+            nodes.push(ArgumentNode {
+                iri: short_iri.clone(),
+                node_type,
+                text,
+                llm_score: ns.map(|n| n.score.clamp(0.0, 1.0)),
+                llm_justification: ns.map(|n| n.justification.clone()),
+            });
+        }
+    }
+
+    // Extract edges via SPARQL
+    let edge_query = r#"
+        PREFIX arg: <http://brain-in-the-fish.dev/arg/>
+        SELECT ?from ?prop ?to WHERE {
+            ?from ?prop ?to .
+            FILTER(?prop IN (arg:supports, arg:warrants, arg:counters, arg:rebuts, arg:contains, arg:references))
+        }
+    "#;
+
+    let edge_results = store.sparql_select(edge_query)?;
+    let edge_json: serde_json::Value = serde_json::from_str(&edge_results)?;
+
+    let mut edges = Vec::new();
+    let edge_bindings = edge_json["results"].as_array()
+        .or_else(|| edge_json["results"]["bindings"].as_array());
+
+    if let Some(bindings) = edge_bindings {
+        for binding in bindings {
+            let from = binding["from"].as_str().unwrap_or("")
+                .trim_start_matches('<').trim_end_matches('>')
+                .replace("http://brain-in-the-fish.dev/arg/", "arg:");
+            let prop = binding["prop"].as_str().unwrap_or("")
+                .trim_start_matches('<').trim_end_matches('>');
+            let to = binding["to"].as_str().unwrap_or("")
+                .trim_start_matches('<').trim_end_matches('>')
+                .replace("http://brain-in-the-fish.dev/arg/", "arg:");
+
+            let edge_type = match prop {
+                p if p.contains("supports") => EdgeType::Supports,
+                p if p.contains("warrants") => EdgeType::Warrants,
+                p if p.contains("counters") => EdgeType::Counters,
+                p if p.contains("rebuts") => EdgeType::Rebuts,
+                p if p.contains("contains") => EdgeType::Contains,
+                p if p.contains("references") => EdgeType::References,
+                _ => continue,
+            };
+
+            edges.push(ArgumentEdge { from, edge_type, to });
+        }
+    }
+
+    Ok(ArgumentGraph {
+        doc_id: doc_id.to_string(),
+        nodes,
+        edges,
+    })
 }
 
 /// Build an argument graph from an EvalDocument.
@@ -648,6 +775,53 @@ mod tests {
         let pr = compute_pagerank(&graph, 0.85, 20);
         // Thesis should have highest PageRank (most supported)
         assert!(pr["a"] > pr["c"], "Thesis should rank higher than leaf evidence");
+    }
+
+    #[test]
+    fn test_build_from_turtle() {
+        let ttl = r#"
+@prefix arg: <http://brain-in-the-fish.dev/arg/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+arg:ArgumentNode a owl:Class .
+arg:Thesis rdfs:subClassOf arg:ArgumentNode .
+arg:SubClaim rdfs:subClassOf arg:ArgumentNode .
+arg:Evidence rdfs:subClassOf arg:ArgumentNode .
+
+arg:supports a owl:ObjectProperty .
+arg:hasText a owl:DatatypeProperty .
+
+arg:thesis_1 a arg:Thesis ;
+    arg:hasText "Test thesis" .
+arg:claim_2 a arg:SubClaim ;
+    arg:hasText "Test claim" ;
+    arg:supports arg:thesis_1 .
+arg:evidence_3 a arg:Evidence ;
+    arg:hasText "Test evidence" ;
+    arg:supports arg:claim_2 .
+"#;
+        let scores = vec![
+            NodeScoreEntry { node_iri: "arg:thesis_1".into(), score: 0.8, justification: "good".into() },
+            NodeScoreEntry { node_iri: "arg:claim_2".into(), score: 0.6, justification: "ok".into() },
+            NodeScoreEntry { node_iri: "arg:evidence_3".into(), score: 0.7, justification: "solid".into() },
+        ];
+        // Debug: check what's in the store
+        let store = GraphStore::new();
+        let count = store.load_turtle(ttl, Some("http://brain-in-the-fish.dev/arg/")).unwrap();
+        eprintln!("Loaded {} triples", count);
+        let all = store.sparql_select("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 20").unwrap();
+        eprintln!("All triples: {}", all);
+        let typed = store.sparql_select("PREFIX arg: <http://brain-in-the-fish.dev/arg/> SELECT ?node ?type WHERE { ?node a ?type }").unwrap();
+        eprintln!("Typed: {}", typed);
+
+        let graph = build_from_turtle("test", ttl, &scores).expect("should parse");
+        eprintln!("Nodes: {:?}", graph.nodes.iter().map(|n| (&n.iri, &n.node_type)).collect::<Vec<_>>());
+        eprintln!("Edges: {:?}", graph.edges.iter().map(|e| (&e.from, &e.edge_type, &e.to)).collect::<Vec<_>>());
+        assert!(!graph.nodes.is_empty(), "Should find nodes, got 0");
+        assert!(!graph.edges.is_empty(), "Should find edges, got 0");
+        assert!(graph.nodes.iter().any(|n| n.llm_score.is_some()), "Scores should be matched");
     }
 
     #[test]
