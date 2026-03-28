@@ -646,6 +646,55 @@ pub struct GraphMetrics {
     pub has_rebuttal: bool,
 }
 
+/// Align an essay's Turtle against a reference evaluation ontology.
+/// Returns alignment candidates with confidence scores (7 structural signals).
+/// Each candidate maps an essay class to a reference class with a confidence score.
+pub fn align_to_reference(
+    essay_turtle: &str,
+    reference_turtle: &str,
+    min_confidence: f64,
+) -> anyhow::Result<Vec<AlignmentCandidate>> {
+    use open_ontologies::align::AlignmentEngine;
+    use open_ontologies::state::StateDb;
+
+    let graph = Arc::new(GraphStore::new());
+    let tmp = std::env::temp_dir().join("bitf-align-state.db");
+    let db = StateDb::open(&tmp)?;
+    let engine = AlignmentEngine::new(db, graph);
+
+    let result_json = engine.align(essay_turtle, Some(reference_turtle), min_confidence, true)?;
+    let result: serde_json::Value = serde_json::from_str(&result_json)?;
+
+    let mut candidates = Vec::new();
+    if let Some(items) = result["candidates"].as_array() {
+        for item in items {
+            candidates.push(AlignmentCandidate {
+                source_iri: item["source_iri"].as_str().unwrap_or("").to_string(),
+                target_iri: item["target_iri"].as_str().unwrap_or("").to_string(),
+                confidence: item["confidence"].as_f64().unwrap_or(0.0),
+                relation: item["relation"].as_str().unwrap_or("").to_string(),
+                label_similarity: item["signals"]["label_similarity"].as_f64().unwrap_or(0.0),
+                property_overlap: item["signals"]["property_overlap"].as_f64().unwrap_or(0.0),
+                neighborhood_similarity: item["signals"]["neighborhood_similarity"].as_f64().unwrap_or(0.0),
+            });
+        }
+    }
+
+    Ok(candidates)
+}
+
+/// An alignment candidate between an essay node and a reference ontology class.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlignmentCandidate {
+    pub source_iri: String,
+    pub target_iri: String,
+    pub confidence: f64,
+    pub relation: String,
+    pub label_similarity: f64,
+    pub property_overlap: f64,
+    pub neighborhood_similarity: f64,
+}
+
 pub fn compute_metrics(graph: &ArgumentGraph) -> GraphMetrics {
     let node_count = graph.nodes.len();
     let edge_count = graph.edges.len();
