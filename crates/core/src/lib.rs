@@ -15,6 +15,7 @@ pub mod server;
 pub mod firewall;
 pub mod gate;
 pub mod rules;
+pub mod verify;
 pub mod memory;
 pub mod batch;
 pub mod semantic;

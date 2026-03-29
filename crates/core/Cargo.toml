@@ -23,6 +23,8 @@ chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 pdf-extract = "0.8"
 regex = "1"
+regex-lite = "0.1"
+urlencoding = "2"
 schemars = "1"
 serde_yaml = "0.9"
 dirs = "6"
