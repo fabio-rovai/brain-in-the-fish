@@ -14,6 +14,7 @@ use open_ontologies::graph::GraphStore;
 use crate::types::*;
 use crate::argument_graph::{ArgumentGraph, ArgumentNode, ArgumentEdge, NodeType, EdgeType};
 use crate::gate::{self, GateWeights};
+use crate::rules;
 
 // ============================================================================
 // Input structs
@@ -149,6 +150,12 @@ pub struct EdsScoreInput {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdsLoadTurtleInput {
+    /// OWL Turtle string produced by LLM decomposition.
+    pub turtle: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct EdsChallengeInput {
     /// Agent ID of the challenger.
     pub challenger_agent_id: String,
@@ -184,6 +191,10 @@ struct SessionState {
     /// Evidence graphs per (agent_id, criterion_id).
     evidence: std::collections::HashMap<(String, String), AgentEvidence>,
     gate_weights: GateWeights,
+    /// Whether OWL Turtle has been loaded into the GraphStore via eds_load_turtle.
+    turtle_loaded: bool,
+    /// LLM holistic scores recorded via eval_record_score, keyed by criterion_id.
+    llm_scores: std::collections::HashMap<String, (f64, f64)>,
 }
 
 impl SessionState {
@@ -198,6 +209,8 @@ impl SessionState {
             intent: String::new(),
             evidence: std::collections::HashMap::new(),
             gate_weights: GateWeights::default(),
+            turtle_loaded: false,
+            llm_scores: std::collections::HashMap::new(),
         }
     }
 
@@ -249,6 +262,124 @@ impl EvalServer {
     /// Return the list of all registered tool definitions.
     pub fn list_tool_definitions(&self) -> Vec<Tool> {
         self.tool_router.list_all()
+    }
+
+    /// Build an ArgumentGraph by querying the real GraphStore via SPARQL.
+    /// Used by eds_score when turtle has been loaded via eds_load_turtle.
+    fn build_graph_from_store(&self, doc_id: &str) -> ArgumentGraph {
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+
+        // Query nodes
+        let node_query = r#"
+            PREFIX arg: <http://brain-in-the-fish.dev/arg/>
+            SELECT ?node ?type ?text WHERE {
+                ?node a ?type .
+                OPTIONAL { ?node arg:hasText ?text }
+                FILTER(?type IN (
+                    arg:Thesis, arg:SubClaim, arg:Evidence, arg:QuantifiedEvidence,
+                    arg:Citation, arg:Counter, arg:Rebuttal, arg:Structural
+                ))
+            }
+        "#;
+
+        if let Ok(result) = self.graph.sparql_select(node_query) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
+                let bindings = json["results"].as_array()
+                    .or_else(|| json["results"]["bindings"].as_array());
+                if let Some(bindings) = bindings {
+                    for binding in bindings {
+                        let raw_iri = binding["node"].as_str()
+                            .or_else(|| binding["node"]["value"].as_str())
+                            .unwrap_or("");
+                        let iri = raw_iri.trim_start_matches('<').trim_end_matches('>')
+                            .replace("http://brain-in-the-fish.dev/arg/", "arg:");
+                        let raw_type = binding["type"].as_str()
+                            .or_else(|| binding["type"]["value"].as_str())
+                            .unwrap_or("");
+                        let type_iri = raw_type.trim_start_matches('<').trim_end_matches('>');
+                        let raw_text = binding["text"].as_str()
+                            .or_else(|| binding["text"]["value"].as_str())
+                            .unwrap_or("");
+                        let text = raw_text.trim_start_matches('"').trim_end_matches('"').to_string();
+
+                        let node_type = match type_iri {
+                            t if t.contains("Thesis") => NodeType::Thesis,
+                            t if t.contains("QuantifiedEvidence") => NodeType::QuantifiedEvidence,
+                            t if t.contains("Citation") => NodeType::Citation,
+                            t if t.contains("Evidence") => NodeType::Evidence,
+                            t if t.contains("Counter") => NodeType::Counter,
+                            t if t.contains("Rebuttal") => NodeType::Rebuttal,
+                            t if t.contains("Structural") => NodeType::Structural,
+                            t if t.contains("SubClaim") => NodeType::SubClaim,
+                            _ => continue,
+                        };
+
+                        nodes.push(ArgumentNode {
+                            iri,
+                            node_type,
+                            text,
+                            llm_score: None,
+                            llm_justification: None,
+                            source_text: None,
+                            source_span: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Query edges
+        let edge_query = r#"
+            PREFIX arg: <http://brain-in-the-fish.dev/arg/>
+            SELECT ?from ?prop ?to WHERE {
+                ?from ?prop ?to .
+                FILTER(?prop IN (arg:supports, arg:warrants, arg:counters, arg:rebuts, arg:contains, arg:references))
+            }
+        "#;
+
+        if let Ok(result) = self.graph.sparql_select(edge_query) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
+                let bindings = json["results"].as_array()
+                    .or_else(|| json["results"]["bindings"].as_array());
+                if let Some(bindings) = bindings {
+                    for binding in bindings {
+                        let from = binding["from"].as_str()
+                            .or_else(|| binding["from"]["value"].as_str())
+                            .unwrap_or("")
+                            .trim_start_matches('<').trim_end_matches('>')
+                            .replace("http://brain-in-the-fish.dev/arg/", "arg:");
+                        let prop = binding["prop"].as_str()
+                            .or_else(|| binding["prop"]["value"].as_str())
+                            .unwrap_or("")
+                            .trim_start_matches('<').trim_end_matches('>');
+                        let to = binding["to"].as_str()
+                            .or_else(|| binding["to"]["value"].as_str())
+                            .unwrap_or("")
+                            .trim_start_matches('<').trim_end_matches('>')
+                            .replace("http://brain-in-the-fish.dev/arg/", "arg:");
+
+                        let edge_type = match prop {
+                            p if p.contains("supports") => EdgeType::Supports,
+                            p if p.contains("warrants") => EdgeType::Warrants,
+                            p if p.contains("counters") => EdgeType::Counters,
+                            p if p.contains("rebuts") => EdgeType::Rebuts,
+                            p if p.contains("contains") => EdgeType::Contains,
+                            p if p.contains("references") => EdgeType::References,
+                            _ => continue,
+                        };
+
+                        edges.push(ArgumentEdge { from, edge_type, to });
+                    }
+                }
+            }
+        }
+
+        ArgumentGraph {
+            doc_id: doc_id.to_string(),
+            nodes,
+            edges,
+        }
     }
 }
 
@@ -561,6 +692,12 @@ impl EvalServer {
 
         match crate::scoring::record_score(&self.graph, &score) {
             Ok(triples) => {
+                // Store LLM score for gate comparison in eds_score
+                {
+                    let mut session = self.session.lock().unwrap();
+                    session.llm_scores.insert(input.criterion_id.clone(), (input.score, input.max_score));
+                }
+
                 // Auto-feed evidence refs into argument graph for this agent+criterion
                 let eds_nodes_added = {
                     let mut session = self.session.lock().unwrap();
@@ -1040,6 +1177,75 @@ impl EvalServer {
         }
     }
 
+    // ── EDS Load Turtle ──────────────────────────────────────────────────
+
+    #[tool(name = "eds_load_turtle", description = "Load OWL Turtle (from LLM decomposition) into the GraphStore. This is the FIRST tool to call after decomposition. Returns node count, triple count, and node type distribution.")]
+    async fn eds_load_turtle(&self, Parameters(input): Parameters<EdsLoadTurtleInput>) -> String {
+        // Load turtle into the shared GraphStore
+        let triple_count = match self.graph.load_turtle(&input.turtle, Some("http://brain-in-the-fish.dev/arg/")) {
+            Ok(count) => count,
+            Err(e) => return format!(r#"{{"error":"Failed to load turtle: {}"}}"#, e),
+        };
+
+        // Count nodes by type via SPARQL
+        let type_query = r#"
+            PREFIX arg: <http://brain-in-the-fish.dev/arg/>
+            SELECT ?type (COUNT(DISTINCT ?node) AS ?count) WHERE {
+                ?node a ?type .
+                FILTER(?type IN (
+                    arg:Thesis, arg:SubClaim, arg:Evidence, arg:QuantifiedEvidence,
+                    arg:Citation, arg:Counter, arg:Rebuttal, arg:Structural
+                ))
+            }
+            GROUP BY ?type
+        "#;
+
+        let mut type_distribution = serde_json::Map::new();
+        let mut total_nodes: usize = 0;
+
+        if let Ok(result) = self.graph.sparql_select(type_query) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
+                let bindings = json["results"].as_array()
+                    .or_else(|| json["results"]["bindings"].as_array());
+                if let Some(bindings) = bindings {
+                    for binding in bindings {
+                        let raw_type = binding["type"].as_str()
+                            .or_else(|| binding["type"]["value"].as_str())
+                            .unwrap_or("");
+                        let type_name = raw_type
+                            .trim_start_matches('<').trim_end_matches('>')
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(raw_type);
+                        let count_str = binding["count"].as_str()
+                            .or_else(|| binding["count"]["value"].as_str())
+                            .unwrap_or("0");
+                        let count: usize = count_str.parse().unwrap_or(0);
+                        type_distribution.insert(type_name.to_string(), serde_json::json!(count));
+                        total_nodes += count;
+                    }
+                }
+            }
+        }
+
+        // Mark turtle as loaded in session
+        {
+            let mut session = self.session.lock().unwrap();
+            session.turtle_loaded = true;
+        }
+
+        let total_triples = self.graph.triple_count();
+
+        serde_json::json!({
+            "ok": true,
+            "triples_loaded": triple_count,
+            "total_triples": total_triples,
+            "node_count": total_nodes,
+            "type_distribution": type_distribution,
+        })
+        .to_string()
+    }
+
     // ── EDS Feed ───────────────────────────────────────────────────────────
 
     #[tool(name = "eds_feed", description = "Push structured evidence into the argument graph for a specific agent and criterion. Returns updated node count.")]
@@ -1102,82 +1308,173 @@ impl EvalServer {
 
     // ── EDS Score ─────────────────────────────────────────────────────────
 
-    #[tool(name = "eds_score", description = "Get argument-graph scores for an agent. Builds the graph from stored evidence, runs structural_score + gate::check. Returns score, verdict, and evidence audit.")]
+    #[tool(name = "eds_score", description = "Run SPARQL rules on the GraphStore, compute structural score from topology (no LLM node scores), run gate::check against recorded LLM scores. Returns structural_score, mined_facts, verdict, and audit_trail.")]
     async fn eds_score(&self, Parameters(input): Parameters<EdsScoreInput>) -> String {
-        let session = self.session.lock().unwrap();
+        let (turtle_loaded, llm_scores, gate_weights, framework, has_agent) = {
+            let session = self.session.lock().unwrap();
+            let has_agent = session.agents.iter().any(|a| a.id == input.agent_id);
+            let fw = session.framework.clone();
+            (session.turtle_loaded, session.llm_scores.clone(), session.gate_weights.clone(), fw, has_agent)
+        };
 
         // Validate agent exists
-        if !session.agents.iter().any(|a| a.id == input.agent_id) {
+        if !has_agent {
             return format!(
                 r#"{{"error":"No agent with id '{}'"}}"#,
                 input.agent_id
             );
         }
 
-        let framework = match &session.framework {
+        let framework = match framework {
             Some(f) => f,
             None => return r#"{"error":"No framework loaded"}"#.to_string(),
         };
 
-        let criteria: Vec<_> = if let Some(ref cid) = input.criterion_id {
-            framework.criteria.iter().filter(|c| c.id == *cid).collect()
+        // --- Step 1: Build argument graph from the real GraphStore ---
+        let graph = if turtle_loaded {
+            // Build from GraphStore via SPARQL queries
+            self.build_graph_from_store(&input.agent_id)
         } else {
-            framework.criteria.iter().collect()
+            // Fall back to session evidence
+            let session = self.session.lock().unwrap();
+            let criteria: Vec<_> = if let Some(ref cid) = input.criterion_id {
+                framework.criteria.iter().filter(|c| c.id == *cid).collect()
+            } else {
+                framework.criteria.iter().collect()
+            };
+            let mut all_nodes = Vec::new();
+            let mut all_edges = Vec::new();
+            for criterion in &criteria {
+                let g = session.build_graph(&input.agent_id, &criterion.id);
+                all_nodes.extend(g.nodes);
+                all_edges.extend(g.edges);
+            }
+            ArgumentGraph {
+                doc_id: input.agent_id.clone(),
+                nodes: all_nodes,
+                edges: all_edges,
+            }
         };
 
-        let mut score_details: Vec<serde_json::Value> = Vec::new();
-        let mut low_confidence: Vec<String> = Vec::new();
-
-        for criterion in &criteria {
-            let graph = session.build_graph(&input.agent_id, &criterion.id);
-            let metrics = crate::argument_graph::compute_metrics(&graph);
-            let struct_score = crate::argument_graph::structural_score(&metrics);
-
-            // Run gate check against the structural score as a self-consistency check
-            // Use structural score * max as the "LLM score" for gate comparison
-            let verdict = gate::check(
-                struct_score * criterion.max_score,
-                criterion.max_score,
-                &graph,
-                &session.gate_weights,
-            );
-
-            let evidence_audit: Vec<serde_json::Value> = graph.nodes.iter().map(|n| {
-                serde_json::json!({
-                    "iri": n.iri,
-                    "type": format!("{:?}", n.node_type),
-                    "text": n.source_text.as_deref().unwrap_or(&n.text),
-                    "llm_score": n.llm_score,
-                    "justification": n.llm_justification,
-                })
-            }).collect();
-
-            let is_low_confidence = metrics.evidence_count < 2;
-            if is_low_confidence {
-                low_confidence.push(criterion.id.clone());
+        // --- Step 2: If from session evidence, load into GraphStore ---
+        if !turtle_loaded && !graph.nodes.is_empty() {
+            let ttl = crate::argument_graph::to_turtle(&graph);
+            if let Err(e) = self.graph.load_turtle(&ttl, Some("http://brain-in-the-fish.dev/arg/")) {
+                return format!(r#"{{"error":"Failed to load argument graph: {}"}}"#, e);
             }
-
-            score_details.push(serde_json::json!({
-                "criterion_id": criterion.id,
-                "structural_score": struct_score,
-                "scaled_score": struct_score * criterion.max_score,
-                "max_score": criterion.max_score,
-                "verdict": verdict.to_string(),
-                "node_count": metrics.node_count,
-                "evidence_count": metrics.evidence_count,
-                "claim_count": metrics.claim_count,
-                "connectivity": metrics.connectivity,
-                "max_depth": metrics.max_depth,
-                "evidence_audit": evidence_audit,
-            }));
         }
+
+        // --- Step 3: Run SPARQL INSERT rules from rules.rs ---
+        let rule_set = rules::default_rules();
+        let mined_facts = match rules::mine_facts(&self.graph, &rule_set) {
+            Ok(facts) => facts,
+            Err(e) => {
+                return format!(r#"{{"error":"Rule mining failed: {}"}}"#, e);
+            }
+        };
+
+        // --- Step 4: Compute structural score from topology ONLY ---
+        let count_type = |class: &str| -> usize {
+            let query = format!(
+                "PREFIX arg: <http://brain-in-the-fish.dev/arg/> SELECT (COUNT(DISTINCT ?x) AS ?c) WHERE {{ ?x a arg:{} }}",
+                class
+            );
+            match self.graph.sparql_select(&query) {
+                Ok(result) => {
+                    let v: serde_json::Value = serde_json::from_str(&result).unwrap_or_default();
+                    v["results"].as_array()
+                        .and_then(|arr| arr.first())
+                        .and_then(|row| row["c"].as_str())
+                        .and_then(|s| s.trim_matches('"').parse::<usize>().ok())
+                        .or_else(|| {
+                            v["results"]["bindings"].as_array()
+                                .and_then(|arr| arr.first())
+                                .and_then(|row| row["c"]["value"].as_str())
+                                .and_then(|s| s.parse::<usize>().ok())
+                        })
+                        .unwrap_or(0)
+                }
+                Err(_) => 0,
+            }
+        };
+
+        let thesis_count = count_type("Thesis");
+        let subclaim_count = count_type("SubClaim");
+        let evidence_count = count_type("Evidence") + count_type("QuantifiedEvidence") + count_type("Citation");
+        let quantified_count = count_type("QuantifiedEvidence");
+        let citation_count = count_type("Citation");
+        let counter_count = count_type("Counter");
+        let rebuttal_count = count_type("Rebuttal");
+        let claim_count = thesis_count + subclaim_count;
+        let node_count = claim_count + evidence_count + counter_count + rebuttal_count + count_type("Structural");
+
+        let evidence_ratio = if node_count > 0 { evidence_count as f64 / node_count as f64 } else { 0.0 };
+        let quantified_ratio = if evidence_count > 0 { quantified_count as f64 / evidence_count as f64 } else { 0.0 };
+        let citation_ratio = if evidence_count > 0 { citation_count as f64 / evidence_count as f64 } else { 0.0 };
+        let counter_ratio = if node_count > 0 { counter_count as f64 / node_count as f64 } else { 0.0 };
+        let has_counter = counter_count > 0;
+        let has_rebuttal = rebuttal_count > 0;
+
+        // Use the in-memory argument graph for structural_score
+        let metrics = crate::argument_graph::compute_metrics(&graph);
+        let structural_score = crate::argument_graph::structural_score(&metrics);
+
+        // --- Step 5: Run gate::check comparing structural score against LLM scores ---
+        let (llm_score, max_score) = if let Some(ref cid) = input.criterion_id {
+            llm_scores.get(cid).copied().unwrap_or((structural_score * 10.0, 10.0))
+        } else if llm_scores.is_empty() {
+            (structural_score * 10.0, 10.0)
+        } else {
+            let total_score: f64 = llm_scores.values().map(|(s, _)| s).sum();
+            let total_max: f64 = llm_scores.values().map(|(_, m)| m).sum();
+            (total_score, total_max)
+        };
+
+        let verdict = gate::check(llm_score, max_score, &graph, &gate_weights);
+
+        // --- Step 6: Build audit trail ---
+        let audit_trail: Vec<serde_json::Value> = graph.nodes.iter().map(|n| {
+            serde_json::json!({
+                "iri": n.iri,
+                "type": format!("{:?}", n.node_type),
+                "text": n.source_text.as_deref().unwrap_or(&n.text),
+            })
+        }).collect();
 
         serde_json::json!({
             "ok": true,
             "agent_id": input.agent_id,
-            "criteria_scored": score_details.len(),
-            "scores": score_details,
-            "low_confidence_criteria": low_confidence,
+            "structural_score": structural_score,
+            "topology": {
+                "node_count": node_count,
+                "evidence_count": evidence_count,
+                "claim_count": claim_count,
+                "counter_count": counter_count,
+                "rebuttal_count": rebuttal_count,
+                "evidence_ratio": evidence_ratio,
+                "quantified_ratio": quantified_ratio,
+                "citation_ratio": citation_ratio,
+                "counter_ratio": counter_ratio,
+                "has_counter": has_counter,
+                "has_rebuttal": has_rebuttal,
+                "connectivity": metrics.connectivity,
+                "max_depth": metrics.max_depth,
+            },
+            "mined_facts": {
+                "strong_claims": mined_facts.strong_claims,
+                "weak_claims": mined_facts.weak_claims,
+                "unsupported_claims": mined_facts.unsupported_claims,
+                "supported_claims": mined_facts.supported_claims,
+                "sophisticated_arguments": mined_facts.sophisticated_arguments,
+                "evidenced_thesis": mined_facts.evidenced_thesis,
+                "quantified_support": mined_facts.quantified_support,
+                "citation_support": mined_facts.citation_support,
+                "deep_chains": mined_facts.deep_chains,
+            },
+            "llm_score": llm_score,
+            "max_score": max_score,
+            "verdict": verdict.to_string(),
+            "audit_trail": audit_trail,
         })
         .to_string()
     }
@@ -1511,6 +1808,7 @@ mod tests {
         assert!(names.contains(&"eval_whatif".to_string()));
         assert!(names.contains(&"eval_report".to_string()));
         assert!(names.contains(&"eval_predict".to_string()));
+        assert!(names.contains(&"eds_load_turtle".to_string()));
         assert!(names.contains(&"eds_feed".to_string()));
         assert!(names.contains(&"eds_score".to_string()));
         assert!(names.contains(&"eds_consensus".to_string()));

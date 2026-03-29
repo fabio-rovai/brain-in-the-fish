@@ -1241,6 +1241,151 @@ pub fn nhs_clinical_governance_framework() -> EvaluationFramework {
 }
 
 /// Select the appropriate built-in framework based on intent keywords.
+/// Infer the best evaluation framework from the decomposition's node type distribution.
+///
+/// The ontology tells us what kind of document this is:
+/// - High QuantifiedEvidence + Citations → technical/research document
+/// - High narrative Evidence, low Citations → essay/creative writing
+/// - High SubClaim + Counter → argumentative/policy document
+/// - Low total nodes → minimal content
+pub fn framework_from_topology(type_counts: &std::collections::HashMap<String, usize>) -> EvaluationFramework {
+    let get = |keys: &[&str]| -> usize {
+        keys.iter()
+            .map(|k| {
+                type_counts.iter()
+                    .filter(|(tk, _)| tk.to_lowercase() == k.to_lowercase())
+                    .map(|(_, v)| *v)
+                    .sum::<usize>()
+            })
+            .sum()
+    };
+
+    let total: usize = type_counts.values().sum();
+    let quantified = get(&["QuantifiedEvidence", "quantified_evidence"]);
+    let citations = get(&["Citation", "citation"]);
+    let evidence = get(&["Evidence", "evidence"]) + quantified + citations;
+    let claims = get(&["Thesis", "thesis", "SubClaim", "sub_claim", "claim"]);
+    let counters = get(&["Counter", "counter", "Rebuttal", "rebuttal"]);
+
+    let quant_ratio = quantified as f64 / total.max(1) as f64;
+    let cite_ratio = citations as f64 / total.max(1) as f64;
+    let counter_ratio = counters as f64 / claims.max(1) as f64;
+    let ev_ratio = evidence as f64 / claims.max(1) as f64;
+
+    // Decision tree based on topology
+    if quant_ratio > 0.2 && cite_ratio > 0.05 {
+        // Heavy quantified evidence + citations → technical documentation
+        technical_documentation_framework()
+    } else if counter_ratio > 0.15 && claims > 5 {
+        // Many counter-arguments relative to claims → policy/argumentative
+        policy_greenbook_framework()
+    } else if cite_ratio > 0.1 {
+        // Citation-heavy → research/clinical
+        nhs_clinical_governance_framework()
+    } else if ev_ratio < 0.5 && total < 10 {
+        // Little evidence, few nodes → weak/minimal document
+        generic_quality_framework()
+    } else if evidence > claims && quantified == 0 && citations == 0 {
+        // Qualitative evidence, no citations → narrative/essay
+        academic_essay_framework()
+    } else {
+        generic_quality_framework()
+    }
+}
+
+/// Technical documentation framework — for READMEs, API docs, technical reports.
+pub fn technical_documentation_framework() -> EvaluationFramework {
+    let rubric = |_: &str| -> Vec<RubricLevel> {
+        vec![
+            RubricLevel {
+                level: "Excellent".to_string(),
+                score_range: "9-10".to_string(),
+                descriptor: "Outstanding quality with comprehensive coverage and precise detail".to_string(),
+            },
+            RubricLevel {
+                level: "Good".to_string(),
+                score_range: "6-8".to_string(),
+                descriptor: "Solid documentation with clear explanations and minor gaps".to_string(),
+            },
+            RubricLevel {
+                level: "Adequate".to_string(),
+                score_range: "4-5".to_string(),
+                descriptor: "Basic documentation that covers essentials but lacks depth".to_string(),
+            },
+            RubricLevel {
+                level: "Poor".to_string(),
+                score_range: "0-3".to_string(),
+                descriptor: "Missing critical information or fundamentally unclear".to_string(),
+            },
+        ]
+    };
+
+    let criteria = vec![
+        EvaluationCriterion {
+            id: "clarity_structure".to_string(),
+            title: "Clarity & Structure".to_string(),
+            description: Some("Logical organisation, clear headings, progressive disclosure of complexity".to_string()),
+            max_score: 10.0,
+            weight: 0.20,
+            rubric_levels: rubric("clarity"),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "evidence_benchmarks".to_string(),
+            title: "Evidence & Benchmarks".to_string(),
+            description: Some("Quantified claims backed by reproducible benchmarks, specific numbers, and test results".to_string()),
+            max_score: 10.0,
+            weight: 0.25,
+            rubric_levels: rubric("evidence"),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "technical_depth".to_string(),
+            title: "Technical Depth".to_string(),
+            description: Some("Demonstrates deep understanding of the domain, architecture decisions justified".to_string()),
+            max_score: 10.0,
+            weight: 0.20,
+            rubric_levels: rubric("technical"),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "completeness".to_string(),
+            title: "Completeness".to_string(),
+            description: Some("All necessary sections present: installation, usage, API, examples, limitations".to_string()),
+            max_score: 10.0,
+            weight: 0.15,
+            rubric_levels: rubric("completeness"),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "examples_usage".to_string(),
+            title: "Examples & Usage".to_string(),
+            description: Some("Working code examples, clear usage instructions, real output shown".to_string()),
+            max_score: 10.0,
+            weight: 0.10,
+            rubric_levels: rubric("examples"),
+            sub_criteria: vec![],
+        },
+        EvaluationCriterion {
+            id: "honesty_limitations".to_string(),
+            title: "Honesty & Limitations".to_string(),
+            description: Some("Acknowledges what doesn't work, presents honest benchmarks, discusses limitations".to_string()),
+            max_score: 10.0,
+            weight: 0.10,
+            rubric_levels: rubric("honesty"),
+            sub_criteria: vec![],
+        },
+    ];
+
+    EvaluationFramework {
+        id: "technical_documentation".to_string(),
+        name: "Technical Documentation Framework".to_string(),
+        total_weight: 1.0,
+        pass_mark: Some(5.0),
+        criteria,
+    }
+}
+
 pub fn framework_for_intent(intent: &str) -> EvaluationFramework {
     let lower = intent.to_lowercase();
     if lower.contains("green book") || lower.contains("impact assessment") {

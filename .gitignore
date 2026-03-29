@@ -8,3 +8,7 @@ data/*.parquet
 data/*.tsv
 data/*.csv
 .worktrees/
+*.db
+evaluation-*
+orchestration.json
+verification-*

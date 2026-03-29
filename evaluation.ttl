@@ -1,0 +1,9 @@
+@prefix eval: <http://brain-in-the-fish.dev/eval/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+eval:74dcda2f-a330-4698-aeed-72e1eae420e5 a eval:EvaluationSession ;
+    eval:document "" ;
+    eval:framework "Generic Quality Framework" ;
+    eval:createdAt "2026-03-29T14:31:36.081411+00:00"^^xsd:dateTime ;
+    eval:status "no-scores" .
+

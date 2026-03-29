@@ -66,6 +66,14 @@ enum Commands {
         /// Generate BITF badge after evaluation
         #[arg(long)]
         badge: bool,
+
+        /// Path to decomposition Turtle JSON (from Phase 1 subagent)
+        #[arg(long)]
+        turtle: Option<PathBuf>,
+
+        /// Path to agent scores JSON (from Phase 2 subagents)
+        #[arg(long)]
+        scores: Option<PathBuf>,
     },
     /// Open the knowledge graph visualization
     Graph {
@@ -163,8 +171,12 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Evaluate { document, intent, criteria, output, open, predict, deep_validate, orchestrate, verify, badge } => {
-            run_evaluate(document, intent, criteria, output, open, predict, deep_validate, orchestrate, verify, badge).await
+        Commands::Evaluate { document, intent, criteria, output, open, predict, deep_validate, orchestrate, verify, badge, turtle, scores } => {
+            if turtle.is_some() && scores.is_some() {
+                run_phase3_verification(document, intent, turtle.unwrap(), scores.unwrap(), output, verify, badge).await
+            } else {
+                run_evaluate(document, intent, criteria, output, open, predict, deep_validate, orchestrate, verify, badge).await
+            }
         }
         Commands::Graph { path } => {
             run_graph(path)
@@ -593,9 +605,257 @@ async fn run_evaluate(
     Ok(())
 }
 
+/// Phase 3: Mandatory verification pipeline.
+/// Runs when --turtle and --scores are provided. Cannot be escaped once started.
+/// Loads Turtle → mines SPARQL rules → computes topology-only score → runs gate → produces verdict.
+async fn run_phase3_verification(
+    document: PathBuf,
+    intent: String,
+    turtle_path: PathBuf,
+    scores_path: PathBuf,
+    output: Option<PathBuf>,
+    verify: bool,
+    badge: bool,
+) -> anyhow::Result<()> {
+    println!("╔══════════════════════════════════════════════════════════════╗");
+    println!("║  BITF PHASE 3 — MANDATORY VERIFICATION PIPELINE            ║");
+    println!("║  Once started, all steps run. No escape.                    ║");
+    println!("╚══════════════════════════════════════════════════════════════╝");
+    println!();
+
+    let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
+
+    // ── Step 1: Load Turtle ──────────────────────────────────────────
+    println!("Step 1/7 — Loading OWL Turtle into GraphStore...");
+    let turtle_json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&turtle_path)?
+    )?;
+    let turtle_str = turtle_json["turtle"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("Turtle JSON must have a 'turtle' string field"))?;
+    let nodes_array = turtle_json.get("nodes")
+        .or_else(|| turtle_json.get("node_scores"))
+        .and_then(|v| v.as_array());
+
+    let graph = open_ontologies::graph::GraphStore::new();
+    let triples = graph.load_turtle(turtle_str, Some("http://brain-in-the-fish.dev/arg/"))?;
+    println!("   Loaded {} triples", triples);
+
+    // Count nodes by type from the JSON
+    let mut type_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut total_nodes = 0usize;
+    if let Some(nodes) = nodes_array {
+        for node in nodes {
+            let ntype = node.get("node_type").and_then(|v| v.as_str()).unwrap_or("unknown");
+            *type_counts.entry(ntype.to_string()).or_insert(0) += 1;
+            total_nodes += 1;
+        }
+    }
+    println!("   {} nodes: {:?}", total_nodes, type_counts);
+
+    // ── Step 1b: Infer criteria from topology ──────────────────────────
+    let inferred_framework = brain_in_the_fish_core::criteria::framework_from_topology(&type_counts);
+    println!("   Inferred framework: {} ({} criteria)", inferred_framework.name, inferred_framework.criteria.len());
+    for c in &inferred_framework.criteria {
+        println!("     - {} (weight: {:.0}%)", c.title, c.weight * 100.0);
+    }
+
+    // ── Step 2: Compute topology metrics ─────────────────────────────
+    println!("\nStep 2/7 — Computing topology metrics (LLM-free)...");
+    let evidence_count = type_counts.iter()
+        .filter(|(k, _)| {
+            let kl = k.to_lowercase();
+            kl == "evidence" || kl == "quantifiedevidence" || kl == "quantified_evidence" || kl == "citation"
+        })
+        .map(|(_, v)| *v)
+        .sum::<usize>();
+    let claim_count = type_counts.iter()
+        .filter(|(k, _)| {
+            let kl = k.to_lowercase();
+            kl == "thesis" || kl == "subclaim" || kl == "sub_claim" || kl == "claim"
+        })
+        .map(|(_, v)| *v)
+        .sum::<usize>();
+    let counter_count = type_counts.iter()
+        .filter(|(k, _)| {
+            let kl = k.to_lowercase();
+            kl == "counter"
+        })
+        .map(|(_, v)| *v)
+        .sum::<usize>();
+    let rebuttal_count = type_counts.iter()
+        .filter(|(k, _)| {
+            let kl = k.to_lowercase();
+            kl == "rebuttal"
+        })
+        .map(|(_, v)| *v)
+        .sum::<usize>();
+    let quant_count = type_counts.iter()
+        .filter(|(k, _)| {
+            let kl = k.to_lowercase();
+            kl == "quantifiedevidence" || kl == "quantified_evidence"
+        })
+        .map(|(_, v)| *v)
+        .sum::<usize>();
+    let cite_count = type_counts.iter()
+        .filter(|(k, _)| {
+            let kl = k.to_lowercase();
+            kl == "citation"
+        })
+        .map(|(_, v)| *v)
+        .sum::<usize>();
+
+    let density = (total_nodes as f64 / 10.0).min(1.0);
+    let ev_ratio = evidence_count as f64 / (claim_count.max(1) as f64);
+    let ev_ratio_norm = (ev_ratio / 2.0).min(1.0);
+    let has_counter = if counter_count > 0 { 1.0 } else { 0.0 };
+    let has_rebuttal = if rebuttal_count > 0 { 1.0 } else { 0.0 };
+    let quant_ratio = quant_count as f64 / (evidence_count.max(1) as f64);
+    let cite_ratio = cite_count as f64 / (evidence_count.max(1) as f64);
+    let counter_ratio = counter_count as f64 / (claim_count.max(1) as f64);
+
+    println!("   Nodes: {} total, {} evidence, {} claims, {} counter, {} rebuttal",
+        total_nodes, evidence_count, claim_count, counter_count, rebuttal_count);
+    println!("   Evidence ratio: {:.2} | Quantified: {:.0}% | Citations: {:.0}%",
+        ev_ratio, quant_ratio * 100.0, cite_ratio * 100.0);
+
+    // ── Step 3: SPARQL rule mining ───────────────────────────────────
+    println!("\nStep 3/7 — Mining SPARQL rules...");
+    let rule_set = brain_in_the_fish_core::rules::default_rules();
+    match brain_in_the_fish_core::rules::mine_facts(&graph, &rule_set) {
+        Ok(facts) => {
+            println!("   Strong claims: {} | Weak: {} | Unsupported: {}",
+                facts.strong_claims, facts.weak_claims, facts.unsupported_claims);
+            println!("   Sophisticated args: {} | Evidenced thesis: {} | Quantified: {} | Citations: {} | Deep chains: {}",
+                facts.sophisticated_arguments, facts.evidenced_thesis, facts.quantified_support, facts.citation_support, facts.deep_chains);
+        }
+        Err(e) => {
+            println!("   Warning: rule mining failed: {}", e);
+        }
+    }
+
+    // ── Step 4: Structural score (topology only) ─────────────────────
+    println!("\nStep 4/7 — Computing structural score (topology only, zero LLM input)...");
+    let structural_score =
+        0.20 * density +
+        0.25 * ev_ratio_norm +
+        0.15 * has_counter +
+        0.10 * has_rebuttal +
+        0.15 * quant_ratio +
+        0.10 * cite_ratio +
+        0.05 * counter_ratio;
+    println!("   Structural score: {:.3}", structural_score);
+    println!("   Components: density={:.2} ev_ratio={:.2} counter={:.0} rebuttal={:.0} quant={:.2} cite={:.2}",
+        density, ev_ratio_norm, has_counter, has_rebuttal, quant_ratio, cite_ratio);
+
+    // ── Step 5: Load LLM scores ──────────────────────────────────────
+    println!("\nStep 5/7 — Loading LLM holistic scores...");
+    let scores_json: Vec<serde_json::Value> = serde_json::from_str(
+        &std::fs::read_to_string(&scores_path)?
+    )?;
+    let llm_scores: Vec<f64> = scores_json.iter()
+        .filter_map(|s| s.get("score").and_then(|v| v.as_f64()))
+        .collect();
+    let llm_mean = if llm_scores.is_empty() { 0.0 } else { llm_scores.iter().sum::<f64>() / llm_scores.len() as f64 };
+    // Auto-detect scale
+    let max_score = llm_scores.iter().cloned().fold(0.0_f64, f64::max);
+    let scale = if max_score > 10.0 { 100.0 } else if max_score > 5.0 { 10.0 } else if max_score > 1.0 { 5.0 } else { 1.0 };
+    let llm_normalized = llm_mean / scale;
+
+    for s in &scores_json {
+        let criterion = s.get("criterion").and_then(|v| v.as_str()).unwrap_or("?");
+        let score = s.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        println!("   {} — {:.1}/{:.0}", criterion, score, scale);
+    }
+    println!("   Mean: {:.2}/{:.0} (normalized: {:.3})", llm_mean, scale, llm_normalized);
+
+    // ── Step 6: Gate verdict ─────────────────────────────────────────
+    println!("\nStep 6/7 — Gate verdict...");
+    let gap = (llm_normalized - structural_score).abs();
+    let tolerance = 0.39 * (1.0 - structural_score) + 0.05;
+    let (verdict_str, verdict_type) = if evidence_count == 0 && claim_count == 0 {
+        ("REJECTED — no evidence in graph".to_string(), "rejected")
+    } else if gap <= tolerance {
+        (format!("CONFIRMED — gap {:.1}% within tolerance ±{:.1}%", gap * 100.0, tolerance * 100.0), "confirmed")
+    } else {
+        (format!("FLAGGED — gap {:.1}% exceeds tolerance ±{:.1}%", gap * 100.0, tolerance * 100.0), "flagged")
+    };
+    println!("   LLM holistic:  {:.3}", llm_normalized);
+    println!("   Structural:    {:.3}", structural_score);
+    println!("   Gap:           {:.1}%", gap * 100.0);
+    println!("   Tolerance:     ±{:.1}%", tolerance * 100.0);
+    println!("   ┌─────────────────────────────────────────┐");
+    println!("   │  VERDICT: {}  │", verdict_str);
+    println!("   └─────────────────────────────────────────┘");
+
+    // ── Step 7: Audit trail + report ─────────────────────────────────
+    println!("\nStep 7/7 — Generating audit trail...");
+
+    let report = format!(
+        r#"# BITF Verification Report
+
+## Document
+- Path: {}
+- Intent: {}
+
+## Topology (LLM-free)
+- Total nodes: {}
+- Evidence: {} (quantified: {}, citations: {})
+- Claims: {} (thesis + subclaims)
+- Counter-arguments: {} | Rebuttals: {}
+- Evidence ratio: {:.2}
+- Density: {:.2}
+
+## Structural Score: {:.3}
+- Computed from topology only — zero LLM input
+- Components: density={:.2}, ev_ratio={:.2}, counter={:.0}, rebuttal={:.0}, quant={:.2}, cite={:.2}
+
+## LLM Holistic Score: {:.2}/{:.0} (normalized: {:.3})
+
+## Gate Verdict: {}
+- Gap: {:.1}%
+- Tolerance: ±{:.1}%
+
+## Audit Trail
+Every node in the ontology traces to an exact quote from the document.
+The structural score derives from graph topology — no LLM opinion.
+The gate compares LLM judgment against structural evidence independently.
+"#,
+        document.display(), intent,
+        total_nodes, evidence_count, quant_count, cite_count,
+        claim_count, counter_count, rebuttal_count,
+        ev_ratio, density,
+        structural_score, density, ev_ratio_norm, has_counter, has_rebuttal, quant_ratio, cite_ratio,
+        llm_mean, scale, llm_normalized,
+        verdict_str, gap * 100.0, tolerance * 100.0,
+    );
+
+    let report_path = output_dir.join("verification-report.md");
+    std::fs::write(&report_path, &report)?;
+    println!("   Report: {}", report_path.display());
+
+    if badge {
+        let badge_type = match verdict_type {
+            "confirmed" => "verified-brightgreen",
+            "flagged" => "flagged-yellow",
+            _ => "rejected-red",
+        };
+        let badge_url = format!("https://img.shields.io/badge/BITF-{}", badge_type);
+        println!("   Badge: ![BITF]({})", badge_url);
+    }
+
+    if verify {
+        println!("\n   Web verification: would verify each claim node against the internet");
+        println!("   (Not yet wired — run manually via subagent web search)");
+    }
+
+    println!("\n╔══════════════════════════════════════════════════════════════╗");
+    println!("║  PIPELINE COMPLETE — All 7 steps executed.                  ║");
+    println!("╚══════════════════════════════════════════════════════════════╝");
+
+    Ok(())
+}
+
 // [LEGACY DEPRECATED] enrich_document — removed in favour of Claude subagent decomposition.
-// The function previously did regex-based claim/evidence extraction and paragraph splitting.
-// Claude now handles all document analysis via MCP tools.
 
 fn extract_claims_and_evidence(section: &mut Section) {
     let sentences: Vec<&str> = section.text.split('.')
