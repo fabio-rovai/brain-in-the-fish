@@ -12,6 +12,7 @@ pub mod llm;
 pub mod research;
 pub mod orchestrator;
 pub mod server;
+pub mod firewall;
 pub mod gate;
 pub mod rules;
 pub mod memory;
