@@ -11,7 +11,7 @@ use brain_in_the_fish_core::alignment;
 use brain_in_the_fish_core::gate;
 use brain_in_the_fish_core::argument_graph;
 use brain_in_the_fish_core::memory;
-use brain_in_the_fish_core::semantic;
+// [LEGACY REMOVED] use brain_in_the_fish_core::semantic; — not used in new pipeline
 use brain_in_the_fish_core::validate;
 use brain_in_the_fish_core::predict;
 use brain_in_the_fish_core::benchmark;
@@ -291,100 +291,21 @@ async fn run_evaluate(
     // 1. Ingest document
     println!("1. Ingesting document: {}", document.display());
     let graph = Arc::new(open_ontologies::graph::GraphStore::new());
-    let (mut doc, _raw_sections) = ingest::ingest_pdf(&document, &intent)?;
+    let (doc, _raw_sections) = ingest::ingest_pdf(&document, &intent)?;
 
-    // 2. Enrich: regex claim/evidence extraction + paragraph subsections
-    println!("2. Enriching document (deterministic)...");
-    enrich_document(&mut doc);
-
-    // 2.5 Hybrid extraction
-    println!("   Running hybrid extraction...");
-    for section in &mut doc.sections {
-        let rule_items = extract::extract_all(&section.text);
-        let (claims, evidence) = extract::to_claims_and_evidence(&rule_items);
-        // Replace regex-extracted with rule-extracted (higher quality)
-        if !claims.is_empty() || !evidence.is_empty() {
-            section.claims = claims;
-            section.evidence = evidence;
-        }
-        // Also process subsections
-        for sub in &mut section.subsections {
-            let sub_items = extract::extract_all(&sub.text);
-            let (sub_claims, sub_evidence) = extract::to_claims_and_evidence(&sub_items);
-            if !sub_claims.is_empty() || !sub_evidence.is_empty() {
-                sub.claims = sub_claims;
-                sub.evidence = sub_evidence;
-            }
-        }
-    }
+    // [LEGACY REMOVED] Step 2: deterministic enrichment + hybrid extraction
+    // Claude subagent now handles all document analysis via MCP.
+    // enrich_document(&mut doc);
+    // extract::extract_all / to_claims_and_evidence loop removed
 
     let triples = ingest::load_document_ontology(&graph, &doc)?;
     println!("   Loaded {} triples, {} sections", triples, doc.sections.len());
     onto_lineage.record(&session_id, "I", "ingest", &format!("{} sections, {} triples", doc.sections.len(), triples));
 
-    // 2.5 Run OWL-RL reasoning to infer new triples
-    println!("   Running OWL-RL reasoning...");
-    match open_ontologies::reason::Reasoner::run(&graph, "owl-rl", true) {
-        Ok(reason_result) => {
-            let reason_json: serde_json::Value = serde_json::from_str(&reason_result).unwrap_or_default();
-            let inferred = reason_json.get("inferred_triples").and_then(|v| v.as_u64()).unwrap_or(0);
-            println!("   Inferred {} new triples via OWL-RL", inferred);
-            onto_lineage.record(&session_id, "A", "reason", &format!("{} triples inferred", inferred));
-        }
-        Err(e) => {
-            println!("   Warning: reasoning failed: {}", e);
-        }
-    }
-
-    // 3. Validate document (deterministic fact-checking)
-    let prelim_framework = criteria::framework_for_intent(&intent);
-    let validation_signals = if deep_validate {
-        println!("3. Validating (deep, 15 checks)...");
-        validate::validate_deep(&doc, &prelim_framework)
-    } else {
-        println!("3. Validating (core, 8 checks)...");
-        validate::validate_core(&doc, &prelim_framework)
-    };
-    let val_triples = validate::load_signals(&graph, &validation_signals)?;
-    let warnings = validation_signals
-        .iter()
-        .filter(|s| s.severity == validate::Severity::Warning)
-        .count();
-    let errors = validation_signals
-        .iter()
-        .filter(|s| s.severity == validate::Severity::Error)
-        .count();
-    println!(
-        "   {} signals ({} warnings, {} errors), {} triples",
-        validation_signals.len(),
-        warnings,
-        errors,
-        val_triples
-    );
-    for signal in &validation_signals {
-        if signal.severity != validate::Severity::Info {
-            println!(
-                "   {}: {}",
-                if signal.severity == validate::Severity::Error {
-                    "ERROR"
-                } else {
-                    "WARN"
-                },
-                signal.title
-            );
-        }
-    }
-    onto_lineage.record(
-        &session_id,
-        "A",
-        "validate",
-        &format!(
-            "{} signals, {} warnings, {} errors",
-            validation_signals.len(),
-            warnings,
-            errors
-        ),
-    );
+    // [LEGACY REMOVED] Step 3: deterministic validation (regex-extracted evidence checking)
+    // Claude subagent now validates via MCP tools (gate, rules, web verify).
+    // validate::validate_deep / validate_core removed
+    let _ = deep_validate; // suppress unused warning
 
     // Predictions (opt-in via --predict)
     let predictions = if predict {
@@ -436,216 +357,38 @@ async fn run_evaluate(
     }
     onto_lineage.record(&session_id, "I", "guidelines", &format!("{} guidelines discovered", guidelines.len()));
 
-    // 5. Align sections to criteria (ontology alignment with 7 signals)
-    println!("5. Aligning document to criteria...");
-    let (alignments, gaps) = match alignment::align_via_ontology(&graph, &doc, &framework) {
-        Ok(result) => {
-            println!("   (ontology alignment with 7 structural signals)");
-            result
-        }
-        Err(_) => {
-            println!("   (keyword-based alignment fallback)");
-            alignment::align_sections_to_criteria(&doc, &framework)
-        }
-    };
-    let align_triples = alignment::load_alignments(&graph, &alignments)?;
-    println!("   {} alignments, {} gaps, {} triples", alignments.len(), gaps.len(), align_triples);
-    for gap in &gaps {
-        println!("   GAP: No content for '{}'", gap.criterion_title);
-    }
-    onto_lineage.record(&session_id, "A", "align", &format!("{} alignments, {} gaps", alignments.len(), gaps.len()));
+    // [LEGACY REMOVED] Step 5: deterministic alignment (regex-extracted sections to criteria)
+    // Claude subagent now handles alignment as part of document decomposition.
+    // alignment::align_via_ontology / align_sections_to_criteria removed
+    let alignments: Vec<types::AlignmentMapping> = Vec::new();
+    let gaps: Vec<types::Gap> = Vec::new();
 
     // 6. Spawn agent panel
     println!("6. Spawning evaluator panel...");
-    let mut agents = agent::spawn_panel(&intent, &framework);
+    let agents = agent::spawn_panel(&intent, &framework);
     for a in &agents {
         let agent_triples = agent::load_agent_ontology(&graph, a)?;
         println!("   {} ({}) — {} triples", a.name, a.role, agent_triples);
     }
     onto_lineage.record(&session_id, "A", "spawn", &format!("{} agents spawned", agents.len()));
 
-    // 6.5 Semantic embeddings (optional — requires models)
-    if semantic::models_available() {
-        println!("   Generating semantic embeddings...");
-        match semantic::embed_graph(&graph, &output_dir) {
-            Ok(count) => {
-                println!("   Embedded {} entities", count);
-                onto_lineage.record(&session_id, "A", "embed", &format!("{} entities embedded", count));
-            }
-            Err(e) => {
-                println!("   Embeddings skipped: {}", e);
-            }
-        }
-    } else {
-        println!("   Embeddings skipped (run 'open-ontologies init' to enable)");
-    }
+    // [LEGACY REMOVED] Step 6.5: semantic embeddings — not used in new pipeline
 
-    // 7. Structural scoring + gate verdict (deterministic — no LLM needed)
-    println!("7. Structural scoring (deterministic)...");
+    // 7. [LEGACY REMOVED] Old structural scoring loop gave every agent the same score.
+    // Claude subagent now decomposes the document and scores via MCP.
+    println!("7. Waiting for Claude subagent to decompose document...");
+    println!("   (Legacy deterministic scoring removed — connect Claude via MCP server)");
 
-    // Build argument graph from document evidence
-    let arg_graph = argument_graph::build_from_document(&doc);
-    let metrics = argument_graph::compute_metrics(&arg_graph);
-    let structural = argument_graph::structural_score(&metrics);
+    // Placeholder scores so downstream steps (moderation, report) still work
     let gate_weights = gate::GateWeights::default();
+    let round1_scores: Vec<Score> = Vec::new();
+    let arg_graph = argument_graph::build_from_document(&doc);
+    let _metrics = argument_graph::compute_metrics(&arg_graph);
 
-    println!("   Argument graph: {} nodes, {} edges, depth {}, connectivity {:.0}%",
-        metrics.node_count, metrics.edge_count, metrics.max_depth, metrics.connectivity * 100.0);
-    println!("   Structural score: {:.3}", structural);
-
-    // Generate scores per agent per criterion using structural score
-    let mut round1_scores: Vec<Score> = Vec::new();
-    for agent_item in &agents {
-        for criterion in &framework.criteria {
-            let max_score = criterion.max_score;
-            // Scale structural score to criterion range
-            let score_val = (structural * max_score).min(max_score).max(0.0);
-
-            let verdict = gate::check(score_val, max_score, &arg_graph, &gate_weights);
-            let verdict_str = format!("{}", verdict);
-
-            let score = Score {
-                agent_id: agent_item.id.clone(),
-                criterion_id: criterion.id.clone(),
-                score: score_val,
-                max_score,
-                round: 1,
-                justification: format!("Structural score {:.3} — {}", structural, verdict_str),
-                evidence_used: vec![
-                    format!("nodes={} edges={} depth={} connectivity={:.2}",
-                        metrics.node_count, metrics.edge_count, metrics.max_depth, metrics.connectivity),
-                ],
-                gaps_identified: if metrics.evidence_count == 0 {
-                    vec!["Insufficient evidence in the knowledge graph".into()]
-                } else {
-                    vec![]
-                },
-            };
-
-            println!("   {} -> {}: {:.1}/{:.0} [{}]",
-                agent_item.name, criterion.title, score_val, max_score, verdict_str);
-
-            if metrics.evidence_count == 0 {
-                println!("      LOW EVIDENCE: {}", criterion.title);
-            }
-
-            scoring::record_score(&graph, &score)?;
-            round1_scores.push(score);
-        }
-    }
-
-    onto_lineage.record(&session_id, "A", "structural_score", &format!("{} scores computed", round1_scores.len()));
-
-    // Version snapshot before debate (for drift detection after)
-    let pre_debate_turtle = match graph.serialize("turtle") {
-        Ok(t) => Some(t),
-        Err(e) => {
-            println!("   Warning: could not snapshot pre-debate graph: {}", e);
-            None
-        }
-    };
-
-    // 8. Build debate rounds from score disagreements
-    println!("8. Debate (deterministic convergence)...");
-    let mut all_rounds = vec![debate::build_debate_round(1, round1_scores.clone(), vec![], None, false)];
-    let mut current_scores = round1_scores;
-    let max_rounds = 5;
-
-    for round_num in 2..=max_rounds {
-        let disagreements = debate::find_disagreements(&current_scores, 2.0);
-        if disagreements.is_empty() {
-            println!("   No disagreements — converged at round {}", round_num - 1);
-            if let Some(last) = all_rounds.last_mut() {
-                last.converged = true;
-            }
-            break;
-        }
-
-        println!("   Round {}: {} disagreements...", round_num, disagreements.len());
-        let mut challenges = Vec::new();
-        let mut new_scores = current_scores.clone();
-
-        for disagreement in &disagreements {
-            let challenger = agents.iter().find(|a| a.id == disagreement.agent_a_id);
-            let target = agents.iter().find(|a| a.id == disagreement.agent_b_id);
-            let criterion = framework.criteria.iter().find(|c| c.id == disagreement.criterion_id);
-
-            if let (Some(challenger), Some(target), Some(criterion)) = (challenger, target, criterion) {
-                // Higher scorer challenges lower scorer
-                let (actual_challenger, actual_target) = if disagreement.agent_a_score > disagreement.agent_b_score {
-                    (challenger, target)
-                } else {
-                    (target, challenger)
-                };
-
-                // Mechanical convergence: move target 30% toward challenger
-                if let Some(target_score) = new_scores.iter_mut().find(|s|
-                    s.agent_id == actual_target.id && s.criterion_id == criterion.id
-                ) {
-                    let challenger_score_val = current_scores.iter()
-                        .find(|s| s.agent_id == actual_challenger.id && s.criterion_id == criterion.id)
-                        .map(|s| s.score)
-                        .unwrap_or(target_score.score);
-
-                    let old_score = target_score.score;
-                    let adjustment = (challenger_score_val - old_score) * 0.3;
-                    target_score.score = (old_score + adjustment).min(target_score.max_score).max(0.0);
-                    target_score.round = round_num;
-                    target_score.justification = format!(
-                        "{} [R{}: adjusted after challenge from {}]",
-                        target_score.justification, round_num, actual_challenger.name
-                    );
-
-                    println!("      {} challenges {} on '{}': {:.1} -> {:.1}",
-                        actual_challenger.name, actual_target.name,
-                        criterion.title, old_score, target_score.score);
-
-                    challenges.push(Challenge {
-                        challenger_id: actual_challenger.id.clone(),
-                        target_agent_id: actual_target.id.clone(),
-                        criterion_id: criterion.id.clone(),
-                        round: round_num,
-                        argument: format!("Score delta of {:.1} — challenging based on evidence assessment", disagreement.delta),
-                        response: Some(format!("Adjusted from {:.1} to {:.1}", old_score, target_score.score)),
-                        score_change: Some((old_score, target_score.score)),
-                    });
-                }
-            }
-        }
-
-        debate::update_trust_weights(&mut agents, &challenges);
-
-        let drift = debate::calculate_drift_velocity(&current_scores, &new_scores);
-        let converged = debate::check_convergence(drift, 0.5);
-        println!("   Drift: {:.2}, Converged: {}", drift, converged);
-
-        current_scores = new_scores;
-        all_rounds.push(debate::build_debate_round(round_num, current_scores.clone(), challenges, Some(drift), converged));
-
-        if converged {
-            println!("   Debate converged!");
-            break;
-        }
-    }
-
-    // Ontology drift detection: compare graph before and after debate
-    if let Some(ref pre_turtle) = pre_debate_turtle {
-        match graph.serialize("turtle") {
-            Ok(post_debate_turtle) => {
-                let drift_detector = open_ontologies::drift::DriftDetector::new(state_db.clone());
-                match drift_detector.detect(pre_turtle, &post_debate_turtle) {
-                    Ok(drift_result) => {
-                        let drift_json: serde_json::Value = serde_json::from_str(&drift_result).unwrap_or_default();
-                        let drift_velocity = drift_json.get("drift_velocity").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        println!("   Ontology drift: velocity={:.3}", drift_velocity);
-                        onto_lineage.record(&session_id, "D", "drift", &format!("velocity={:.3}", drift_velocity));
-                    }
-                    Err(e) => println!("   Warning: drift detection failed: {}", e),
-                }
-            }
-            Err(e) => println!("   Warning: could not snapshot post-debate graph: {}", e),
-        }
-    }
+    // [LEGACY REMOVED] Step 8: mechanical debate (identical scores = meaningless convergence)
+    // Claude subagent debate will happen via MCP tools (eds_challenge, eds_consensus).
+    let current_scores = round1_scores.clone();
+    let all_rounds = vec![debate::build_debate_round(1, round1_scores, vec![], None, true)];
 
     // 9. Moderate: trust-weighted consensus
     println!("9. Calculating consensus scores...");
@@ -709,23 +452,22 @@ async fn run_evaluate(
         }
     }
 
-    // Orchestration (opt-in via --orchestrate)
-    if orchestrate {
-        println!("   [--orchestrate] Saving orchestration tasks...");
-        let tasks = orchestrator::generate_scoring_tasks(&agents, &session.framework, &session.document, &alignments);
-        let orchestration = serde_json::json!({
-            "session_id": session.id,
-            "document": session.document.title,
-            "intent": intent,
-            "mcp_server": "brain-in-the-fish serve",
-            "tasks": tasks.len(),
-            "scoring_tasks": tasks,
-            "instructions": "Start the MCP server, then dispatch one Claude subagent per scoring task. Each subagent should call eval_record_score with their assessment.",
-        });
-        let orch_path = output_dir.join("orchestration.json");
-        std::fs::write(&orch_path, serde_json::to_string_pretty(&orchestration)?)?;
-        println!("   Orchestration tasks: {}", orch_path.display());
-    }
+    // Orchestration: always generate tasks (Claude subagent drives scoring now)
+    println!("   Generating orchestration tasks for Claude subagent...");
+    let tasks = orchestrator::generate_scoring_tasks(&agents, &session.framework, &session.document, &alignments);
+    let orchestration = serde_json::json!({
+        "session_id": session.id,
+        "document": session.document.title,
+        "intent": intent,
+        "mcp_server": "brain-in-the-fish serve",
+        "tasks": tasks.len(),
+        "scoring_tasks": tasks,
+        "instructions": "Start the MCP server, then connect Claude to complete evaluation. Claude decomposes the document, scores each criterion, and the gate/rules/verify pipeline validates the result.",
+    });
+    let orch_path = output_dir.join("orchestration.json");
+    std::fs::write(&orch_path, serde_json::to_string_pretty(&orchestration)?)?;
+    println!("   Orchestration tasks: {}", orch_path.display());
+    let _ = orchestrate; // suppress unused warning
 
     // Quality gate: enforce evaluation patterns
     println!("   Enforcing evaluation quality rules...");
@@ -760,34 +502,40 @@ async fn run_evaluate(
     let compact_lineage = onto_lineage.get_compact(&session_id);
     println!("\nLineage trail (onto_lineage):\n{}", compact_lineage);
 
-    // 11. SPARQL rule mining
+    // 11. SPARQL rule mining (needs argument graph — best with Claude-produced Turtle)
     println!("11. Mining facts from argument graph...");
-    let rule_store = open_ontologies::graph::GraphStore::new();
-    // Load argument graph as Turtle into a fresh store for rule mining
-    let arg_turtle = argument_graph::graph_to_turtle(&arg_graph);
-    if let Err(e) = rule_store.load_turtle(&arg_turtle, Some("http://brain-in-the-fish.dev/arg/")) {
-        println!("   Warning: could not load argument Turtle: {}", e);
-    }
-    let rule_set = brain_in_the_fish_core::rules::default_rules();
-    match brain_in_the_fish_core::rules::mine_facts(&rule_store, &rule_set) {
-        Ok(facts) => {
-            println!("   Strong claims: {} | Weak: {} | Unsupported: {}",
-                facts.strong_claims, facts.weak_claims, facts.unsupported_claims);
-            println!("   Quantified evidence: {} | Citations: {} | Deep chains: {}",
-                facts.quantified_support, facts.citation_support, facts.deep_chains);
-            if facts.sophisticated_arguments > 0 {
-                println!("   Sophisticated arguments (counter+rebuttal): {}", facts.sophisticated_arguments);
-            }
+    if arg_graph.nodes.is_empty() {
+        println!("   Awaiting Claude decomposition — run with MCP server for full pipeline");
+    } else {
+        let rule_store = open_ontologies::graph::GraphStore::new();
+        let arg_turtle = argument_graph::graph_to_turtle(&arg_graph);
+        if let Err(e) = rule_store.load_turtle(&arg_turtle, Some("http://brain-in-the-fish.dev/arg/")) {
+            println!("   Warning: could not load argument Turtle: {}", e);
         }
-        Err(e) => println!("   Warning: rule mining failed: {}", e),
+        let rule_set = brain_in_the_fish_core::rules::default_rules();
+        match brain_in_the_fish_core::rules::mine_facts(&rule_store, &rule_set) {
+            Ok(facts) => {
+                println!("   Strong claims: {} | Weak: {} | Unsupported: {}",
+                    facts.strong_claims, facts.weak_claims, facts.unsupported_claims);
+                println!("   Quantified evidence: {} | Citations: {} | Deep chains: {}",
+                    facts.quantified_support, facts.citation_support, facts.deep_chains);
+                if facts.sophisticated_arguments > 0 {
+                    println!("   Sophisticated arguments (counter+rebuttal): {}", facts.sophisticated_arguments);
+                }
+            }
+            Err(e) => println!("   Warning: rule mining failed: {}", e),
+        }
     }
 
-    // 12. Gate verdict
+    // 12. Gate verdict (needs scores from Claude subagent for meaningful result)
     println!("12. Gate verdict...");
     let overall_verdict = gate::check(
         overall.total_score, overall.max_possible, &arg_graph, &gate_weights
     );
     println!("   {}", overall_verdict);
+    if current_scores.is_empty() {
+        println!("   (Preliminary — no Claude scores yet. Connect via MCP for full verdict.)");
+    }
 
     // 13. Web verification (opt-in via --verify)
     if web_verify {
@@ -833,56 +581,21 @@ async fn run_evaluate(
         println!("   Badge file: {}", badge_path.display());
     }
 
-    println!("\n--- Pipeline complete ---");
-    println!("Verdict: {}", overall_verdict);
-    println!("\nTo enhance with LLM scoring:");
+    println!("\n--- Pipeline preparation complete ---");
+    println!("Verdict (preliminary): {}", overall_verdict);
+    println!("\nNext steps — start MCP server and connect Claude to complete evaluation:");
     println!("   1. Start MCP server: brain-in-the-fish serve");
-    println!("   2. Connect Claude and dispatch subagents from orchestration.json");
+    println!("   2. Connect Claude subagent");
+    println!("   3. Claude decomposes document into OWL Turtle knowledge graph");
+    println!("   4. Gate/rules/verify pipeline validates the scores");
+    println!("   Orchestration tasks saved to: {}", output_dir.join("orchestration.json").display());
 
     Ok(())
 }
 
-/// Enrich a document with paragraph-level subsections, claims, and evidence.
-///
-/// Splits each section's text into paragraphs and extracts:
-/// - Claims: sentences with strong assertion patterns
-/// - Evidence: sentences citing sources, data, statistics
-fn enrich_document(doc: &mut EvalDocument) {
-    if doc.title.is_empty() && !doc.sections.is_empty() {
-        doc.title = format!("Document: {}", doc.sections[0].title);
-    }
-    if doc.doc_type.is_empty() {
-        doc.doc_type = "document".into();
-    }
-
-    for section in &mut doc.sections {
-        let paragraphs: Vec<&str> = section.text.split("\n\n")
-            .map(|p| p.trim())
-            .filter(|p| !p.is_empty() && p.split_whitespace().count() > 5)
-            .collect();
-
-        if paragraphs.len() <= 1 {
-            extract_claims_and_evidence(section);
-            continue;
-        }
-
-        for (i, para) in paragraphs.iter().enumerate() {
-            let para_title = extract_first_phrase(para, 8);
-            let mut subsection = Section {
-                id: uuid::Uuid::new_v4().to_string(),
-                title: format!("{}:{} — {}", section.title, i + 1, para_title),
-                text: para.to_string(),
-                word_count: para.split_whitespace().count() as u32,
-                page_range: None,
-                claims: vec![],
-                evidence: vec![],
-                subsections: vec![],
-            };
-            extract_claims_and_evidence(&mut subsection);
-            section.subsections.push(subsection);
-        }
-    }
-}
+// [LEGACY DEPRECATED] enrich_document — removed in favour of Claude subagent decomposition.
+// The function previously did regex-based claim/evidence extraction and paragraph splitting.
+// Claude now handles all document analysis via MCP tools.
 
 fn extract_claims_and_evidence(section: &mut Section) {
     let sentences: Vec<&str> = section.text.split('.')
@@ -951,11 +664,7 @@ fn extract_claims_and_evidence(section: &mut Section) {
     }
 }
 
-fn extract_first_phrase(text: &str, max_words: usize) -> String {
-    let words: Vec<&str> = text.split_whitespace().take(max_words).collect();
-    let phrase = words.join(" ");
-    if phrase.len() > 50 { format!("{}...", &phrase[..47]) } else { phrase }
-}
+// [LEGACY REMOVED] extract_first_phrase — only used by enrich_document
 
 fn run_benchmark(
     dataset_path: Option<PathBuf>,
