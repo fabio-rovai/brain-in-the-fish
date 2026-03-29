@@ -58,6 +58,14 @@ enum Commands {
         /// Generate Claude subagent orchestration tasks
         #[arg(long)]
         orchestrate: bool,
+
+        /// Web-verify each claim against the internet
+        #[arg(long)]
+        verify: bool,
+
+        /// Generate BITF badge after evaluation
+        #[arg(long)]
+        badge: bool,
     },
     /// Open the knowledge graph visualization
     Graph {
@@ -155,8 +163,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Evaluate { document, intent, criteria, output, open, predict, deep_validate, orchestrate } => {
-            run_evaluate(document, intent, criteria, output, open, predict, deep_validate, orchestrate).await
+        Commands::Evaluate { document, intent, criteria, output, open, predict, deep_validate, orchestrate, verify, badge } => {
+            run_evaluate(document, intent, criteria, output, open, predict, deep_validate, orchestrate, verify, badge).await
         }
         Commands::Graph { path } => {
             run_graph(path)
@@ -267,6 +275,8 @@ async fn run_evaluate(
     predict: bool,
     deep_validate: bool,
     orchestrate: bool,
+    web_verify: bool,
+    badge: bool,
 ) -> anyhow::Result<()> {
     // Resolve output_dir early (needed for state DB)
     let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
@@ -750,6 +760,81 @@ async fn run_evaluate(
     let compact_lineage = onto_lineage.get_compact(&session_id);
     println!("\nLineage trail (onto_lineage):\n{}", compact_lineage);
 
+    // 11. SPARQL rule mining
+    println!("11. Mining facts from argument graph...");
+    let rule_store = open_ontologies::graph::GraphStore::new();
+    // Load argument graph as Turtle into a fresh store for rule mining
+    let arg_turtle = argument_graph::graph_to_turtle(&arg_graph);
+    if let Err(e) = rule_store.load_turtle(&arg_turtle, Some("http://brain-in-the-fish.dev/arg/")) {
+        println!("   Warning: could not load argument Turtle: {}", e);
+    }
+    let rule_set = brain_in_the_fish_core::rules::default_rules();
+    match brain_in_the_fish_core::rules::mine_facts(&rule_store, &rule_set) {
+        Ok(facts) => {
+            println!("   Strong claims: {} | Weak: {} | Unsupported: {}",
+                facts.strong_claims, facts.weak_claims, facts.unsupported_claims);
+            println!("   Quantified evidence: {} | Citations: {} | Deep chains: {}",
+                facts.quantified_support, facts.citation_support, facts.deep_chains);
+            if facts.sophisticated_arguments > 0 {
+                println!("   Sophisticated arguments (counter+rebuttal): {}", facts.sophisticated_arguments);
+            }
+        }
+        Err(e) => println!("   Warning: rule mining failed: {}", e),
+    }
+
+    // 12. Gate verdict
+    println!("12. Gate verdict...");
+    let overall_verdict = gate::check(
+        overall.total_score, overall.max_possible, &arg_graph, &gate_weights
+    );
+    println!("   {}", overall_verdict);
+
+    // 13. Web verification (opt-in via --verify)
+    if web_verify {
+        println!("13. Web verification (checking claims against the internet)...");
+        let verifiable = brain_in_the_fish_core::verify::extract_verifiable_claims(&arg_graph.nodes);
+        println!("   {} verifiable claims found, searching...", verifiable.len());
+        let report = brain_in_the_fish_core::verify::verify_claims(&verifiable).await;
+        println!("   {}", report);
+        for claim in &report.claims {
+            let icon = match claim.status {
+                brain_in_the_fish_core::verify::VerificationStatus::Verified => "✓",
+                brain_in_the_fish_core::verify::VerificationStatus::Unverifiable => "○",
+                brain_in_the_fish_core::verify::VerificationStatus::Contradicted => "✗",
+                brain_in_the_fish_core::verify::VerificationStatus::Pending => "?",
+            };
+            println!("   {} [{}] {}", icon, claim.status, claim.claim);
+        }
+        let verify_path = output_dir.join("verification-report.json");
+        std::fs::write(&verify_path, serde_json::to_string_pretty(&report)?)?;
+        println!("   Verification report: {}", verify_path.display());
+    } else {
+        println!("13. Web verification: skipped (use --verify to enable)");
+    }
+
+    // 14. Badge
+    if badge {
+        let badge_type = match &overall_verdict {
+            gate::Verdict::Confirmed { .. } => "verified-brightgreen",
+            gate::Verdict::Flagged { .. } => "flagged-yellow",
+            gate::Verdict::Rejected { .. } => "rejected-red",
+        };
+        let badge_label = match &overall_verdict {
+            gate::Verdict::Confirmed { .. } => "BITF verified",
+            gate::Verdict::Flagged { .. } => "BITF flagged",
+            gate::Verdict::Rejected { .. } => "BITF rejected",
+        };
+        let badge_url = format!("https://img.shields.io/badge/BITF-{}", badge_type);
+        println!("\n   Badge: {}", badge_label);
+        println!("   URL: {}", badge_url);
+        println!("   Markdown: ![{}]({})", badge_label, badge_url);
+        let badge_path = output_dir.join("bitf-badge.md");
+        std::fs::write(&badge_path, format!("![{}]({})\n\nVerdict: {}\n", badge_label, badge_url, overall_verdict))?;
+        println!("   Badge file: {}", badge_path.display());
+    }
+
+    println!("\n--- Pipeline complete ---");
+    println!("Verdict: {}", overall_verdict);
     println!("\nTo enhance with LLM scoring:");
     println!("   1. Start MCP server: brain-in-the-fish serve");
     println!("   2. Connect Claude and dispatch subagents from orchestration.json");

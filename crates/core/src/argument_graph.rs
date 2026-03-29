@@ -872,6 +872,61 @@ fn compute_max_depth(graph: &ArgumentGraph) -> usize {
     max_depth
 }
 
+/// Serialize an ArgumentGraph to OWL Turtle for loading into GraphStore.
+pub fn graph_to_turtle(graph: &ArgumentGraph) -> String {
+    let mut ttl = String::from(
+        "@prefix arg: <http://brain-in-the-fish.dev/arg/> .\n\
+         @prefix owl: <http://www.w3.org/2002/07/owl#> .\n\
+         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\n\
+         arg:Thesis a owl:Class .\n\
+         arg:SubClaim a owl:Class .\n\
+         arg:Evidence a owl:Class .\n\
+         arg:QuantifiedEvidence a owl:Class .\n\
+         arg:Citation a owl:Class .\n\
+         arg:Counter a owl:Class .\n\
+         arg:Rebuttal a owl:Class .\n\
+         arg:Structural a owl:Class .\n\
+         arg:supports a owl:ObjectProperty .\n\
+         arg:counters a owl:ObjectProperty .\n\
+         arg:rebuts a owl:ObjectProperty .\n\
+         arg:contains a owl:ObjectProperty .\n\
+         arg:hasText a owl:DatatypeProperty .\n\n"
+    );
+
+    for node in &graph.nodes {
+        let type_name = match node.node_type {
+            NodeType::Thesis => "Thesis",
+            NodeType::SubClaim => "SubClaim",
+            NodeType::Evidence => "Evidence",
+            NodeType::QuantifiedEvidence => "QuantifiedEvidence",
+            NodeType::Citation => "Citation",
+            NodeType::Counter => "Counter",
+            NodeType::Rebuttal => "Rebuttal",
+            NodeType::Structural => "Structural",
+        };
+        let iri = &node.iri;
+        let text = node.source_text.as_deref().unwrap_or(&node.text);
+        let escaped = text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " ");
+        ttl.push_str(&format!("{} a arg:{} ;\n    arg:hasText \"{}\" .\n", iri, type_name, escaped));
+    }
+
+    ttl.push('\n');
+
+    for edge in &graph.edges {
+        let rel = match edge.edge_type {
+            EdgeType::Supports => "supports",
+            EdgeType::Warrants => "supports",
+            EdgeType::Counters => "counters",
+            EdgeType::Rebuts => "rebuts",
+            EdgeType::Contains => "contains",
+            EdgeType::References => "supports",
+        };
+        ttl.push_str(&format!("{} arg:{} {} .\n", edge.from, rel, edge.to));
+    }
+
+    ttl
+}
+
 // ============================================================
 // Audit verification: source spans, consensus, completeness
 // ============================================================
