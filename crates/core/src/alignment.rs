@@ -248,7 +248,9 @@ fn truncate_text(s: &str, max_chars: usize) -> String {
     if s.len() <= max_chars {
         return s.to_string();
     }
-    let truncated = &s[..max_chars];
+    // Find a safe char boundary at or before max_chars
+    let safe_end = s.floor_char_boundary(max_chars);
+    let truncated = &s[..safe_end];
     if let Some(last_space) = truncated.rfind(' ') {
         truncated[..last_space].to_string()
     } else {
