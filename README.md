@@ -196,6 +196,68 @@ Note: "hallucination" here means LLM-expert scoring disagreement, not evidence f
 
 ---
 
+## Case Study: Catching Fabricated Evidence in Tenders
+
+Tender responses often contain specific-sounding claims that are hard to verify: project references, certifications, named staff, statistics. A raw LLM scores them highly because they look like strong evidence.
+
+We tested 7 documents with fabricated evidence — fake frameworks ("TrustFrame™"), invented project references ("NHS-2024-AI-0891"), fabricated academic citations, and fictional staff CVs using real employer names (DeepMind, Google Brain).
+
+**Raw LLM scored them 7.6/10** — completely fooled by specific-sounding lies.
+
+**BITF decomposed each claim and checked verifiability:**
+
+```
+Document: fab_04 (fabricated staff CVs)
+
+  arg:staff_1 [Evidence] "Dr Maria Santos, PhD Cambridge 2018, former DeepMind"
+    → Web search: "Maria Santos DeepMind Cambridge" → 0 relevant results
+    → Status: UNVERIFIABLE — person appears fabricated
+
+  arg:staff_2 [Evidence] "James Chen, ex-Google Brain, built Revolut fraud detection"
+    → Web search: "James Chen Google Brain Revolut" → Revolut credits Dmitri Lihhatsov
+    → Status: CONTRADICTED — different person built this system
+
+  arg:staff_3 [Evidence] "Dr Aisha Patel, test lead GOV.UK Pay"
+    → Web search: "Aisha Patel GOV.UK Pay" → 0 relevant results
+    → Status: UNVERIFIABLE
+
+  Verifiable claims: 0/7
+  BITF score: 0.5/10 (vs Raw LLM: 8.5/10)
+```
+
+**Results across all 7 fabricated documents:**
+
+| Approach | Average score | Fooled? |
+| -------- | ------------- | ------- |
+| Raw LLM | 7.6/10 | Yes — 7/7 scored above 6.5 |
+| BITF (knowledge check) | 2.1/10 | No — flagged suspicious claims |
+| BITF + web verification | 2.1/10 + 6/36 claims verified | No — external confirmation |
+
+Web verification adds: real-time search for each claim. Out of 36 specific claims across 7 fabricated documents, only 6 could be verified (ISO standards and government frameworks that actually exist). The rest were invented, unverifiable, or contradicted by public records.
+
+### Using web verification
+
+```bash
+# Default: decompose + knowledge check (fast, no web)
+brain-in-the-fish evaluate tender.pdf --intent "assess methodology"
+
+# With web verification (slower, checks each claim)
+brain-in-the-fish evaluate tender.pdf --intent "assess methodology" --verify
+```
+
+Each claim gets tagged in the ontology:
+
+```turtle
+arg:claim_1 arg:verificationStatus "verified" .
+arg:claim_1 arg:verificationSource "https://www.iso.org/standard/81230.html" .
+
+arg:claim_2 arg:verificationStatus "unverifiable" .
+arg:claim_2 arg:searchQuery "TrustFrame methodology framework" .
+arg:claim_2 arg:searchResults "0 relevant results" .
+```
+
+---
+
 ## What Didn't Work
 
 We tried everything. Here's what we learned:
