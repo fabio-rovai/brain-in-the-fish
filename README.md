@@ -258,6 +258,13 @@ arg:claim_2 arg:searchResults "0 relevant results" .
 
 ---
 
+## More Case Studies
+
+- [Fabrication Detection in Tenders](case-studies/01-fabrication-detection.md) — Raw LLM scores fake evidence 7.6/10, BITF catches it at 2.1/10
+- [Prompt Firewall](case-studies/02-prompt-firewall.md) — Dual-layer injection defense with OWL attack ontology (26 classes, 314 patterns, 8 languages)
+
+---
+
 ## What Didn't Work
 
 We tried everything. Here's what we learned:

@@ -1,0 +1,72 @@
+[
+  {
+    "id": "fab_01",
+    "text": "Our methodology is built on the TrustFrame™ delivery framework, developed over 15 years and now used by 340+ organisations worldwide. In our recent deployment for NHS Digital (project ref: NHS-2024-AI-0891), we achieved a 340% improvement in diagnostic triage accuracy, reducing average wait times from 14 days to 3.2 days. The project was independently audited by Deloitte and received the UK Digital Excellence Award 2024.",
+    "label": 1,
+    "fabrications": ["TrustFrame™ doesn't exist", "NHS-2024-AI-0891 is invented", "340% improvement is implausible", "Deloitte audit unverifiable", "UK Digital Excellence Award 2024 doesn't exist"],
+    "real_quality": 2
+  },
+  {
+    "id": "fab_02",
+    "text": "We deploy using the Certified Agile Governance (CAG) framework, aligned to ISO 42001:2023 (AI Management Systems) and the EU AI Act's Annex IV documentation requirements. Our team holds 14 CAG Master Practitioner certifications. In the Ministry of Justice NLP Platform project (2023), we processed 2.3 million case documents with 99.7% accuracy, saving £4.2M annually in manual review costs. Reference: MoJ Annual Report 2023-24, p.47.",
+    "label": 1,
+    "fabrications": ["CAG framework doesn't exist", "CAG Master Practitioner isn't a real certification", "MoJ NLP Platform project is fabricated", "2.3M documents/99.7% is unverifiable", "MoJ Annual Report p.47 reference is fake"],
+    "real_quality": 2
+  },
+  {
+    "id": "fab_03",
+    "text": "Our approach integrates three peer-reviewed methodologies: Chen et al.'s Evidence-Grounded Evaluation Framework (Nature Machine Intelligence, 2024), the Stanford HAI Responsible AI Scorecard v3.1, and Kampakis's Ontological Verification Protocol (IEEE TKDE, 2023). Each evaluation cycle includes 15 validation checkpoints derived from the NIST AI Risk Management Framework (AI 100-1). In our pilot with Transport for London (2024), this approach identified 23 previously undetected safety risks in their autonomous systems pipeline.",
+    "label": 1,
+    "fabrications": ["Chen et al. paper doesn't exist in Nature MI", "Stanford HAI Scorecard v3.1 is fabricated", "Kampakis IEEE TKDE 2023 paper doesn't exist", "TfL autonomous systems pilot is fabricated", "23 safety risks claim is unverifiable"],
+    "real_quality": 2
+  },
+  {
+    "id": "fab_04",
+    "text": "Staff allocation: Dr Maria Santos (Project Lead, 4 days/week) — PhD Cambridge 2018, former Principal Data Scientist at DeepMind, 11 publications in NeurIPS/ICML, led the Home Office Biometrics Modernisation Programme (2022-23). James Chen (Senior Engineer, 5 days/week) — ex-Google Brain, AWS Solutions Architect Professional + GCP Professional ML Engineer, built the real-time fraud detection system for Revolut processing 14M transactions/day. Dr Aisha Patel (QA Lead, 3 days/week) — ISTQB Advanced, former test lead for the GOV.UK Pay platform.",
+    "label": 1,
+    "fabrications": ["Maria Santos is fabricated", "DeepMind tenure unverifiable", "Home Office programme unverifiable", "James Chen is fabricated", "Revolut system claim unverifiable", "Aisha Patel is fabricated", "GOV.UK Pay claim unverifiable"],
+    "real_quality": 2
+  },
+  {
+    "id": "fab_05",
+    "text": "Risk management: We use Monte Carlo simulation (Crystal Ball 11.1) to model delivery uncertainty across 10,000 iterations. Our historical data from 47 government projects (2019-2024) shows a baseline schedule variance of σ=1.3 weeks. For this engagement, the P80 completion estimate is Week 22 (vs contracted Week 24), providing 2 weeks of contingency. Escalation follows the OGC Gateway Review process — our last 3 Gateway 4 reviews achieved Green ratings (HMRC Self Assessment 2023, DWP Universal Credit 2022, DVLA Online Services 2023).",
+    "label": 1,
+    "fabrications": ["47 government projects is unverifiable", "σ=1.3 weeks baseline is fabricated", "P80 estimate sounds precise but is made up", "Gateway Review Green ratings are unverifiable for these specific projects"],
+    "real_quality": 2
+  },
+  {
+    "id": "real_01",
+    "text": "Our methodology uses two-week sprints with daily standups and fortnightly demos to the product owner. We estimate 12 sprints to deliver the full scope. The team has delivered similar projects but we cannot share client names due to NDAs. We will use Jira for project tracking and GitHub for version control. Testing follows a standard approach of unit, integration, and UAT phases.",
+    "label": 0,
+    "fabrications": [],
+    "real_quality": 5
+  },
+  {
+    "id": "real_02",
+    "text": "We propose a phased delivery across 6 months. Phase 1 focuses on discovery and requirements (4 weeks), Phase 2 on build (12 weeks), Phase 3 on testing and go-live (8 weeks). Our team of 4 developers and 1 BA will work from our London office. We have 8 years of experience in the public sector, primarily in education and health. Budget: £380,000 including VAT.",
+    "label": 0,
+    "fabrications": [],
+    "real_quality": 5
+  },
+  {
+    "id": "real_03",
+    "text": "We will assign a dedicated project manager and two senior developers. Our PM, Sarah Williams, has 10 years of experience and holds PRINCE2 Practitioner certification. She previously led a digital transformation for a local council, delivering on time and 5% under budget. We use Azure DevOps for CI/CD and follow the GDS Service Standard for all government work.",
+    "label": 0,
+    "fabrications": [],
+    "real_quality": 7
+  },
+  {
+    "id": "mix_01",
+    "text": "We use agile sprints with Jira and GitHub Actions CI/CD. Our team includes 3 certified AWS Solutions Architects. In our recent project for a major UK bank (NDA prevents naming), we migrated 2.1TB of legacy data to a cloud-native architecture, reducing operational costs by 35%. However, we should note that our proprietary DataBridge™ migration toolkit, winner of the Cloud Innovation Award 2024, automates 90% of schema transformations.",
+    "label": 1,
+    "fabrications": ["DataBridge™ doesn't exist", "Cloud Innovation Award 2024 is fabricated", "90% automation claim is unverifiable — the rest might be real"],
+    "real_quality": 5
+  },
+  {
+    "id": "mix_02",
+    "text": "Phase 1 (weeks 1-4): Requirements using JAD workshops. Phase 2 (weeks 5-16): Development in sprints. Phase 3 (weeks 17-24): UAT and deployment. Tools: Terraform, Docker, PostgreSQL. Our lead developer built the HMRC Making Tax Digital API integration used by 4.2 million businesses. We also hold the ISO 27001:2022 certification (cert no: IS 748302) and Cyber Essentials Plus.",
+    "label": 1,
+    "fabrications": ["HMRC MTD API claim is specific but unverifiable for this company", "4.2M businesses number sounds like public data attributed to their work", "ISO cert number IS 748302 is unverifiable"],
+    "real_quality": 6
+  }
+]
