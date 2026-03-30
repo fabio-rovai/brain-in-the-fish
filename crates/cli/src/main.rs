@@ -659,6 +659,59 @@ async fn run_phase3_verification(
         println!("     - {} (weight: {:.0}%)", c.title, c.weight * 100.0);
     }
 
+    // ── Step 1c: Source quote verification ─────────────────────────────
+    println!("\n   Verifying source quotes against document...");
+    let doc_text = std::fs::read_to_string(&document).unwrap_or_default();
+    let doc_lower = doc_text.to_lowercase();
+    let mut verified_nodes = 0usize;
+    let mut unverified_nodes = 0usize;
+    let mut fabricated_quotes: Vec<String> = Vec::new();
+    if let Some(nodes) = turtle_json.get("nodes")
+        .or_else(|| turtle_json.get("node_scores"))
+        .and_then(|v| v.as_array()) {
+        for node in nodes {
+            let ntype = node.get("node_type").and_then(|v| v.as_str()).unwrap_or("unknown");
+            // Skip structural nodes — headings are trivially findable
+            if ntype == "Structural" { continue; }
+            let source = node.get("source_text").and_then(|v| v.as_str()).unwrap_or("");
+            if source.is_empty() {
+                unverified_nodes += 1;
+                continue;
+            }
+            // Try exact match first, then normalized (lowercase, collapsed whitespace)
+            let source_normalized = source.to_lowercase()
+                .split_whitespace().collect::<Vec<_>>().join(" ");
+            let doc_normalized = doc_lower
+                .split_whitespace().collect::<Vec<_>>().join(" ");
+            // Try progressively shorter snippets (exact → 60 chars → 30 chars)
+            let found = doc_text.contains(source)
+                || doc_normalized.contains(&source_normalized)
+                || (source_normalized.len() > 30 && doc_normalized.contains(&source_normalized[..30.min(source_normalized.len())]));
+            if found {
+                verified_nodes += 1;
+            } else {
+                unverified_nodes += 1;
+                if fabricated_quotes.len() < 5 {
+                    fabricated_quotes.push(format!("[{}] {}", ntype,
+                        if source.len() > 60 { &source[..60] } else { source }));
+                }
+            }
+        }
+    }
+    let verification_rate = if verified_nodes + unverified_nodes > 0 {
+        verified_nodes as f64 / (verified_nodes + unverified_nodes) as f64
+    } else {
+        0.0
+    };
+    println!("   Source quotes: {}/{} verified ({:.0}%)",
+        verified_nodes, verified_nodes + unverified_nodes, verification_rate * 100.0);
+    if !fabricated_quotes.is_empty() {
+        println!("   ⚠ Unverified quotes (not found in document):");
+        for q in &fabricated_quotes {
+            println!("     {}", q);
+        }
+    }
+
     // ── Step 2: Compute topology metrics ─────────────────────────────
     println!("\nStep 2/7 — Computing topology metrics (LLM-free)...");
     let evidence_count = type_counts.iter()
@@ -735,7 +788,7 @@ async fn run_phase3_verification(
 
     // ── Step 4: Structural score (topology only) ─────────────────────
     println!("\nStep 4/7 — Computing structural score (topology only, zero LLM input)...");
-    let structural_score =
+    let raw_structural_score =
         0.20 * density +
         0.25 * ev_ratio_norm +
         0.15 * has_counter +
@@ -743,7 +796,12 @@ async fn run_phase3_verification(
         0.15 * quant_ratio +
         0.10 * cite_ratio +
         0.05 * counter_ratio;
-    println!("   Structural score: {:.3}", structural_score);
+    // Apply verification penalty: score scaled by proportion of verified quotes
+    let structural_score = raw_structural_score * verification_rate;
+    println!("   Raw structural score: {:.3}", raw_structural_score);
+    println!("   Verification rate: {:.0}% ({} of {} quotes found in document)",
+        verification_rate * 100.0, verified_nodes, verified_nodes + unverified_nodes);
+    println!("   Adjusted structural score: {:.3} (raw × verification rate)", structural_score);
     println!("   Components: density={:.2} ev_ratio={:.2} counter={:.0} rebuttal={:.0} quant={:.2} cite={:.2}",
         density, ev_ratio_norm, has_counter, has_rebuttal, quant_ratio, cite_ratio);
 
