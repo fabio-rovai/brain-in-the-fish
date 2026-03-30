@@ -283,8 +283,8 @@ impl EvalServer {
             }
         "#;
 
-        if let Ok(result) = self.graph.sparql_select(node_query) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
+        if let Ok(result) = self.graph.sparql_select(node_query)
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
                 let bindings = json["results"].as_array()
                     .or_else(|| json["results"]["bindings"].as_array());
                 if let Some(bindings) = bindings {
@@ -326,7 +326,6 @@ impl EvalServer {
                         });
                     }
                 }
-            }
         }
 
         // Query edges
@@ -338,8 +337,8 @@ impl EvalServer {
             }
         "#;
 
-        if let Ok(result) = self.graph.sparql_select(edge_query) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
+        if let Ok(result) = self.graph.sparql_select(edge_query)
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
                 let bindings = json["results"].as_array()
                     .or_else(|| json["results"]["bindings"].as_array());
                 if let Some(bindings) = bindings {
@@ -372,7 +371,6 @@ impl EvalServer {
                         edges.push(ArgumentEdge { from, edge_type, to });
                     }
                 }
-            }
         }
 
         ArgumentGraph {
@@ -1203,8 +1201,8 @@ impl EvalServer {
         let mut type_distribution = serde_json::Map::new();
         let mut total_nodes: usize = 0;
 
-        if let Ok(result) = self.graph.sparql_select(type_query) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
+        if let Ok(result) = self.graph.sparql_select(type_query)
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
                 let bindings = json["results"].as_array()
                     .or_else(|| json["results"]["bindings"].as_array());
                 if let Some(bindings) = bindings {
@@ -1225,7 +1223,6 @@ impl EvalServer {
                         total_nodes += count;
                     }
                 }
-            }
         }
 
         // Mark turtle as loaded in session

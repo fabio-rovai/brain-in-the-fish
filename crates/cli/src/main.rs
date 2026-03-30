@@ -172,8 +172,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Evaluate { document, intent, criteria, output, open, predict, deep_validate, orchestrate, verify, badge, turtle, scores } => {
-            if turtle.is_some() && scores.is_some() {
-                run_phase3_verification(document, intent, turtle.unwrap(), scores.unwrap(), output, verify, badge).await
+            if let (Some(t), Some(s)) = (turtle, scores) {
+                run_phase3_verification(document, intent, t, s, output, verify, badge).await
             } else {
                 run_evaluate(document, intent, criteria, output, open, predict, deep_validate, orchestrate, verify, badge).await
             }

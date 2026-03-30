@@ -204,7 +204,7 @@ pub fn mine_facts(store: &GraphStore, rules: &[Rule]) -> anyhow::Result<DerivedF
                 v["results"].as_array()
                     .and_then(|arr| arr.first())
                     .and_then(|row| row["c"].as_str())
-                    .and_then(|s| parse_xsd_integer(s))
+                    .and_then(parse_xsd_integer)
                     .unwrap_or(0)
             }
             Err(_) => 0,
