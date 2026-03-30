@@ -26,9 +26,9 @@ Input:  tender response, essay, policy document, clinical report
 Output: score + OWL ontology + verdict (CONFIRMED / FLAGGED / REJECTED)
 ```
 
-Every claim the system makes about your document is backed by an exact quote from the text. If the evidence isn't there, the score isn't there.
+Every claim the system makes about your document is backed by an exact quote from the text. If the quote doesn't exist in the document, the structural score drops and the gate flags it.
 
-**0 fabricated evidence** out of 1,271 nodes tested across 200 documents.
+**Source quote verification built into the pipeline.** Each node's quote is checked against the original document. Unverified quotes penalise the structural score — the system catches its own sloppy decomposition.
 
 ---
 
@@ -81,7 +81,7 @@ Run `brain-in-the-fish demo` to see all three verdicts (REJECTED, CONFIRMED, FLA
 
 Documents evaluated by BITF can display a verification badge. The badge means:
 
-**BITF Verified** (green): Every claim in the document traces to evidence. The ontology confirms the score. 0% fabricated nodes.
+**BITF Verified** (green): The LLM score is consistent with the structural evidence. Source quotes verified against the document. Gate confirmed.
 
 **BITF Flagged** (yellow): Score diverges from evidence. Some claims may lack support. Requires review.
 
@@ -171,28 +171,30 @@ Fewer nodes = tighter tolerance. Low-quality evidence = even tighter. The gate i
 
 ## Benchmarks
 
-### The number that matters: 0% fabrication
+### How source verification works
 
-200 essays scored blind. 1,271 argument nodes extracted. Every source quote verified against the original text.
+The pipeline checks every node's source quote against the original document. Quotes that don't exist in the document are flagged as unverified. The structural score is penalised by the verification rate — if the subagent paraphrased instead of quoting exactly, the score drops and the gate catches it.
 
-| What we checked | Result |
-| --------------- | ------ |
-| Nodes with verified source quotes | **1,271 / 1,271 (100%)** |
-| Fabricated evidence | **0** |
-| Invented citations | **0** |
+| What happens | Effect |
+| ------------ | ------ |
+| All quotes verified | Structural score unchanged |
+| 50% verified | Structural score halved → gate likely flags |
+| 0% verified | Structural score = 0 → gate rejects |
+
+**Self-test result:** Running BITF on its own README produced 47% verification rate (29/62 quotes found). The gate flagged it — the decomposition paraphrased instead of quoting. This is the system catching its own sloppy work.
 
 ### Scoring accuracy
 
-LLM holistic scores on the same 200 essays vs expert scores:
+LLM holistic scores on 200 ASAP essays (blind, Set 1) vs expert scores:
 
-| Metric | All 200 | CONFIRMED (107) | FLAGGED (78) |
-| ------ | ------- | --------------- | ------------ |
-| Pearson r | 0.746 | 0.659 | 0.783 |
-| Halluc rate (>30% off) | 24.5% | 16.8% | 35.9% |
+| Metric | Value |
+| ------ | ----- |
+| Topology-only Pearson r | 0.510 (node count as single feature) |
+| LLM holistic Pearson r | ~0.75 (estimated from subagent scoring) |
 
-The gate reduces scoring disagreements by 31% on confirmed documents. FLAGGED documents have 36% disagreement rate — the gate correctly identifies unreliable scores.
+The topology score's job is not to beat the LLM — it's to verify the LLM. When they agree, the gate confirms. When they diverge, the gate flags.
 
-Note: "hallucination" here means LLM-expert scoring disagreement, not evidence fabrication. Fabrication is 0%.
+Note: "hallucination" in this context means the LLM score exceeds what the structural evidence supports, not that the LLM fabricated text.
 
 ---
 
