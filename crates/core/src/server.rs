@@ -1218,7 +1218,12 @@ impl EvalServer {
                         let count_str = binding["count"].as_str()
                             .or_else(|| binding["count"]["value"].as_str())
                             .unwrap_or("0");
-                        let count: usize = count_str.parse().unwrap_or(0);
+                        // Oxigraph returns XSD-typed literals like "1"^^<...integer>
+                        let count: usize = count_str
+                            .split('"').nth(1)  // extract number from "1"^^<...>
+                            .or(Some(count_str)) // fallback to raw string
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
                         type_distribution.insert(type_name.to_string(), serde_json::json!(count));
                         total_nodes += count;
                     }
@@ -1382,12 +1387,11 @@ impl EvalServer {
                     v["results"].as_array()
                         .and_then(|arr| arr.first())
                         .and_then(|row| row["c"].as_str())
-                        .and_then(|s| s.trim_matches('"').parse::<usize>().ok())
-                        .or_else(|| {
-                            v["results"]["bindings"].as_array()
-                                .and_then(|arr| arr.first())
-                                .and_then(|row| row["c"]["value"].as_str())
-                                .and_then(|s| s.parse::<usize>().ok())
+                        .and_then(|s| {
+                            // Handle XSD literals: "1"^^<...integer>
+                            s.split('"').nth(1)
+                                .or(Some(s))
+                                .and_then(|n| n.parse::<usize>().ok())
                         })
                         .unwrap_or(0)
                 }
