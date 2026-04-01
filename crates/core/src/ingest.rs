@@ -264,10 +264,9 @@ fn collect_files(dir: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 files.extend(collect_files(&path));
-            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                && SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
                     files.push(path);
-                }
             }
         }
     }
