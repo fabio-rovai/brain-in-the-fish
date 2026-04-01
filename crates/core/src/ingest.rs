@@ -1,9 +1,10 @@
 //! PDF ingestion and document ontology generation.
 
-use crate::types::{Claim, EvalDocument, Evidence, Section};
+use crate::types::{Claim, EvalDocument, Evidence, Section, TenderStructure};
 use regex::Regex;
+use std::collections::HashMap;
 use std::fmt::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Raw section before LLM enrichment.
 #[derive(Debug, Clone)]
@@ -193,6 +194,201 @@ pub fn ingest_pdf(path: &Path, _intent: &str) -> anyhow::Result<(EvalDocument, V
     };
 
     Ok((doc, raw_sections))
+}
+
+// ============================================================================
+// Multi-lot folder ingestion
+// ============================================================================
+
+/// Supported file extensions for document ingestion.
+const SUPPORTED_EXTENSIONS: &[&str] = &["pdf", "docx", "md", "txt"];
+
+/// Patterns that indicate a document is shared across all lots.
+const SHARED_PATTERNS: &[&str] = &[
+    "shared",
+    "common",
+    "itt",
+    "t&c",
+    "t_c",
+    "t-c",
+    "terms and conditions",
+    "terms_and_conditions",
+    "specification",
+    "spec",
+    "instructions",
+    "guidance",
+    "general",
+    "overview",
+    "background",
+    "contract notice",
+    "selection questionnaire",
+    "sqd",
+    "pqq",
+    "framework",
+    "pricing schedule",
+    "form of tender",
+];
+
+/// Extract a lot identifier from a string (filename or folder name).
+///
+/// Matches patterns like "Lot 1", "Lot_1", "lot-1", "LOT1", "lot 02", etc.
+/// Returns the normalised form "lot_N" and the display name "Lot N".
+fn detect_lot(name: &str) -> Option<(String, String)> {
+    // Use a lookaround-free pattern that handles word boundaries including
+    // underscores and hyphens which regex \b treats as word chars.
+    let lot_re = Regex::new(r"(?i)(?:^|[\s_\-/\\])lot[\s_\-]?(\d+)(?:[\s_\-/\\.]|$)").unwrap();
+
+    // Also try the simple case where the whole string starts with "lot"
+    let lot_start_re = Regex::new(r"(?i)^lot[\s_\-]?(\d+)").unwrap();
+
+    let caps = lot_re.captures(name).or_else(|| lot_start_re.captures(name));
+    caps.map(|caps| {
+        let num: u32 = caps.get(1).unwrap().as_str().parse().unwrap_or(0);
+        (format!("lot_{}", num), format!("Lot {}", num))
+    })
+}
+
+/// Check if a filename or path component indicates a shared/common document.
+fn is_shared_indicator(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    SHARED_PATTERNS
+        .iter()
+        .any(|pattern| lower.contains(pattern))
+}
+
+/// Recursively collect all supported files from a directory.
+fn collect_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(collect_files(&path));
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    files
+}
+
+/// Classify a file path as belonging to a specific lot or as shared.
+///
+/// Walks the path components from most specific (filename) to least specific
+/// (parent directories) looking for lot indicators and shared indicators.
+fn classify_file(file: &Path, root: &Path) -> FileClassification {
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    let components: Vec<String> = relative
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+
+    // Check all path components for lot indicators (prefer deepest match)
+    for component in components.iter().rev() {
+        if let Some((lot_key, lot_name)) = detect_lot(component) {
+            return FileClassification::Lot(lot_key, lot_name);
+        }
+    }
+
+    // Check if any component indicates shared
+    for component in &components {
+        if is_shared_indicator(component) {
+            return FileClassification::Shared;
+        }
+    }
+
+    // Default: if no lot detected and no explicit shared marker, treat as shared
+    // (top-level files like ITT.pdf that don't have lot markers are shared)
+    FileClassification::Shared
+}
+
+#[derive(Debug)]
+enum FileClassification {
+    Shared,
+    Lot(String, String), // (normalised key, display name)
+}
+
+/// Ingest all documents from a folder, detecting multi-lot structure.
+///
+/// Scans for PDF, DOCX, MD, TXT files. Classifies each as shared or per-lot
+/// based on folder names and filename patterns (e.g. "Lot 1", "Lot_2", "LOT3").
+///
+/// Returns a `TenderStructure` with shared docs and per-lot doc maps.
+pub fn ingest_folder(folder: &Path) -> anyhow::Result<TenderStructure> {
+    if !folder.is_dir() {
+        anyhow::bail!(
+            "Path is not a directory: {}",
+            folder.display()
+        );
+    }
+
+    let files = collect_files(folder);
+    if files.is_empty() {
+        anyhow::bail!(
+            "No supported files found in {}. Supported: {:?}",
+            folder.display(),
+            SUPPORTED_EXTENSIONS
+        );
+    }
+
+    let mut shared_docs = Vec::new();
+    let mut lots: HashMap<String, Vec<EvalDocument>> = HashMap::new();
+    let mut lot_names_map: HashMap<String, String> = HashMap::new(); // key -> display name
+
+    for file in &files {
+        let (mut doc, _raw_sections) = match ingest_pdf(file, "tender evaluation") {
+            Ok(result) => result,
+            Err(e) => {
+                // Log warning but continue with other files
+                tracing::warn!("Skipping {}: {}", file.display(), e);
+                continue;
+            }
+        };
+
+        // Set title from filename if not already set
+        if doc.title.is_empty() {
+            doc.title = file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Untitled")
+                .to_string();
+        }
+
+        // Set doc_type based on file extension
+        if doc.doc_type.is_empty() {
+            doc.doc_type = file
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("unknown")
+                .to_lowercase();
+        }
+
+        match classify_file(file, folder) {
+            FileClassification::Shared => {
+                shared_docs.push(doc);
+            }
+            FileClassification::Lot(key, name) => {
+                lot_names_map.entry(key.clone()).or_insert(name);
+                lots.entry(key).or_default().push(doc);
+            }
+        }
+    }
+
+    // Build ordered lot names sorted by lot number
+    let mut lot_names: Vec<String> = lot_names_map.keys().cloned().collect();
+    lot_names.sort_by(|a, b| {
+        let num_a: u32 = a.trim_start_matches("lot_").parse().unwrap_or(0);
+        let num_b: u32 = b.trim_start_matches("lot_").parse().unwrap_or(0);
+        num_a.cmp(&num_b)
+    });
+
+    Ok(TenderStructure {
+        shared_docs,
+        lots,
+        lot_names,
+    })
 }
 
 // ============================================================================
@@ -525,6 +721,123 @@ mod tests {
         // Quotes and newlines should be escaped
         assert!(turtle.contains("Doc with \\\"quotes\\\""));
         assert!(turtle.contains("Line\\nBreak"));
+    }
+
+    // ========================================================================
+    // Lot detection tests
+    // ========================================================================
+
+    #[test]
+    fn test_detect_lot_variants() {
+        // Standard patterns
+        assert_eq!(detect_lot("Lot 1"), Some(("lot_1".into(), "Lot 1".into())));
+        assert_eq!(detect_lot("Lot_2"), Some(("lot_2".into(), "Lot 2".into())));
+        assert_eq!(detect_lot("lot-3"), Some(("lot_3".into(), "Lot 3".into())));
+        assert_eq!(detect_lot("LOT4"), Some(("lot_4".into(), "Lot 4".into())));
+        assert_eq!(detect_lot("lot 05"), Some(("lot_5".into(), "Lot 5".into())));
+        // Embedded in filename
+        assert_eq!(
+            detect_lot("Pricing_Lot_2_Response.pdf"),
+            Some(("lot_2".into(), "Lot 2".into()))
+        );
+        // No lot
+        assert_eq!(detect_lot("ITT_Document.pdf"), None);
+        assert_eq!(detect_lot("shared_specs"), None);
+    }
+
+    #[test]
+    fn test_is_shared_indicator() {
+        assert!(is_shared_indicator("ITT_Document.pdf"));
+        assert!(is_shared_indicator("Terms and Conditions.pdf"));
+        assert!(is_shared_indicator("Shared_Resources"));
+        assert!(is_shared_indicator("common"));
+        assert!(is_shared_indicator("General_Specification.pdf"));
+        assert!(is_shared_indicator("T&C_v2.pdf"));
+        assert!(is_shared_indicator("Instructions_to_Tenderers.pdf"));
+        assert!(!is_shared_indicator("Lot_1_Response.pdf"));
+        assert!(!is_shared_indicator("some_random_doc.pdf"));
+    }
+
+    #[test]
+    fn test_ingest_folder_multi_lot() {
+        // Create a temp directory structure simulating a multi-lot tender
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Shared docs at root
+        std::fs::write(
+            root.join("ITT_Document.txt"),
+            "1. Introduction\n\nThis is the invitation to tender.\n\n2. Scope\n\nThe scope of this procurement.",
+        ).unwrap();
+        std::fs::write(
+            root.join("Terms_and_Conditions.txt"),
+            "TERMS AND CONDITIONS\n\nStandard terms apply to all lots.",
+        ).unwrap();
+
+        // Lot 1
+        std::fs::create_dir_all(root.join("Lot 1")).unwrap();
+        std::fs::write(
+            root.join("Lot 1").join("Specification.txt"),
+            "1. Lot 1 Specification\n\nData analytics services required.",
+        ).unwrap();
+        std::fs::write(
+            root.join("Lot 1").join("Pricing.txt"),
+            "PRICING SCHEDULE\n\nComplete the pricing matrix below.",
+        ).unwrap();
+
+        // Lot 2 (underscore variant)
+        std::fs::create_dir_all(root.join("Lot_2")).unwrap();
+        std::fs::write(
+            root.join("Lot_2").join("Specification.txt"),
+            "1. Lot 2 Specification\n\nConsultancy services required.",
+        ).unwrap();
+
+        let result = ingest_folder(root).unwrap();
+        assert_eq!(result.shared_docs.len(), 2, "Should have 2 shared docs");
+        assert_eq!(result.lot_names.len(), 2, "Should detect 2 lots");
+        assert!(result.lot_names.contains(&"lot_1".to_string()));
+        assert!(result.lot_names.contains(&"lot_2".to_string()));
+        assert_eq!(
+            result.lots.get("lot_1").map(|v| v.len()).unwrap_or(0),
+            2,
+            "Lot 1 should have 2 docs"
+        );
+        assert_eq!(
+            result.lots.get("lot_2").map(|v| v.len()).unwrap_or(0),
+            1,
+            "Lot 2 should have 1 doc"
+        );
+    }
+
+    #[test]
+    fn test_ingest_folder_no_lots() {
+        // A folder with no lot structure — everything should be shared
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        std::fs::write(
+            root.join("document.txt"),
+            "1. Introduction\n\nSome content here.",
+        ).unwrap();
+
+        let result = ingest_folder(root).unwrap();
+        assert_eq!(result.shared_docs.len(), 1);
+        assert!(result.lots.is_empty());
+        assert!(result.lot_names.is_empty());
+    }
+
+    #[test]
+    fn test_ingest_folder_not_a_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("not_a_dir.txt");
+        std::fs::write(&file, "content").unwrap();
+        assert!(ingest_folder(&file).is_err());
+    }
+
+    #[test]
+    fn test_ingest_folder_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(ingest_folder(tmp.path()).is_err());
     }
 
     #[test]

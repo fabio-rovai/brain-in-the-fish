@@ -40,6 +40,8 @@ pub struct EvalCriteriaInput {
 pub struct EvalSpawnInput {
     /// Evaluation intent — determines agent panel composition.
     pub intent: String,
+    /// Optional lot identifier (e.g. "lot_1"). When set, only shared docs + this lot's docs are in context.
+    pub lot: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -54,6 +56,8 @@ pub struct EvalScorePromptInput {
     pub agent_index: usize,
     /// Index of the criterion in the framework (0-based).
     pub criterion_index: usize,
+    /// Optional lot identifier (e.g. "lot_1"). When set, only shared docs + this lot's docs are in context.
+    pub lot: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -147,6 +151,8 @@ pub struct EdsScoreInput {
     pub agent_id: String,
     /// Optional criterion ID. If omitted, returns scores for all criteria.
     pub criterion_id: Option<String>,
+    /// Optional lot identifier (e.g. "lot_1"). When set, only shared docs + this lot's docs are in context.
+    pub lot: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -195,6 +201,8 @@ struct SessionState {
     turtle_loaded: bool,
     /// LLM holistic scores recorded via eval_record_score, keyed by criterion_id.
     llm_scores: std::collections::HashMap<String, (f64, f64)>,
+    /// Multi-lot tender structure (set when ingesting a folder).
+    tender_structure: Option<TenderStructure>,
 }
 
 impl SessionState {
@@ -211,6 +219,7 @@ impl SessionState {
             gate_weights: GateWeights::default(),
             turtle_loaded: false,
             llm_scores: std::collections::HashMap::new(),
+            tender_structure: None,
         }
     }
 
@@ -411,10 +420,102 @@ impl EvalServer {
 
     // ── Ingest ──────────────────────────────────────────────────────────────
 
-    #[tool(name = "eval_ingest", description = "Ingest a PDF file and build the document ontology. Returns document summary.")]
+    #[tool(name = "eval_ingest", description = "Ingest a PDF file or a folder of documents. If path is a directory, detects multi-lot tender structure (shared docs + per-lot docs). Returns document summary or lot map.")]
     async fn eval_ingest(&self, Parameters(input): Parameters<EvalIngestInput>) -> String {
         let path = std::path::Path::new(&input.path);
 
+        // --- Directory: multi-lot folder ingestion ---
+        if path.is_dir() {
+            let structure = match crate::ingest::ingest_folder(path) {
+                Ok(s) => s,
+                Err(e) => return format!(r#"{{"error":"{}"}}"#, e),
+            };
+
+            // Load all documents into graph store
+            let mut total_triples = 0usize;
+            for doc in &structure.shared_docs {
+                match crate::ingest::load_document_ontology(&self.graph, doc) {
+                    Ok(t) => total_triples += t,
+                    Err(e) => {
+                        tracing::warn!("Failed to load shared doc {}: {}", doc.title, e);
+                    }
+                }
+            }
+            for docs in structure.lots.values() {
+                for doc in docs {
+                    match crate::ingest::load_document_ontology(&self.graph, doc) {
+                        Ok(t) => total_triples += t,
+                        Err(e) => {
+                            tracing::warn!("Failed to load lot doc {}: {}", doc.title, e);
+                        }
+                    }
+                }
+            }
+
+            // Use the first shared doc as the session document (or first lot doc)
+            let primary_doc = structure
+                .shared_docs
+                .first()
+                .or_else(|| structure.lots.values().next().and_then(|v| v.first()))
+                .cloned();
+
+            // Build the lots response map
+            let mut lots_map = serde_json::Map::new();
+            let shared_summary: Vec<serde_json::Value> = structure
+                .shared_docs
+                .iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "id": d.id,
+                        "title": d.title,
+                        "doc_type": d.doc_type,
+                        "total_words": d.total_word_count,
+                        "sections": d.sections.len(),
+                    })
+                })
+                .collect();
+            lots_map.insert(
+                "shared".to_string(),
+                serde_json::Value::Array(shared_summary),
+            );
+
+            for lot_key in &structure.lot_names {
+                if let Some(docs) = structure.lots.get(lot_key) {
+                    let lot_summary: Vec<serde_json::Value> = docs
+                        .iter()
+                        .map(|d| {
+                            serde_json::json!({
+                                "id": d.id,
+                                "title": d.title,
+                                "doc_type": d.doc_type,
+                                "total_words": d.total_word_count,
+                                "sections": d.sections.len(),
+                            })
+                        })
+                        .collect();
+                    lots_map.insert(lot_key.clone(), serde_json::Value::Array(lot_summary));
+                }
+            }
+
+            let mut session = self.session.lock().unwrap();
+            session.document = primary_doc;
+            session.intent = input.intent.clone();
+            session.tender_structure = Some(structure.clone());
+
+            return serde_json::json!({
+                "ok": true,
+                "multi_lot": true,
+                "lot_count": structure.lot_names.len(),
+                "lot_names": structure.lot_names,
+                "shared_doc_count": structure.shared_docs.len(),
+                "lots": lots_map,
+                "triples_loaded": total_triples,
+                "intent": input.intent,
+            })
+            .to_string();
+        }
+
+        // --- Single file ingestion (existing behavior) ---
         let (doc, raw_sections) = match crate::ingest::ingest_pdf(path, &input.intent) {
             Ok(result) => result,
             Err(e) => return format!(r#"{{"error":"{}"}}"#, e),
@@ -429,6 +530,7 @@ impl EvalServer {
 
                 serde_json::json!({
                     "ok": true,
+                    "multi_lot": false,
                     "document_id": doc.id,
                     "sections": raw_sections.len(),
                     "total_words": doc.total_word_count,
@@ -582,13 +684,14 @@ impl EvalServer {
 
     // ── Spawn ───────────────────────────────────────────────────────────────
 
-    #[tool(name = "eval_spawn", description = "Generate an evaluator agent panel from the evaluation intent. Returns panel composition.")]
+    #[tool(name = "eval_spawn", description = "Generate an evaluator agent panel from the evaluation intent. Returns panel composition. When lot is specified, includes lot context.")]
     async fn eval_spawn(&self, Parameters(input): Parameters<EvalSpawnInput>) -> String {
         let session = self.session.lock().unwrap();
         let framework = match &session.framework {
             Some(f) => f.clone(),
             None => return r#"{"error":"No framework loaded. Call eval_criteria first."}"#.to_string(),
         };
+        let tender_structure = session.tender_structure.clone();
         drop(session);
 
         let agents = crate::agent::spawn_panel(&input.intent, &framework);
@@ -612,6 +715,24 @@ impl EvalServer {
             })
         }).collect();
 
+        // If lot is specified and we have a tender structure, include lot context
+        let lot_context = if let (Some(lot_key), Some(ts)) = (&input.lot, &tender_structure) {
+            let shared_titles: Vec<&str> = ts.shared_docs.iter().map(|d| d.title.as_str()).collect();
+            let lot_titles: Vec<&str> = ts
+                .lots
+                .get(lot_key)
+                .map(|docs| docs.iter().map(|d| d.title.as_str()).collect())
+                .unwrap_or_default();
+            Some(serde_json::json!({
+                "lot": lot_key,
+                "shared_docs": shared_titles,
+                "lot_docs": lot_titles,
+                "total_docs_in_context": shared_titles.len() + lot_titles.len(),
+            }))
+        } else {
+            None
+        };
+
         let mut session = self.session.lock().unwrap();
         session.agents = agents;
         session.current_round = 1;
@@ -622,13 +743,14 @@ impl EvalServer {
             "agents": agent_summary,
             "triples_loaded": total_triples,
             "criteria_count": framework.criteria.len(),
+            "lot_context": lot_context,
         })
         .to_string()
     }
 
     // ── Score Prompt ────────────────────────────────────────────────────────
 
-    #[tool(name = "eval_score_prompt", description = "Generate a scoring prompt for a subagent to score a specific criterion. Returns the prompt text.")]
+    #[tool(name = "eval_score_prompt", description = "Generate a scoring prompt for a subagent to score a specific criterion. Returns the prompt text. When lot is specified, only shared + that lot's docs are in context.")]
     async fn eval_score_prompt(&self, Parameters(input): Parameters<EvalScorePromptInput>) -> String {
         let session = self.session.lock().unwrap();
 
@@ -654,19 +776,39 @@ impl EvalServer {
         let agent = session.agents[input.agent_index].clone();
         let criterion = framework.criteria[input.criterion_index].clone();
         let round = session.current_round;
+        let tender_structure = session.tender_structure.clone();
         drop(session);
 
         // Query document sections from graph
         let sections = crate::scoring::query_sections_for_criterion(&self.graph, &criterion.id)
             .unwrap_or_default();
 
-        let prompt = crate::scoring::generate_scoring_prompt(&agent, &criterion, &sections, round);
+        let mut prompt = crate::scoring::generate_scoring_prompt(&agent, &criterion, &sections, round);
+
+        // If lot is specified and we have a tender structure, prepend lot context to prompt
+        if let (Some(lot_key), Some(ts)) = (&input.lot, &tender_structure) {
+            let shared_titles: Vec<&str> = ts.shared_docs.iter().map(|d| d.title.as_str()).collect();
+            let lot_titles: Vec<&str> = ts
+                .lots
+                .get(lot_key)
+                .map(|docs| docs.iter().map(|d| d.title.as_str()).collect())
+                .unwrap_or_default();
+
+            let lot_preamble = format!(
+                "\n[LOT CONTEXT: Evaluating {} — Shared docs: {} | Lot docs: {}]\n\n",
+                lot_key,
+                shared_titles.join(", "),
+                lot_titles.join(", "),
+            );
+            prompt = format!("{}{}", lot_preamble, prompt);
+        }
 
         serde_json::json!({
             "ok": true,
             "agent_name": agent.name,
             "criterion_title": criterion.title,
             "round": round,
+            "lot": input.lot,
             "prompt": prompt,
         })
         .to_string()
@@ -1312,11 +1454,12 @@ impl EvalServer {
 
     #[tool(name = "eds_score", description = "Run SPARQL rules on the GraphStore, compute structural score from topology (no LLM node scores), run gate::check against recorded LLM scores. Returns structural_score, mined_facts, verdict, and audit_trail.")]
     async fn eds_score(&self, Parameters(input): Parameters<EdsScoreInput>) -> String {
-        let (turtle_loaded, llm_scores, gate_weights, framework, has_agent) = {
+        let (turtle_loaded, llm_scores, gate_weights, framework, has_agent, tender_structure) = {
             let session = self.session.lock().unwrap();
             let has_agent = session.agents.iter().any(|a| a.id == input.agent_id);
             let fw = session.framework.clone();
-            (session.turtle_loaded, session.llm_scores.clone(), session.gate_weights.clone(), fw, has_agent)
+            let ts = session.tender_structure.clone();
+            (session.turtle_loaded, session.llm_scores.clone(), session.gate_weights.clone(), fw, has_agent, ts)
         };
 
         // Validate agent exists
@@ -1442,9 +1585,23 @@ impl EvalServer {
             })
         }).collect();
 
+        // Build lot context if applicable
+        let lot_context = if let (Some(lot_key), Some(ts)) = (&input.lot, &tender_structure) {
+            let shared_count = ts.shared_docs.len();
+            let lot_count = ts.lots.get(lot_key).map(|v| v.len()).unwrap_or(0);
+            Some(serde_json::json!({
+                "lot": lot_key,
+                "shared_docs_in_context": shared_count,
+                "lot_docs_in_context": lot_count,
+            }))
+        } else {
+            None
+        };
+
         serde_json::json!({
             "ok": true,
             "agent_id": input.agent_id,
+            "lot_context": lot_context,
             "structural_score": structural_score,
             "topology": {
                 "node_count": node_count,
@@ -1678,6 +1835,7 @@ impl EvalServer {
     pub async fn test_spawn(&self, intent: &str) -> String {
         self.eval_spawn(Parameters(EvalSpawnInput {
             intent: intent.to_string(),
+            lot: None,
         }))
         .await
     }

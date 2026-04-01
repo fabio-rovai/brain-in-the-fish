@@ -70,6 +70,25 @@ pub struct Evidence {
 }
 
 // ============================================================================
+// Tender Structure types (multi-lot ingestion)
+// ============================================================================
+
+/// Structure of a multi-lot tender folder after ingestion.
+///
+/// Documents are classified as either shared (applying to all lots) or
+/// belonging to a specific lot. Detection is based on folder names and
+/// filename patterns.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TenderStructure {
+    /// Documents that apply to all lots (ITT, T&Cs, specifications, etc.).
+    pub shared_docs: Vec<EvalDocument>,
+    /// Per-lot documents keyed by normalised lot identifier (e.g. "lot_1").
+    pub lots: std::collections::HashMap<String, Vec<EvalDocument>>,
+    /// Ordered list of lot names as detected from the folder/file names.
+    pub lot_names: Vec<String>,
+}
+
+// ============================================================================
 // Criteria Ontology types
 // ============================================================================
 
