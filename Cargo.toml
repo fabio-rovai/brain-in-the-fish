@@ -1,9 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/cli", "crates/mcp"]
+members = ["crates/core", "crates/cli", "crates/mcp", "crates/bench-naive", "crates/bench-tardygrada"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/fabio-rovai/brain-in-the-fish"
+
+[workspace.dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
