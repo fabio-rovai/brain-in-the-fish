@@ -8,30 +8,15 @@ evaluation pipeline using two competing implementations:
 | **bench-naive** | Pure Rust implementation with plain structs, HashMap-based trust, and in-memory scoring. No verification overhead. |
 | **bench-tardygrada** | Tardygrada VM implementation where every operation (spawn, score, read, mutate, message) goes through the C VM with provenance tracking, trust tiers, hash-verified reads, and garbage collection. |
 
-## What is measured
+## Two benchmark modes
 
-### `full_pipeline`
+### 1. Coordination benchmarks (`cargo bench`)
 
-End-to-end evaluation: spawn agents, align sections to criteria, 3-round
-debate loop (score, find disagreements, challenge, drift, convergence),
-trust-weighted moderation, argument graph construction, and gate verdict.
-
-### `debate_rounds`
-
-The debate phase in isolation: 3 rounds of find_disagreements + drift
-velocity + convergence checking (naive), or spawn + record scores + read
-verified + send challenges + drain responses + GC (tardygrada).
-
-### `scaling`
-
-Agent count sweep at 5, 50, 500, and 5000 agents. Measures spawn + wire
-trust + score + moderate (naive) or spawn + record + read verified + GC
-(tardygrada).
-
-## How to run
+Measures pure coordination overhead — no LLM API calls, deterministic mock
+scores. Runs under Criterion with statistical analysis and HTML reports.
 
 ```sh
-# All benchmarks
+# All coordination benchmarks
 cargo bench -p benchmarks
 
 # Individual benchmarks
@@ -40,41 +25,106 @@ cargo bench --bench debate_rounds -p benchmarks
 cargo bench --bench scaling -p benchmarks
 ```
 
+These benchmarks use pre-computed mock scores (60 scores: 4 agents x 5 criteria
+x 3 rounds). Both contestants receive identical workloads. The tardygrada
+pipeline does strictly more work (trust-tier enforcement, provenance tracking,
+hash verification, GC) so the overhead is the cost of integrity.
+
 HTML reports are generated in `target/criterion/`.
+
+### 2. Full pipeline with real LLM subagents (`cargo run -p benchmarks`)
+
+Runs the complete evaluation pipeline with **real Claude API calls**. Each
+evaluator agent is an independent async task making real LLM calls. The
+orchestrator spawns these agent tasks, coordinates debate between them, and
+collects results.
+
+```sh
+# Requires ANTHROPIC_API_KEY
+ANTHROPIC_API_KEY=sk-... cargo run -p benchmarks
+
+# Optional: choose model and round count
+BRAIN_MODEL=claude-sonnet-4-6 BENCH_MAX_ROUNDS=2 cargo run -p benchmarks
+```
+
+**What happens:**
+1. 4 evaluator agents are spawned (Budget Expert, Technical Evaluator, etc.)
+2. Each agent scores 3 criteria in parallel (12 concurrent LLM calls per round)
+3. Disagreements trigger LLM-powered challenge/response debate
+4. Scores converge through debate rounds
+5. Trust-weighted moderation produces final scores
+6. Gate check verifies scores against structural evidence
+
+Both bench-naive and bench-tardygrada run the same LLM pipeline. The
+tardygrada version additionally routes all operations through the Tardygrada
+VM for provenance, hash-verified reads, and sovereign verdict storage.
+
+**Environment variables:**
+| Variable | Default | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | *(required)* | Claude API key |
+| `BRAIN_MODEL` | `claude-sonnet-4-6` | Model for scoring and debate |
+| `BENCH_MAX_ROUNDS` | `3` | Maximum debate rounds |
+
+## What is measured
+
+### Coordination benchmarks
+
+#### `full_pipeline`
+
+End-to-end evaluation: spawn agents, align sections to criteria, 3-round
+debate loop (score, find disagreements, challenge, drift, convergence),
+trust-weighted moderation, argument graph construction, and gate verdict.
+
+#### `debate_rounds`
+
+The debate phase in isolation: 3 rounds of find_disagreements + drift
+velocity + convergence checking (naive), or spawn + record scores + read
+verified + send challenges + drain responses + GC (tardygrada).
+
+#### `scaling`
+
+Agent count sweep at 5, 50, 500, and 5000 agents. Measures spawn + wire
+trust + score + moderate (naive) or spawn + record + read verified + GC
+(tardygrada).
+
+### Real LLM benchmarks
+
+Wall-clock time for the full pipeline including all LLM API latency. This
+measures end-to-end user-facing performance, not just coordination overhead.
+The LLM calls dominate the timing, so the comparison shows how much the
+tardygrada VM overhead matters (or doesn't) when real API latency is in play.
 
 ## Methodology
 
-- **Deterministic mocks**: Both contestants use identical pre-computed scores
-  (60 scores: 4 agents x 5 criteria x 3 rounds) with no LLM calls.
-- **Same workload**: Same document (10 sections, 30 claims, 20 evidence items),
-  same framework (5 criteria), same debate parameters (3 rounds, 2.0
-  disagreement threshold, 0.5 convergence threshold).
-- **Tardygrada does strictly more work**: Every operation in the tardygrada
-  pipeline goes through the C VM with trust-tier enforcement, provenance
-  tracking, hash verification on reads, and garbage collection. The naive
-  pipeline does none of this.
+- **Deterministic mocks** (coordination): Both contestants use identical
+  pre-computed scores with no LLM calls.
+- **Real LLM** (full pipeline): Both contestants make identical Claude API calls
+  with parallel tokio tasks. One retry on transient failure.
+- **Same workload**: Same document, same framework, same debate parameters.
+- **Tardygrada does strictly more work**: Every operation goes through the C VM
+  with trust-tier enforcement, provenance tracking, hash verification, and GC.
 - **Fair comparison**: The extra cost of tardygrada is the cost of integrity.
-  The benchmark quantifies that cost.
 
 ## Results
 
 Benchmark run on Apple Silicon (Darwin 25.2.0), `--release` profile.
 
-### full_pipeline
+### Coordination benchmarks (full_pipeline)
 
 | Contestant | Time |
 |---|---|
 | naive/full_pipeline | 4.52 ms |
 | tardygrada/full_pipeline | *skipped (FFI layout issue)* |
 
-### debate_rounds
+### Coordination benchmarks (debate_rounds)
 
 | Contestant | Time |
 |---|---|
 | naive/debate_3rounds | 4.36 us |
 | tardygrada/debate_3rounds | *skipped (FFI layout issue)* |
 
-### scaling (naive only)
+### Coordination benchmarks (scaling, naive only)
 
 | Agent count | Time |
 |---|---|
@@ -82,6 +132,10 @@ Benchmark run on Apple Silicon (Darwin 25.2.0), `--release` profile.
 | 50 | 207 us |
 | 500 | 15.1 ms |
 | 5000 | 1.45 s |
+
+### Real LLM benchmarks
+
+*Run `cargo run -p benchmarks` with your API key to get results.*
 
 **Note on tardygrada results**: The Tardygrada C VM's `tardy_vm_spawn`
 currently returns a zero UUID when called from the Rust FFI layer. This is a
