@@ -9,3 +9,4 @@ pub mod rules;
 pub mod gate;
 pub mod argument_graph;
 pub mod orchestrator;
+pub mod llm;
