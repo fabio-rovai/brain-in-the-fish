@@ -28,3 +28,4 @@ pub mod adaptive_extract;
 pub mod argument_graph;
 pub mod calibrate;
 pub mod optimize;
+pub mod socket;

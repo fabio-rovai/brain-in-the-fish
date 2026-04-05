@@ -132,6 +132,12 @@ enum Commands {
         #[arg(long, default_value_t = 8080)]
         port: u16,
     },
+    /// Start the unix socket server for Tardygrada coordination bridge
+    ServeUnix {
+        /// Socket path
+        #[arg(long, default_value = "/tmp/tardygrada-bitf.sock")]
+        socket: String,
+    },
     /// Batch-score a dataset using Claude subagents (shoal mode)
     Shoal {
         /// Path to labeled dataset (JSON)
@@ -202,6 +208,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Serve { host, port } => {
             run_serve(host, port).await
+        }
+        Commands::ServeUnix { socket } => {
+            run_serve_unix(socket).await
         }
         Commands::Shoal { dataset, batch_size, output, max_score, intent, collect, anchors } => {
             run_shoal(dataset, batch_size, output, max_score, intent, collect, anchors)
@@ -2031,6 +2040,11 @@ async fn run_serve(_host: String, _port: u16) -> anyhow::Result<()> {
     let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     Ok(())
+}
+
+async fn run_serve_unix(socket: String) -> anyhow::Result<()> {
+    eprintln!("Brain in the Fish unix socket server starting on {socket}...");
+    brain_in_the_fish_core::socket::serve(&socket).await
 }
 
 fn run_shoal(
