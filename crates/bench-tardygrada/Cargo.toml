@@ -5,6 +5,7 @@ edition.workspace = true
 build = "build.rs"
 
 [dependencies]
+bench-naive = { path = "../bench-naive" }
 open-ontologies = { path = "../../../open-ontologies", features = ["embeddings"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
