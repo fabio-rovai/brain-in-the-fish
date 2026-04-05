@@ -11,11 +11,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "../../bench-tardygrada/tardygrada/vm/vm.h"
-#include "../../bench-tardygrada/tardygrada/vm/types.h"
-#include "../../bench-tardygrada/tardygrada/vm/context.h"
-#include "../../bench-tardygrada/tardygrada/vm/memory.h"
-#include "../../bench-tardygrada/tardygrada/vm/semantics.h"
+#include "tardygrada/vm/vm.h"
+#include "tardygrada/vm/types.h"
+#include "tardygrada/vm/context.h"
+#include "tardygrada/vm/memory.h"
+#include "tardygrada/vm/semantics.h"
 
 /* Pre-computed scores from real Claude subagents (from bench_scores.json) */
 /* 4 agents x 5 criteria = 20 scores per round */

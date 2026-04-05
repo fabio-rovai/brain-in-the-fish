@@ -13,6 +13,7 @@ evaluation-*
 orchestration.json
 verification-*
 
-# Pure C benchmark binary
-crates/bench-tardygrada-pure/bench_pure
-crates/bench-tardygrada-pure/*.tmp.o
+# Pure C benchmark binary + object files
+crates/bench-tardygrada/bench_pure
+crates/bench-tardygrada/*.tmp.o
+*.o

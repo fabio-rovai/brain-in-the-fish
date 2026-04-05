@@ -458,34 +458,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "bench-tardygrada"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
- "chrono",
- "csv",
- "dirs",
- "glob",
- "open-ontologies",
- "pdf-extract",
- "regex",
- "regex-lite",
- "schemars",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "benchmarks"
 version = "0.1.0"
 dependencies = [
  "bench-naive",
- "bench-tardygrada",
  "criterion",
  "serde",
  "serde_json",

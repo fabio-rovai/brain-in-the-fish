@@ -1,10 +1,9 @@
 //! Benchmark runner: real subagent scores, coordination timing.
 //!
-//! Loads `bench_scores.json` (real Claude subagent scores) and times both
-//! coordination pipelines (naive Rust vs Tardygrada VM) processing the same
-//! scores through debate/moderation/rules/gate.
+//! Loads `data/bench_scores.json` (real Claude subagent scores) and times
+//! the naive Rust coordination pipeline, then shells out to the pure C
+//! Tardygrada benchmark for comparison.
 
-use std::collections::HashMap;
 use std::time::Instant;
 
 use serde::Deserialize;
@@ -32,12 +31,14 @@ struct RawScore {
 
 #[derive(Debug, Deserialize)]
 struct DebateEvent {
+    #[allow(dead_code)]
     round: u32,
     criterion: String,
     challenger: String,
     target: String,
     original_score: f64,
     new_score: f64,
+    #[allow(dead_code)]
     score_changed: bool,
 }
 
@@ -61,7 +62,7 @@ fn to_naive_scores(raw: &[RawScore]) -> Vec<bench_naive::types::Score> {
 }
 
 // ============================================================================
-// Fixture builders (10 sections, 5 criteria — matching bench_scores.json)
+// Fixture builders (10 sections, 5 criteria -- matching bench_scores.json)
 // ============================================================================
 
 fn build_document() -> bench_naive::types::Document {
@@ -160,39 +161,23 @@ fn build_framework() -> bench_naive::types::Framework {
     }
 }
 
-fn build_alignments() -> Vec<(String, String, f64)> {
-    vec![
-        ("sec-0".into(), "crit-0".into(), 0.95),
-        ("sec-1".into(), "crit-0".into(), 0.80),
-        ("sec-2".into(), "crit-1".into(), 0.90),
-        ("sec-3".into(), "crit-1".into(), 0.75),
-        ("sec-4".into(), "crit-2".into(), 0.85),
-        ("sec-5".into(), "crit-2".into(), 0.70),
-        ("sec-6".into(), "crit-3".into(), 0.88),
-        ("sec-7".into(), "crit-3".into(), 0.65),
-        ("sec-8".into(), "crit-4".into(), 0.92),
-        ("sec-9".into(), "crit-4".into(), 0.78),
-    ]
-}
-
 // ============================================================================
 // Main
 // ============================================================================
 
 fn main() {
-    // ── Load real subagent scores ────────────────────────────────────
-    let scores_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../bench_scores.json");
+    // -- Load real subagent scores -------------------------------------------
+    let scores_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/bench_scores.json");
     let raw = std::fs::read_to_string(scores_path)
         .unwrap_or_else(|e| panic!("Failed to read {scores_path}: {e}"));
     let scores_file: ScoresFile =
         serde_json::from_str(&raw).expect("Failed to parse bench_scores.json");
 
-    // ── Print subagent scoring summary ──────────────────────────────
+    // -- Print subagent scoring summary --------------------------------------
     println!("=======================================================");
     println!("  SUBAGENT SCORES (real Claude output)");
     println!("=======================================================");
 
-    // Collect per-criterion means across agents for each round
     let criterion_ids = ["crit-0", "crit-1", "crit-2", "crit-3", "crit-4"];
     let criterion_names = [
         "Technical Quality",
@@ -235,10 +220,9 @@ fn main() {
     println!("Total score records: {} ({} R1 + {} R2)",
         total_scores, scores_file.round_1.len(), scores_file.round_2.len());
 
-    // ── Build fixtures ──────────────────────────────────────────────
+    // -- Build fixtures ------------------------------------------------------
     let doc = build_document();
     let framework = build_framework();
-    let alignments = build_alignments();
 
     // Combine round 1 + round 2 scores for naive pipeline
     let mut all_raw: Vec<&RawScore> = Vec::new();
@@ -255,41 +239,7 @@ fn main() {
         }).collect::<Vec<_>>()
     );
 
-    // ── Prepare tardygrada inputs ───────────────────────────────────
-    // Map agent IDs to agent names (tardygrada uses names, not IDs)
-    let agent_name_map: HashMap<&str, &str> = [
-        ("agent-0", "Budget Expert"),
-        ("agent-1", "Technical Evaluator"),
-        ("agent-2", "Delivery Specialist"),
-        ("agent-3", "Social Value Assessor"),
-    ]
-    .into();
-
-    let agent_names: Vec<&str> = vec![
-        "Budget Expert",
-        "Technical Evaluator",
-        "Delivery Specialist",
-        "Social Value Assessor",
-    ];
-    let crit_ids: Vec<&str> = criterion_ids.to_vec();
-
-    // Tardygrada uses round-1 scores as base, drifts internally
-    let tardy_scores: Vec<(&str, &str, f64)> = scores_file
-        .round_1
-        .iter()
-        .filter_map(|s| {
-            agent_name_map
-                .get(s.agent_id.as_str())
-                .map(|name| (*name, s.criterion_id.as_str(), s.score))
-        })
-        .collect();
-
-    let tardy_alignments: Vec<(&str, &str, f64)> = alignments
-        .iter()
-        .map(|(s, c, conf)| (s.as_str(), c.as_str(), *conf))
-        .collect();
-
-    // ── Benchmark: Naive coordination ───────────────────────────────
+    // -- Benchmark: Naive coordination ---------------------------------------
     println!("\n=======================================================");
     println!("  COORDINATION BENCHMARK");
     println!("=======================================================\n");
@@ -306,61 +256,13 @@ fn main() {
         );
     let naive_elapsed = naive_start.elapsed();
 
-    // ── Benchmark: Tardygrada coordination ──────────────────────────
-    let tardy_vm_ok = std::panic::catch_unwind(|| {
-        let vm = bench_tardygrada::vm_agents::TardyVm::new().ok()?;
-        bench_tardygrada::pipeline::spawn_evaluator(
-            &vm, "test", "evaluator", "test",
-            bench_tardygrada::ffi::tardy_trust_t::TARDY_TRUST_DEFAULT,
-        ).ok()?;
-        Some(())
-    }).ok().flatten().is_some();
-
-    let (tardy_elapsed, tardy_result) = if tardy_vm_ok {
-        let tardy_start = Instant::now();
-        let vm = bench_tardygrada::vm_agents::TardyVm::new()
-            .expect("TardyVm::new() failed");
-        let result = bench_tardygrada::orchestrator::run_full_pipeline(
-            &vm,
-            &agent_names,
-            &crit_ids,
-            &tardy_alignments,
-            &tardy_scores,
-            2,   // max_rounds
-            2.0, // disagreement_threshold
-            0.5, // convergence_threshold
-        );
-        let elapsed = tardy_start.elapsed();
-        (Some(elapsed), Some(result))
-    } else {
-        eprintln!("NOTE: Tardygrada VM FFI not functional -- skipping tardygrada timing");
-        (None, None)
-    };
-
-    // ── Results table ───────────────────────────────────────────────
+    // -- Results table -------------------------------------------------------
     println!("{:<30} {:>15}", "Pipeline", "Time");
     println!("{}", "-".repeat(47));
     println!("{:<30} {:>12.3} ms", "Naive (Rust)",
         naive_elapsed.as_secs_f64() * 1000.0);
 
-    if let Some(te) = tardy_elapsed {
-        println!("{:<30} {:>12.3} ms", "Tardygrada (C VM)",
-            te.as_secs_f64() * 1000.0);
-
-        let naive_ms = naive_elapsed.as_secs_f64() * 1000.0;
-        let tardy_ms = te.as_secs_f64() * 1000.0;
-        if tardy_ms < naive_ms {
-            println!("\nTardygrada is {:.1}x FASTER than naive",
-                naive_ms / tardy_ms);
-        } else {
-            println!("\nNaive is {:.1}x FASTER than Tardygrada",
-                tardy_ms / naive_ms);
-        }
-    } else {
-        println!("{:<30} {:>15}", "Tardygrada (C VM)", "SKIPPED");
-    }
-
-    // ── Verdicts ────────────────────────────────────────────────────
+    // -- Verdicts ------------------------------------------------------------
     println!("\n=======================================================");
     println!("  VERDICTS");
     println!("=======================================================\n");
@@ -371,23 +273,19 @@ fn main() {
     println!("  Debate rounds:     {}", naive_session.rounds.len());
     println!("  Final criteria:    {}", naive_session.final_scores.len());
 
-    if let Some(result_json) = &tardy_result {
-        println!("\nTardygrada result:\n{result_json}");
-    }
-
-    // ── Pure C benchmark ────────────────────────────────────────
+    // -- Pure C benchmark ----------------------------------------------------
     println!("\n=======================================================");
     println!("  PURE TARDYGRADA C (zero deps)");
     println!("=======================================================\n");
 
-    let pure_output = std::process::Command::new("./crates/bench-tardygrada-pure/bench_pure")
+    let pure_output = std::process::Command::new("./crates/bench-tardygrada/bench_pure")
         .output();
     match pure_output {
         Ok(out) => print!("{}", String::from_utf8_lossy(&out.stdout)),
-        Err(_) => println!("(not built — run: cd crates/bench-tardygrada-pure && make bench_pure_simple)"),
+        Err(_) => println!("(not built -- run: cd crates/bench-tardygrada && make bench_pure_simple)"),
     }
 
     println!("\n=======================================================");
-    println!("  DONE — {} real scores processed", total_scores);
+    println!("  DONE -- {} real scores processed", total_scores);
     println!("=======================================================");
 }

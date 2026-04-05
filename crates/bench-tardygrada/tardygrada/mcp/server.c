@@ -808,18 +808,45 @@ static int handle_tools_call(tardy_mcp_server_t *srv,
                 grounding.grounded++;
             }
             consistency.consistent = true;
-        } else if (srv->bridge_connected) {
-            /* External ontology engine via unix socket */
-            tardy_bridge_verify(&srv->bridge, all_triples, triple_count,
-                                 &grounding, &consistency);
-        } else if (srv->self_ontology_loaded &&
-                   srv->self_ontology.triple_count > 0) {
-            /* Self-hosted ontology: triples as agents, no external process */
-            tardy_self_ontology_verify(&srv->self_ontology,
-                                        all_triples, triple_count,
-                                        &grounding, &consistency);
-        } else {
-            /* No ontology available: honest UNKNOWN fallback */
+        } else if (srv->ontology_mode == TARDY_ONTOLOGY_BRIDGE) {
+            /* Bridge-only mode: use bridge or fail */
+            if (srv->bridge_connected) {
+                tardy_bridge_verify(&srv->bridge, all_triples, triple_count,
+                                     &grounding, &consistency);
+            } else {
+                /* Bridge required but not connected — mark as unknown */
+                grounding.count = triple_count;
+                for (int i = 0; i < triple_count &&
+                     i < TARDY_MAX_TRIPLES; i++) {
+                    grounding.results[i].triple = all_triples[i];
+                    grounding.results[i].status = TARDY_KNOWLEDGE_UNKNOWN;
+                    grounding.results[i].confidence = 0.0f;
+                    grounding.results[i].evidence_count = 0;
+                    grounding.unknown++;
+                }
+                consistency.consistent = false;
+            }
+        } else if (srv->ontology_mode == TARDY_ONTOLOGY_SELF) {
+            /* Self-hosted only: never try bridge */
+            if (srv->self_ontology_loaded &&
+                srv->self_ontology.triple_count > 0) {
+                tardy_self_ontology_verify(&srv->self_ontology,
+                                            all_triples, triple_count,
+                                            &grounding, &consistency);
+            } else {
+                grounding.count = triple_count;
+                for (int i = 0; i < triple_count &&
+                     i < TARDY_MAX_TRIPLES; i++) {
+                    grounding.results[i].triple = all_triples[i];
+                    grounding.results[i].status = TARDY_KNOWLEDGE_UNKNOWN;
+                    grounding.results[i].confidence = 0.0f;
+                    grounding.results[i].evidence_count = 0;
+                    grounding.unknown++;
+                }
+                consistency.consistent = true;
+            }
+        } else if (srv->ontology_mode == TARDY_ONTOLOGY_NONE) {
+            /* Ontology disabled: everything is UNKNOWN */
             grounding.count = triple_count;
             for (int i = 0; i < triple_count &&
                  i < TARDY_MAX_TRIPLES; i++) {
@@ -830,13 +857,36 @@ static int handle_tools_call(tardy_mcp_server_t *srv,
                 grounding.unknown++;
             }
             consistency.consistent = true;
+        } else {
+            /* TARDY_ONTOLOGY_BOTH (default): bridge → self → unknown */
+            if (srv->bridge_connected) {
+                tardy_bridge_verify(&srv->bridge, all_triples, triple_count,
+                                     &grounding, &consistency);
+            } else if (srv->self_ontology_loaded &&
+                       srv->self_ontology.triple_count > 0) {
+                tardy_self_ontology_verify(&srv->self_ontology,
+                                            all_triples, triple_count,
+                                            &grounding, &consistency);
+            } else {
+                grounding.count = triple_count;
+                for (int i = 0; i < triple_count &&
+                     i < TARDY_MAX_TRIPLES; i++) {
+                    grounding.results[i].triple = all_triples[i];
+                    grounding.results[i].status = TARDY_KNOWLEDGE_UNKNOWN;
+                    grounding.results[i].confidence = 0.0f;
+                    grounding.results[i].evidence_count = 0;
+                    grounding.unknown++;
+                }
+                consistency.consistent = true;
+            }
         }
 
         /* Step 4: Real work log — record actual operations */
         tardy_work_log_t work_log;
         tardy_worklog_init(&work_log);
-        work_log.ontology_queries = (srv->bridge_connected ||
-            srv->self_ontology.triple_count > 0) ? triple_count : 0;
+        work_log.ontology_queries = (srv->ontology_mode != TARDY_ONTOLOGY_NONE &&
+            (srv->bridge_connected ||
+             srv->self_ontology.triple_count > 0)) ? triple_count : 0;
         work_log.context_reads = triple_count;
         work_log.agents_spawned = 0;
 
@@ -1560,34 +1610,89 @@ int tardy_mcp_init(tardy_mcp_server_t *srv, tardy_vm_t *vm)
     srv->vm = vm;
     srv->running = 1;
 
-    /* Try connecting to ontology engines */
-    int bridge_ok = tardy_bridge_init(&srv->bridge,
-        "/tmp/tardygrada-ontology-sketch.sock",
-        "/tmp/tardygrada-ontology-complete.sock");
-    srv->bridge_connected = (bridge_ok == 0);
+    /*
+     * TARDY_ONTOLOGY — controls ontology engine priority.
+     *
+     *   "bridge"  open-ontologies only (via unix socket), error if unavailable
+     *   "self"    self-hosted ontology only, never attempt bridge connection
+     *   "both"    (DEFAULT) try bridge first, fall back to self-hosted
+     *   "none"    skip ontology entirely, all triples resolve to UNKNOWN
+     *
+     * The bridge connects to:
+     *   /tmp/tardygrada-ontology-sketch.sock   (sketch engine)
+     *   /tmp/tardygrada-ontology-complete.sock  (complete engine)
+     */
+    const char *mode_env = getenv("TARDY_ONTOLOGY");
+    if (!mode_env) mode_env = "both";
 
-    /* Log which ontology mode is active (stderr to avoid corrupting MCP) */
-    if (srv->bridge.dual_mode) {
-        /* both sketch and complete connected */
-        const char *msg = "[tardygrada] ontology: dual mode (sketch+complete)\n";
-    tardy_write(STDERR_FILENO, msg, strlen(msg));
-    } else if (srv->bridge.sketch.connected) {
-        /* sketch only */
-        const char *msg = "[tardygrada] ontology: sketch only\n";
-    tardy_write(STDERR_FILENO, msg, strlen(msg));
-    } else if (srv->bridge.complete.connected) {
-        /* complete only */
-        const char *msg = "[tardygrada] ontology: complete only\n";
-    tardy_write(STDERR_FILENO, msg, strlen(msg));
+    if (strcmp(mode_env, "bridge") == 0) {
+        srv->ontology_mode = TARDY_ONTOLOGY_BRIDGE;
+    } else if (strcmp(mode_env, "self") == 0) {
+        srv->ontology_mode = TARDY_ONTOLOGY_SELF;
+    } else if (strcmp(mode_env, "none") == 0) {
+        srv->ontology_mode = TARDY_ONTOLOGY_NONE;
     } else {
-        /* no ontology — fallback to UNKNOWN */
-        const char *msg = "[tardygrada] ontology: none (fallback to UNKNOWN)\n";
-    tardy_write(STDERR_FILENO, msg, strlen(msg));
+        srv->ontology_mode = TARDY_ONTOLOGY_BOTH;
     }
 
-    /* Initialize self-hosted ontology (always available as fallback) */
-    tardy_self_ontology_init(&srv->self_ontology, vm);
-    srv->self_ontology_loaded = srv->self_ontology.initialized;
+    /* Log configured mode */
+    {
+        char mode_msg[128];
+        int n = snprintf(mode_msg, sizeof(mode_msg),
+            "[tardygrada] ontology mode: %s%s\n",
+            mode_env,
+            (srv->ontology_mode == TARDY_ONTOLOGY_BOTH &&
+             !getenv("TARDY_ONTOLOGY")) ? " (default)" : "");
+        tardy_write(STDERR_FILENO, mode_msg, (size_t)n);
+    }
+
+    /* Connect bridge unless mode is "self" or "none" */
+    if (srv->ontology_mode != TARDY_ONTOLOGY_SELF &&
+        srv->ontology_mode != TARDY_ONTOLOGY_NONE) {
+        int bridge_ok = tardy_bridge_init(&srv->bridge,
+            "/tmp/tardygrada-ontology-sketch.sock",
+            "/tmp/tardygrada-ontology-complete.sock");
+        srv->bridge_connected = (bridge_ok == 0);
+    }
+
+    /* Log bridge status */
+    if (srv->ontology_mode == TARDY_ONTOLOGY_BRIDGE ||
+        srv->ontology_mode == TARDY_ONTOLOGY_BOTH) {
+        if (srv->bridge.dual_mode) {
+            const char *msg = "[tardygrada] bridge: connected (dual mode)\n";
+            tardy_write(STDERR_FILENO, msg, strlen(msg));
+        } else if (srv->bridge.sketch.connected) {
+            const char *msg = "[tardygrada] bridge: connected (sketch only)\n";
+            tardy_write(STDERR_FILENO, msg, strlen(msg));
+        } else if (srv->bridge.complete.connected) {
+            const char *msg = "[tardygrada] bridge: connected (complete only)\n";
+            tardy_write(STDERR_FILENO, msg, strlen(msg));
+        } else {
+            if (srv->ontology_mode == TARDY_ONTOLOGY_BRIDGE) {
+                const char *msg = "[tardygrada] bridge: NOT connected (bridge mode — verification will fail)\n";
+                tardy_write(STDERR_FILENO, msg, strlen(msg));
+            } else {
+                const char *msg = "[tardygrada] bridge: not connected\n";
+                tardy_write(STDERR_FILENO, msg, strlen(msg));
+            }
+        }
+    }
+
+    /* Initialize self-hosted ontology unless mode is "bridge" or "none" */
+    if (srv->ontology_mode != TARDY_ONTOLOGY_BRIDGE &&
+        srv->ontology_mode != TARDY_ONTOLOGY_NONE) {
+        tardy_self_ontology_init(&srv->self_ontology, vm);
+        srv->self_ontology_loaded = srv->self_ontology.initialized;
+
+        /* Log self-hosted status */
+        char self_msg[128];
+        int n = snprintf(self_msg, sizeof(self_msg),
+            "[tardygrada] self-hosted: %d triples loaded\n",
+            srv->self_ontology.triple_count);
+        tardy_write(STDERR_FILENO, self_msg, (size_t)n);
+    } else {
+        srv->self_ontology_loaded = false;
+    }
 
     /* Initialize frame registry for CRDT merge */
     tardy_frames_init(&srv->frames);

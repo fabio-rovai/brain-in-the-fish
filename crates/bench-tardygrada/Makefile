@@ -1,6 +1,6 @@
 CC = cc
 CFLAGS = -std=c11 -O2 -Wall -Wextra
-TARDY = ../bench-tardygrada/tardygrada
+TARDY = tardygrada
 
 # Find all tardygrada .c files except main.c
 TARDY_SRC = $(filter-out $(TARDY)/main.c, $(wildcard $(TARDY)/vm/*.c $(TARDY)/coordinate/*.c $(TARDY)/compiler/*.c $(TARDY)/ontology/*.c $(TARDY)/verify/*.c $(TARDY)/mcp/*.c))

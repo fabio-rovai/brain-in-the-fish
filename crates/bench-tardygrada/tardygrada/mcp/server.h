@@ -19,6 +19,17 @@
 #define TARDY_MCP_BUF_SIZE 8192
 
 /* ============================================
+ * Ontology Mode (TARDY_ONTOLOGY env var)
+ * ============================================ */
+
+typedef enum {
+    TARDY_ONTOLOGY_BOTH,    /* default: bridge first, self-hosted fallback */
+    TARDY_ONTOLOGY_BRIDGE,  /* bridge only, fail if unavailable            */
+    TARDY_ONTOLOGY_SELF,    /* self-hosted only, skip bridge               */
+    TARDY_ONTOLOGY_NONE     /* skip ontology entirely                      */
+} tardy_ontology_mode_t;
+
+/* ============================================
  * MCP Server
  * ============================================ */
 
@@ -28,6 +39,7 @@ typedef struct {
     bool                     bridge_connected;
     tardy_self_ontology_t    self_ontology;
     bool                     self_ontology_loaded;
+    tardy_ontology_mode_t    ontology_mode;
     tardy_frame_registry_t   frames;
     tardy_ruleset_t          ruleset;
     char                     read_buf[TARDY_MCP_BUF_SIZE];
