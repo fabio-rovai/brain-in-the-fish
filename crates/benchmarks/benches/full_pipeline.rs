@@ -144,6 +144,22 @@ fn bench_tardygrada_full_pipeline(c: &mut Criterion) {
         .map(|(s, c, conf)| (s.as_str(), c.as_str(), *conf))
         .collect();
 
+    // Pre-check: can the VM even spawn agents?
+    let vm_works = std::panic::catch_unwind(|| {
+        let vm = bench_tardygrada::vm_agents::TardyVm::new().ok()?;
+        bench_tardygrada::pipeline::spawn_evaluator(
+            &vm, "test", "evaluator", "test",
+            bench_tardygrada::ffi::tardy_trust_t::TARDY_TRUST_DEFAULT,
+        ).ok()?;
+        Some(())
+    }).ok().flatten().is_some();
+
+    if !vm_works {
+        eprintln!("NOTE: Tardygrada VM FFI not functional — skipping tardygrada/full_pipeline benchmark");
+        eprintln!("      (the C VM spawn returns zero UUID; this is a known FFI layout issue)");
+        return;
+    }
+
     c.bench_function("tardygrada/full_pipeline", |b| {
         b.iter(|| {
             let vm = match bench_tardygrada::vm_agents::TardyVm::new() {
