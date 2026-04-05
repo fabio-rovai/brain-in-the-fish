@@ -23,6 +23,8 @@ fn main() {
 
     // ── All other C files — with -pedantic ──
     let c_files: Vec<PathBuf> = vec![
+        // bench wrapper (must come before vm/ so linker sees it)
+        "bench_wrapper.c",
         // vm/
         "vm/memory.c",
         "vm/context.c",

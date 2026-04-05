@@ -1,75 +1,25 @@
 //! Safe Rust wrappers around the Tardygrada C VM.
 //!
-//! `TardyVm` owns a heap-allocated `tardy_vm_t` and exposes safe methods
-//! for spawning agents, reading/mutating values, messaging, and GC.
+//! `TardyVm` owns a C-allocated `tardy_vm_t` (via `tardy_bench_vm_create`)
+//! and exposes safe methods for spawning agents, reading/mutating values,
+//! messaging, and GC.
+//!
+//! The VM struct is enormous (~5 GB virtual) so it is allocated on the C side
+//! with calloc. The OS uses lazy page allocation, so only touched pages consume
+//! physical RAM.
 
 use std::ffi::CString;
 use std::os::raw::c_void;
 
 use crate::ffi::*;
 
-/// Allocation size for the VM struct. tardy_vm_t is enormous because it
-/// contains `agents[65536]` where each `tardy_agent_t` is very large.
-/// We compute a generous upper bound and zero-initialise via `vec![0u8; ..]`.
-///
-/// Conservative estimate:
-///   tardy_agent_t ~ 300KB each (context alone has 256 children * ~80B + inbox of 64 msgs * ~600B)
-///   65536 agents * 300KB ≈ 19 GB — that's too much.
-///
-/// Actually, we need to measure more carefully. Let's just use mmap with
-/// the actual C sizeof. Instead, we'll use a helper approach: allocate via
-/// `std::alloc::alloc_zeroed` with a layout derived from the actual struct.
-///
-/// For now, we use a C-side trick: we compute sizeof(tardy_vm_t) at build time.
-/// BUT — simpler approach: just use Box with MaybeUninit and let tardy_vm_init
-/// handle initialisation.  We need the size though.
-///
-/// The pragmatic approach: allocate `VM_ALLOC_BYTES` bytes, zero-init.
-/// This must be >= sizeof(tardy_vm_t). We'll compute it conservatively from
-/// the struct definition.
-
-// sizeof(tardy_message_t) ~ 2*16 + 4 + 512 + 8 + 32 + 8 = ~596 -> round to 600
-// sizeof(tardy_message_queue_t) = 64 * 600 + 3*4 = 38412 -> round to 38416
-// sizeof(tardy_named_child_t) = 64 + 16 = 80
-// sizeof(tardy_agent_context_t) = 256*80 + 4 + 38416 = 58900 -> round to 58904
-// sizeof(tardy_page_t) = 8 + 8 + 4 + 1 + padding = ~24
-// sizeof(tardy_agent_memory_t) = 4 + 24 + 32 + 1 + 8 + 4 + 64 + 1 + 32 + 8 + 4 = ~182 -> ~184
-// sizeof(tardy_provenance_t) = 16 + 8 + 8 + 8 + 4 + 32 = ~76 -> ~80
-// sizeof(tardy_constitution_t) = 16 * (4+8+8+4+4) + 4 + 32 = 16*28+36 = 484
-// sizeof(tardy_conversation_turn_t) = 16 + 512 + 8 = 536
-// sizeof(tardy_snapshot_t) = 16 + 32 + 16 + 8 + 4 + 4 = 80
-// sizeof(tardy_agent_t) ~ 16 + 4*3 + 184 + 80 + 58904 + 8+4+4 + 8 + 8+256+80 + 8+8 + 484 + 8 + 8 + 32*536+4 = ~77kB
-// 65536 * 77KB ≈ 5 GB — still large for stack but fine for heap with lazy pages
-//
-// sizeof(tardy_tombstone_t) = 16 + 4 + 32 + 32 + 8 = 92 -> ~96
-// tombstones: 16384 * 96 ≈ 1.5 MB
-//
-// Total: ~5 GB + 1.5 MB + ~200 B overhead ≈ 5 GB
-//
-// This is intentionally a very large VM (65536 agents). The OS uses lazy
-// page allocation so zeroed pages won't consume physical RAM until touched.
-
-/// We use calloc-style allocation via mmap or alloc_zeroed so the OS only
-/// commits pages on first write (lazy allocation on macOS/Linux).
-const VM_ALLOC_BYTES: usize = {
-    // Per-agent estimate (conservative, with padding):
-    // ~80KB per agent is a safe upper bound
-    let agent_size: usize = 80 * 1024;
-    let agents_total: usize = TARDY_MAX_AGENTS * agent_size;
-    // Tombstones: ~96 bytes each
-    let tombstones_total: usize = TARDY_MAX_TOMBSTONES * 96;
-    // Overhead (root_id, root_key, semantics, boot_time, running, counts)
-    let overhead: usize = 4096;
-    agents_total + tombstones_total + overhead
-};
-
 /// Safe wrapper around the Tardygrada VM.
+///
+/// The VM is allocated and freed entirely on the C side via
+/// `tardy_bench_vm_create` / `tardy_bench_vm_destroy`.
 pub struct TardyVm {
-    /// Pointer to the heap-allocated VM. The allocation is VM_ALLOC_BYTES
-    /// bytes, zero-initialised.
+    /// Opaque pointer to C-allocated tardy_vm_t.
     ptr: *mut tardy_vm_t,
-    /// Layout used for deallocation.
-    layout: std::alloc::Layout,
 }
 
 // tardy_vm_t is single-threaded C code; we manage thread safety at a higher level.
@@ -77,23 +27,15 @@ unsafe impl Send for TardyVm {}
 
 impl TardyVm {
     /// Create and initialise a new Tardygrada VM with default semantics.
+    ///
+    /// The VM is allocated via calloc on the C side, so the OS lazily
+    /// commits pages only when agents are actually spawned.
     pub fn new() -> Result<Self, String> {
-        let layout = std::alloc::Layout::from_size_align(VM_ALLOC_BYTES, 4096)
-            .map_err(|e| format!("layout error: {e}"))?;
-
-        let ptr = unsafe { std::alloc::alloc_zeroed(layout) as *mut tardy_vm_t };
+        let ptr = unsafe { tardy_bench_vm_create() };
         if ptr.is_null() {
-            return Err("VM allocation failed".into());
+            return Err("tardy_bench_vm_create returned NULL".into());
         }
-
-        let sem = tardy_semantics_t::default_semantics();
-        let rc = unsafe { tardy_vm_init(ptr, &sem) };
-        if rc != 0 {
-            unsafe { std::alloc::dealloc(ptr as *mut u8, layout) };
-            return Err(format!("tardy_vm_init failed: {rc}"));
-        }
-
-        Ok(TardyVm { ptr, layout })
+        Ok(TardyVm { ptr })
     }
 
     /// Raw pointer to the VM (for pipeline functions that take `*mut tardy_vm_t`).
@@ -101,20 +43,10 @@ impl TardyVm {
         self.ptr
     }
 
-    /// Get the root agent ID. The root_id is at a known offset in the VM struct:
-    /// after agents[TARDY_MAX_AGENTS] + agent_count.
-    /// We read it via tardy_vm_find or by spawning under the zero UUID and
-    /// observing the parent. Simpler: just use UUID zero as root proxy since
-    /// tardy_vm_init sets root_id and we can read it via find_by_name on root.
-    ///
-    /// Actually the safest way is to read the root_id field directly.
-    /// It sits after agents[65536] (each ~80KB) + agent_count (4 bytes).
-    /// That's fragile. Instead we spawn a sentinel agent under UUID{0,0}
-    /// which the VM maps to root.
+    /// Get the root agent ID by reading it from the C struct directly
+    /// (via the bench wrapper, avoiding any offset assumptions).
     pub fn root_id(&self) -> tardy_uuid_t {
-        // The C VM uses parent_id == zero UUID to mean "root".
-        // Most operations accept zero UUID as the root parent.
-        tardy_uuid_t { hi: 0, lo: 0 }
+        unsafe { tardy_bench_vm_root_id(self.ptr) }
     }
 
     // ── Spawn helpers ─────────────────────────────────────────────
@@ -378,8 +310,65 @@ impl TardyVm {
 impl Drop for TardyVm {
     fn drop(&mut self) {
         unsafe {
-            tardy_vm_shutdown(self.ptr);
-            std::alloc::dealloc(self.ptr as *mut u8, self.layout);
+            tardy_bench_vm_destroy(self.ptr);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vm_create_and_spawn() {
+        let vm = TardyVm::new().expect("VM creation should succeed");
+
+        // Root ID should be non-zero (vm_init generates a random UUID for root)
+        let root = vm.root_id();
+        assert!(!root.is_zero(), "root_id should be non-zero");
+
+        // Spawn a string agent under root
+        let agent_id = vm
+            .spawn_str(root, "hello", "world", tardy_trust_t::TARDY_TRUST_DEFAULT)
+            .expect("spawn_str should succeed");
+        assert!(!agent_id.is_zero(), "spawned agent UUID should be non-zero");
+
+        // Read it back
+        let val = vm.read_str(root, "hello").expect("read_str should succeed");
+        assert_eq!(val, "world");
+    }
+
+    #[test]
+    fn test_spawn_int_and_float() {
+        let vm = TardyVm::new().expect("VM creation should succeed");
+        let root = vm.root_id();
+
+        let int_id = vm
+            .spawn_int(root, "answer", 42, tardy_trust_t::TARDY_TRUST_DEFAULT)
+            .expect("spawn_int should succeed");
+        assert!(!int_id.is_zero());
+
+        let float_id = vm
+            .spawn_float(root, "pi", 3.14159, tardy_trust_t::TARDY_TRUST_MUTABLE)
+            .expect("spawn_float should succeed");
+        assert!(!float_id.is_zero());
+
+        let pi = vm.read_float(root, "pi").expect("read_float should succeed");
+        assert!((pi - 3.14159).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_mutate_float() {
+        let vm = TardyVm::new().expect("VM creation should succeed");
+        let root = vm.root_id();
+
+        vm.spawn_float(root, "score", 0.5, tardy_trust_t::TARDY_TRUST_MUTABLE)
+            .expect("spawn_float should succeed");
+
+        vm.mutate_float(root, "score", 0.9)
+            .expect("mutate_float should succeed");
+
+        let val = vm.read_float(root, "score").expect("read after mutate");
+        assert!((val - 0.9).abs() < 1e-10);
     }
 }

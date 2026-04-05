@@ -402,26 +402,13 @@ pub struct tardy_read_result_t {
 pub const TARDY_MAX_AGENTS: usize = 65536;
 pub const TARDY_MAX_TOMBSTONES: usize = 16384;
 
-// ── The VM (opaque — too large to repr(C) inline) ────────────────
-// tardy_vm_t contains agents[65536] * tardy_agent_t each of which is huge.
-// We treat it as an opaque allocation and let C manage the layout.
+// ── The VM — fully opaque, allocated/freed on C side ─────────────
+// tardy_vm_t is enormous (65536 agents * ~80KB each). We never allocate
+// it from Rust. Instead, bench_wrapper.c provides create/destroy functions
+// that use calloc/free on the C side. Rust only holds `*mut tardy_vm_t`.
 
-/// Opaque VM type. We allocate it as raw bytes on the heap and pass
-/// pointers to the C functions. The actual layout is:
-///
-/// ```c
-/// tardy_agent_t      agents[65536];
-/// int                agent_count;
-/// tardy_tombstone_t  tombstones[16384];
-/// int                tombstone_count;
-/// tardy_uuid_t       root_id;
-/// tardy_keypair_t    root_key;
-/// tardy_semantics_t  semantics;
-/// tardy_timestamp_t  boot_time;
-/// bool               running;
-/// ```
-///
-/// We allocate VM_ALLOC_SIZE bytes (conservatively large) and zero-init.
+/// Opaque VM type — never instantiated on the Rust side.
+/// Use `tardy_bench_vm_create` / `tardy_bench_vm_destroy` from C.
 #[repr(C)]
 pub struct tardy_vm_t {
     _opaque: [u8; 0],
@@ -484,7 +471,16 @@ impl tardy_semantics_t {
 // ── Extern C functions ────────────────────────────────────────────
 
 unsafe extern "C" {
-    // VM lifecycle
+    // ── Bench wrapper (C-side allocation) ────────────────────────
+    /// Allocate + calloc + tardy_vm_init with default semantics.
+    /// Returns NULL on failure.
+    pub fn tardy_bench_vm_create() -> *mut tardy_vm_t;
+    /// tardy_vm_shutdown + free. Accepts NULL safely.
+    pub fn tardy_bench_vm_destroy(vm: *mut tardy_vm_t);
+    /// Read the root_id from the VM struct (avoids offset guessing).
+    pub fn tardy_bench_vm_root_id(vm: *const tardy_vm_t) -> tardy_uuid_t;
+
+    // VM lifecycle (kept for advanced use but prefer bench wrappers)
     pub fn tardy_vm_init(vm: *mut tardy_vm_t, semantics: *const tardy_semantics_t) -> c_int;
     pub fn tardy_vm_shutdown(vm: *mut tardy_vm_t);
 
