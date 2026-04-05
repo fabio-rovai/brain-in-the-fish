@@ -448,13 +448,11 @@ dependencies = [
  "pdf-extract",
  "regex",
  "regex-lite",
- "reqwest",
  "schemars",
  "serde",
  "serde_json",
  "serde_yaml",
  "thiserror",
- "tokio",
  "urlencoding",
  "uuid",
 ]
@@ -464,7 +462,6 @@ name = "bench-tardygrada"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bench-naive",
  "cc",
  "chrono",
  "csv",
@@ -474,13 +471,11 @@ dependencies = [
  "pdf-extract",
  "regex",
  "regex-lite",
- "reqwest",
  "schemars",
  "serde",
  "serde_json",
  "serde_yaml",
  "thiserror",
- "tokio",
  "urlencoding",
  "uuid",
 ]
@@ -494,7 +489,6 @@ dependencies = [
  "criterion",
  "serde",
  "serde_json",
- "tokio",
 ]
 
 [[package]]

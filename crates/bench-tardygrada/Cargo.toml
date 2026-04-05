@@ -5,14 +5,11 @@ edition.workspace = true
 build = "build.rs"
 
 [dependencies]
-bench-naive = { path = "../bench-naive" }
 open-ontologies = { path = "../../../open-ontologies", features = ["embeddings"] }
-tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 thiserror = "2"
-reqwest = { version = "0.12", features = ["json"] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 pdf-extract = "0.8"
