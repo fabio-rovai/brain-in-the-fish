@@ -375,6 +375,18 @@ fn main() {
         println!("\nTardygrada result:\n{result_json}");
     }
 
+    // ── Pure C benchmark ────────────────────────────────────────
+    println!("\n=======================================================");
+    println!("  PURE TARDYGRADA C (zero deps)");
+    println!("=======================================================\n");
+
+    let pure_output = std::process::Command::new("./crates/bench-tardygrada-pure/bench_pure")
+        .output();
+    match pure_output {
+        Ok(out) => print!("{}", String::from_utf8_lossy(&out.stdout)),
+        Err(_) => println!("(not built — run: cd crates/bench-tardygrada-pure && make bench_pure_simple)"),
+    }
+
     println!("\n=======================================================");
     println!("  DONE — {} real scores processed", total_scores);
     println!("=======================================================");

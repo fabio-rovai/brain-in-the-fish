@@ -12,3 +12,7 @@ data/*.csv
 evaluation-*
 orchestration.json
 verification-*
+
+# Pure C benchmark binary
+crates/bench-tardygrada-pure/bench_pure
+crates/bench-tardygrada-pure/*.tmp.o
